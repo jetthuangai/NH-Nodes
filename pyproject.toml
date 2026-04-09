@@ -1,0 +1,24 @@
+[project]
+name = "nh-nodes"
+description = "32 custom nodes for ComfyUI — mask operations, image processing, logic/control flow, text/prompt building, list/batch management, and workflow utilities."
+version = "1.0.0"
+license = { file = "LICENSE" }
+dependencies = [
+    "numpy",
+    "Pillow",
+    "scipy",
+    "opencv-python",
+    "scikit-image>=0.18.0",
+    "onnxruntime>=1.8.0",
+    "transformers>=4.20.0",
+    "tqdm>=4.62.0",
+    "huggingface_hub>=0.16.0",
+]
+
+[project.urls]
+Repository = "https://github.com/jetthuangai/NH-Nodes"
+
+[tool.comfy]
+PublisherId = "nhathoangfoto"
+DisplayName = "NH-Nodes"
+Icon = ""
