@@ -1,7 +1,7 @@
-"""NH Text Split Lines — Split multiline text into NH_LIST + pick by index/random.
+"""NH Text Split Lines — Split multiline text into a data list of STRINGs.
 
 Two nodes:
-- Text Split Lines: text -> NH_LIST, pick 1 line by index
+- Text Split Lines: text -> lines (data list, each line = 1 downstream exec) + select 1
 - Text Random Line: text -> pick 1 random line with seed
 """
 
@@ -9,10 +9,11 @@ import random
 
 
 class NH_TextSplitLines:
-    """Split multiline text into a list. Pick one line by index or random.
+    """Split multiline text into a data list. Each line triggers a separate
+    downstream execution — connect `lines` to any STRING input and it runs
+    once per line (like batch processing for text).
 
-    Flow: multiline text -> split -> clean -> reorder -> output list + pick one.
-    Connect `lines` output to List Index / List Filter for further processing.
+    Also outputs `selected`: a single picked line by index or random.
     """
 
     @classmethod
@@ -25,27 +26,28 @@ class NH_TextSplitLines:
                 }),
                 "index": ("INT", {
                     "default": 0, "min": -1, "max": 9999,
-                    "tooltip": "Which line to pick. -1 = random (uses seed).",
+                    "tooltip": "Which line to pick for `selected`. -1 = random (uses seed).",
                 }),
                 "mode": (["sequential", "shuffle", "reverse"],),
                 "seed": ("INT", {
                     "default": 0, "min": 0, "max": 2**32 - 1,
-                    "tooltip": "Seed for shuffle mode and index=-1 random pick.",
                 }),
             },
             "optional": {
                 "delimiter": ("STRING", {"default": "\\n"}),
                 "skip_empty": ("BOOLEAN", {"default": True}),
                 "strip_whitespace": ("BOOLEAN", {"default": True}),
-                "wrap_index": ("BOOLEAN", {
-                    "default": True,
-                    "tooltip": "Wrap index when out of range (cycle through list).",
-                }),
+                "wrap_index": ("BOOLEAN", {"default": True}),
             }
         }
 
-    RETURN_TYPES = ("STRING", "NH_LIST", "INT", "STRING", "BOOLEAN", "BOOLEAN")
-    RETURN_NAMES = ("selected", "lines", "count", "preview", "is_first", "is_last")
+    RETURN_TYPES = ("STRING", "STRING", "INT", "STRING", "BOOLEAN", "BOOLEAN")
+    RETURN_NAMES = ("lines", "selected", "count", "preview", "is_first", "is_last")
+
+    # lines is a data list: each item triggers a separate downstream execution
+    # all other outputs are single values (not lists)
+    OUTPUT_IS_LIST = (True, False, False, False, False, False)
+
     FUNCTION = "split_lines"
     CATEGORY = "NH-Nodes/Text"
 
@@ -66,7 +68,7 @@ class NH_TextSplitLines:
         count = len(lines)
 
         if count == 0:
-            return ("", [], 0, "(empty)", True, True)
+            return ([""], "", 0, "(empty)", True, True)
 
         # Reorder by mode
         rng = random.Random(seed if seed > 0 else None)
@@ -78,9 +80,8 @@ class NH_TextSplitLines:
             lines = lines[::-1]
         # sequential: keep as-is
 
-        # Pick one line
+        # Pick one line for `selected` output
         if index == -1:
-            # Random pick
             pick_idx = rng.randint(0, count - 1)
         elif wrap_index:
             pick_idx = index % count
@@ -98,7 +99,8 @@ class NH_TextSplitLines:
             preview_parts.append(f"[{i}] {line}{marker}")
         preview = "\n".join(preview_parts)
 
-        return (selected, lines, count, preview, is_first, is_last)
+        # lines is returned as a Python list -> OUTPUT_IS_LIST expands it
+        return (lines, selected, count, preview, is_first, is_last)
 
 
 class NH_TextRandomLine:
