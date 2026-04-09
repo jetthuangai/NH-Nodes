@@ -1,0 +1,16 @@
+__pycache__/
+*.pyc
+*.pyo
+*.egg-info/
+dist/
+build/
+.eggs/
+*.so
+*.dll
+*.onnx
+*.pt
+*.pth
+*.safetensors
+*.bin
+.DS_Store
+Thumbs.db
