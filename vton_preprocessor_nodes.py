@@ -71,9 +71,11 @@ class NH_VTonUltimateProcessor:
 
         candidate = candidate[0]
         keypoints_original = candidate.copy()
-        keypoints_original[:, 0] *= human_img_pil.width; keypoints_original[:, 1] *= human_img_pil.height
+        keypoints_original[:, 0] *= human_img_pil.width
+        keypoints_original[:, 1] *= human_img_pil.height
         keypoints_resized = candidate.copy()
-        keypoints_resized[:, 0] *= human_img_resized.width; keypoints_resized[:, 1] *= human_img_resized.height
+        keypoints_resized[:, 0] *= human_img_resized.width
+        keypoints_resized[:, 1] *= human_img_resized.height
         
         base_category = category.split(" ")[0]
         final_mask_pil, _ = get_mask_location(base_category, parsing_map_pil, keypoints_resized, 
@@ -99,7 +101,8 @@ class NH_VTonUltimateProcessor:
                     new_mask_np[ymin_mask:ymax_mask+1, xmin_person:xmax_person+1] = 1.0
                     mask_np = new_mask_np
 
-            shoulder_pts = keypoints_original[[2,5], :]; hip_pts = keypoints_original[[8,11], :]
+            shoulder_pts = keypoints_original[[2,5], :]
+            hip_pts = keypoints_original[[8,11], :]
             if np.all(shoulder_pts[:,1]>0) and np.all(hip_pts[:,1]>0):
                 limit_y = int((np.mean(shoulder_pts[:, 1]) + np.mean(hip_pts[:, 1])) / 2)
                 mask_np[0:limit_y, :] = 0.0
@@ -121,7 +124,8 @@ class NH_VTonUltimateProcessor:
         if refine_hair: mask_np = np.clip(mask_np - hair_mask_np, 0, 1)
 
         if cover_shoes:
-            hip_pts = keypoints_original[[8, 11], :]; ankle_pts = keypoints_original[[15, 16], :]
+            hip_pts = keypoints_original[[8, 11], :]
+            ankle_pts = keypoints_original[[15, 16], :]
             if np.all(hip_pts[:,1]>0) and np.all(ankle_pts[:,1]>0):
                 y_start = int(max(np.mean(hip_pts[:, 1]), np.min(ankle_pts[:, 1])))
                 body_cols = np.any((parsing_map_full_np > 0), axis=0)
