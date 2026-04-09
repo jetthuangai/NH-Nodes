@@ -21,6 +21,7 @@ _MODULE_NAMES = [
     "math_nodes",
     # NEW — Phase 3: Text Processing
     "text_nodes",
+    "text_split_lines",
     # NEW — Phase 4: Prompt Building
     "prompt_nodes",
     # NEW — Phase 5: List Management
