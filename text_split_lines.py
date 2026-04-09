@@ -1,121 +1,108 @@
-"""NH_TextSplitLines — Split multiline text into individual STRING outputs.
+"""NH Text Split Lines — Split multiline text into NH_LIST + pick by index/random.
 
-Improvements over basic "Text Random Multiline":
-- Up to 10 individual line outputs (not just joined text)
-- 4 modes: sequential, random, shuffle, reverse
-- Seed control for reproducible random/shuffle
-- Skip empty lines, strip whitespace
-- Wrap/cycle when lines < outputs
-- Outputs NH_LIST for chaining with List nodes
-- Preview: shows which line went to which output
+Two nodes:
+- Text Split Lines: text -> NH_LIST, pick 1 line by index
+- Text Random Line: text -> pick 1 random line with seed
 """
 
 import random
 
 
 class NH_TextSplitLines:
-    """Split multiline text into individual STRING outputs with multiple modes."""
+    """Split multiline text into a list. Pick one line by index or random.
+
+    Flow: multiline text -> split -> clean -> reorder -> output list + pick one.
+    Connect `lines` output to List Index / List Filter for further processing.
+    """
 
     @classmethod
     def INPUT_TYPES(cls):
         return {
             "required": {
                 "text": ("STRING", {
-                    "default": "first line\nsecond line\nthird line",
+                    "default": "first prompt\nsecond prompt\nthird prompt",
                     "multiline": True,
                 }),
-                "amount": ("INT", {
-                    "default": 3, "min": 1, "max": 10, "step": 1,
+                "index": ("INT", {
+                    "default": 0, "min": -1, "max": 9999,
+                    "tooltip": "Which line to pick. -1 = random (uses seed).",
                 }),
-                "mode": (["sequential", "random", "shuffle", "reverse"],),
+                "mode": (["sequential", "shuffle", "reverse"],),
                 "seed": ("INT", {
                     "default": 0, "min": 0, "max": 2**32 - 1,
+                    "tooltip": "Seed for shuffle mode and index=-1 random pick.",
                 }),
             },
             "optional": {
                 "delimiter": ("STRING", {"default": "\\n"}),
                 "skip_empty": ("BOOLEAN", {"default": True}),
                 "strip_whitespace": ("BOOLEAN", {"default": True}),
-                "wrap_lines": ("BOOLEAN", {"default": True}),
+                "wrap_index": ("BOOLEAN", {
+                    "default": True,
+                    "tooltip": "Wrap index when out of range (cycle through list).",
+                }),
             }
         }
 
-    # 10 individual outputs + list + count + preview
-    RETURN_TYPES = ("STRING",) * 10 + ("NH_LIST", "INT", "STRING")
-    RETURN_NAMES = (
-        "line_1", "line_2", "line_3", "line_4", "line_5",
-        "line_6", "line_7", "line_8", "line_9", "line_10",
-        "all_lines", "count", "preview",
-    )
+    RETURN_TYPES = ("STRING", "NH_LIST", "INT", "STRING", "BOOLEAN", "BOOLEAN")
+    RETURN_NAMES = ("selected", "lines", "count", "preview", "is_first", "is_last")
     FUNCTION = "split_lines"
     CATEGORY = "NH-Nodes/Text"
 
-    def split_lines(self, text, amount, mode, seed,
+    def split_lines(self, text, index, mode, seed,
                     delimiter="\\n", skip_empty=True,
-                    strip_whitespace=True, wrap_lines=True):
+                    strip_whitespace=True, wrap_index=True):
 
         # Parse delimiter
         actual_delim = delimiter.replace("\\n", "\n").replace("\\t", "\t")
 
-        # Split
+        # Split + clean
         lines = text.split(actual_delim)
-
-        # Clean
         if strip_whitespace:
             lines = [line.strip() for line in lines]
         if skip_empty:
             lines = [line for line in lines if line]
 
-        total = len(lines)
+        count = len(lines)
 
-        if total == 0:
-            empty = ("",) * 10 + ([], 0, "(empty input)")
-            return empty
+        if count == 0:
+            return ("", [], 0, "(empty)", True, True)
 
-        # Apply mode
+        # Reorder by mode
         rng = random.Random(seed if seed > 0 else None)
 
-        if mode == "sequential":
-            ordered = lines[:]
+        if mode == "shuffle":
+            lines = lines[:]
+            rng.shuffle(lines)
         elif mode == "reverse":
-            ordered = lines[::-1]
-        elif mode == "shuffle":
-            ordered = lines[:]
-            rng.shuffle(ordered)
-        elif mode == "random":
-            # Pick `amount` random items independently (can repeat)
-            ordered = [rng.choice(lines) for _ in range(max(amount, total))]
+            lines = lines[::-1]
+        # sequential: keep as-is
+
+        # Pick one line
+        if index == -1:
+            # Random pick
+            pick_idx = rng.randint(0, count - 1)
+        elif wrap_index:
+            pick_idx = index % count
         else:
-            ordered = lines[:]
+            pick_idx = max(0, min(index, count - 1))
 
-        # Assign to outputs
-        outputs = []
+        selected = lines[pick_idx]
+        is_first = pick_idx == 0
+        is_last = pick_idx == count - 1
+
+        # Preview: show all lines with marker on selected
         preview_parts = []
-        for i in range(10):
-            if i < amount:
-                if wrap_lines:
-                    idx = i % len(ordered)
-                else:
-                    idx = i if i < len(ordered) else -1
+        for i, line in enumerate(lines):
+            marker = " >>>" if i == pick_idx else ""
+            preview_parts.append(f"[{i}] {line}{marker}")
+        preview = "\n".join(preview_parts)
 
-                if idx >= 0 and idx < len(ordered):
-                    val = ordered[idx]
-                else:
-                    val = ""
-
-                outputs.append(val)
-                if val:
-                    preview_parts.append(f"[{i+1}] {val}")
-            else:
-                outputs.append("")
-
-        preview = "\n".join(preview_parts) if preview_parts else "(no lines)"
-
-        return tuple(outputs) + (lines, total, preview)
+        return (selected, lines, count, preview, is_first, is_last)
 
 
 class NH_TextRandomLine:
-    """Pick one random line from multiline text. Simple and fast."""
+    """Pick one random line from multiline text. Minimal node."""
 
     @classmethod
     def INPUT_TYPES(cls):
@@ -129,10 +116,6 @@ class NH_TextRandomLine:
                     "default": 0, "min": 0, "max": 2**32 - 1,
                 }),
             },
-            "optional": {
-                "control_after_generate": (["fixed", "increment", "decrement", "randomize"],
-                                           {"default": "fixed"}),
-            }
         }
 
     RETURN_TYPES = ("STRING", "INT", "INT")
@@ -140,7 +123,7 @@ class NH_TextRandomLine:
     FUNCTION = "pick"
     CATEGORY = "NH-Nodes/Text"
 
-    def pick(self, text, seed, control_after_generate="fixed"):
+    def pick(self, text, seed):
         lines = [line.strip() for line in text.split("\n") if line.strip()]
         total = len(lines)
 
