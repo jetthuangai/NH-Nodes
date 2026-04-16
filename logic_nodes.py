@@ -1,6 +1,7 @@
 """Phase 1: Logic Core — NH_Compare, NH_LogicGate, NH_IfElse, NH_SwitchN, NH_AnySwitch"""
 
 import torch
+from comfy_execution.graph_utils import ExecutionBlocker
 
 
 class NH_Compare:
@@ -183,10 +184,11 @@ class NH_SwitchN:
 
 
 class NH_AnySwitch:
-    """Route 1 input to 1 of 5 outputs by index. Inactive outputs = None.
+    """Route 1 input to 1 of 5 outputs by index.
 
-    Only the selected output carries data. The other 4 outputs are None,
-    so downstream nodes connected to inactive outputs will not execute.
+    Inactive outputs use ExecutionBlocker — downstream nodes connected
+    to them are silently skipped (no error, no execution).
+    Only the selected output carries data and triggers its downstream chain.
     """
 
     @classmethod
@@ -205,8 +207,9 @@ class NH_AnySwitch:
 
     def route(self, value, index):
         index = max(0, min(index, 4))
+        blocked = ExecutionBlocker(None)
 
-        outputs = [None, None, None, None, None]
+        outputs = [blocked, blocked, blocked, blocked, blocked]
         outputs[index] = value
 
         return (*outputs, index)
