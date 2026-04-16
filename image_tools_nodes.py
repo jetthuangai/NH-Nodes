@@ -22,8 +22,16 @@ def _natural_key(value):
 
 
 def _input_image_choices():
-    files = folder_paths.get_filename_list("input")
-    files = folder_paths.filter_files_content_types(files, ["image"])
+    input_dir = folder_paths.get_input_directory()
+    if not os.path.isdir(input_dir):
+        return [""]
+
+    files = []
+    for entry in os.listdir(input_dir):
+        full_path = os.path.join(input_dir, entry)
+        if os.path.isfile(full_path) and Path(entry).suffix.lower() in _IMAGE_EXTENSIONS:
+            files.append(entry)
+
     return [""] + sorted(files, key=_natural_key)
 
 
@@ -414,6 +422,7 @@ class NH_ImageLabel:
                 "font_name": (_FONT_CHOICES,),
                 "font_size": ("INT", {"default": 32, "min": 6, "max": 512, "step": 1}),
                 "fit_text": ("BOOLEAN", {"default": True}),
+                "overlay_on_image": ("BOOLEAN", {"default": False}),
                 "align": (["left", "center", "right"],),
                 "padding_x": ("INT", {"default": 20, "min": 0, "max": 2048, "step": 1}),
                 "outline_width": ("INT", {"default": 0, "min": 0, "max": 32, "step": 1}),
@@ -446,6 +455,7 @@ class NH_ImageLabel:
         font_name,
         font_size,
         fit_text,
+        overlay_on_image,
         align,
         padding_x,
         outline_width,
@@ -461,15 +471,26 @@ class NH_ImageLabel:
             width, height = pil_image.size
             band = self._band_image(pil_image, position, frame_height, fill_enabled, frame_color)
 
-            canvas = Image.new("RGB", (width, height + frame_height))
-            if position == "header":
-                canvas.paste(band, (0, 0))
-                canvas.paste(pil_image, (0, frame_height))
-                band_top = 0
+            if overlay_on_image:
+                canvas = pil_image.copy()
+                max_band_height = min(frame_height, height)
+                if band.height != max_band_height:
+                    band = band.resize((width, max_band_height), _RESAMPLING.BILINEAR)
+                if position == "header":
+                    band_top = 0
+                else:
+                    band_top = height - max_band_height
+                canvas.paste(band, (0, band_top))
             else:
-                canvas.paste(pil_image, (0, 0))
-                canvas.paste(band, (0, height))
-                band_top = height
+                canvas = Image.new("RGB", (width, height + frame_height))
+                if position == "header":
+                    canvas.paste(band, (0, 0))
+                    canvas.paste(pil_image, (0, frame_height))
+                    band_top = 0
+                else:
+                    canvas.paste(pil_image, (0, 0))
+                    canvas.paste(band, (0, height))
+                    band_top = height
 
             draw = ImageDraw.Draw(canvas)
             font = _load_font(font_name, font_size)

@@ -1,5 +1,7 @@
 """Phase 1: Logic Core — compare, branching, and gating nodes."""
 
+import re
+
 from comfy_execution.graph_utils import ExecutionBlocker
 
 
@@ -77,11 +79,20 @@ class NH_Compare:
         if needle in haystack:
             return True
 
+        if not NH_Compare._supports_subsequence(a, needle):
+            return False
+
         idx = 0
         for char in haystack:
             if idx < len(needle) and char == needle[idx]:
                 idx += 1
         return idx == len(needle)
+
+    @staticmethod
+    def _supports_subsequence(a, needle):
+        if isinstance(a, (int, float)):
+            return True
+        return bool(re.fullmatch(r"[+-]?\d+(?:\.\d+)?", needle.strip()))
 
 
 class NH_LogicGate:
