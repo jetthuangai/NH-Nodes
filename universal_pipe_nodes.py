@@ -14,6 +14,7 @@ class NH_PackUniversal:
         }
 
     RETURN_TYPES = NH_UNIVERSAL_PIPE
+    RETURN_NAMES = ("package",)
     FUNCTION = "pack"
     CATEGORY = "NH-Nodes/Utils/Pipe"
 
@@ -28,20 +29,28 @@ class NH_UnpackUniversal:
     def INPUT_TYPES(cls):
         return {
             "required": {
-                "pipe": NH_UNIVERSAL_PIPE,
                 "index": ("INT", {"default": 0, "min": 0, "max": 9}),
-            }
+            },
+            "optional": {
+                "package": NH_UNIVERSAL_PIPE,
+                "pipe": NH_UNIVERSAL_PIPE,
+            },
         }
     
     # Đầu ra là kiểu dữ liệu bất kỳ
     RETURN_TYPES = ("*",)
+    RETURN_NAMES = ("item",)
     FUNCTION = "unpack"
     CATEGORY = "NH-Nodes/Utils/Pipe"
 
-    def unpack(self, pipe, index):
+    def unpack(self, index, package=None, pipe=None):
+        pipe_data = package if package is not None else pipe
+        if pipe_data is None:
+            return (None,)
+
         # Kiểm tra xem index có hợp lệ không
-        if index < len(pipe):
-            return (pipe[index],)
+        if index < len(pipe_data):
+            return (pipe_data[index],)
         else:
             # Trả về None nếu index nằm ngoài phạm vi
             return (None,)
