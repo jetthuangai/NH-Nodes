@@ -1,4 +1,6 @@
-"""Phase 1: Logic Core — NH_Compare, NH_LogicGate, NH_IfElse, NH_SwitchN"""
+"""Phase 1: Logic Core — NH_Compare, NH_LogicGate, NH_IfElse, NH_SwitchN, NH_AnySwitch"""
+
+import torch
 
 
 class NH_Compare:
@@ -180,12 +182,69 @@ class NH_SwitchN:
         return (connected[first_key], count)
 
 
+class NH_AnySwitch:
+    """Route 1 input to 1 of 5 outputs by index. Other outputs get empty values.
+
+    Automatically detects data type and creates matching empty values:
+    - IMAGE/MASK/LATENT tensors -> zero tensor with same shape
+    - STRING -> ""
+    - INT -> 0
+    - FLOAT -> 0.0
+    - BOOLEAN -> False
+    - Others -> None
+    """
+
+    @classmethod
+    def INPUT_TYPES(cls):
+        return {
+            "required": {
+                "value": ("*",),
+                "index": ("INT", {"default": 0, "min": 0, "max": 4}),
+            },
+        }
+
+    RETURN_TYPES = ("*", "*", "*", "*", "*", "INT")
+    RETURN_NAMES = ("out_0", "out_1", "out_2", "out_3", "out_4", "active_index")
+    FUNCTION = "route"
+    CATEGORY = "NH-Nodes/Logic"
+
+    def route(self, value, index):
+        index = max(0, min(index, 4))
+        empty = self._make_empty(value)
+
+        outputs = [empty] * 5
+        outputs[index] = value
+
+        return (*outputs, index)
+
+    @staticmethod
+    def _make_empty(value):
+        """Create a type-matched empty value."""
+        if isinstance(value, torch.Tensor):
+            return torch.zeros_like(value)
+        elif isinstance(value, str):
+            return ""
+        elif isinstance(value, bool):
+            return False
+        elif isinstance(value, int):
+            return 0
+        elif isinstance(value, float):
+            return 0.0
+        elif isinstance(value, list):
+            return []
+        elif isinstance(value, dict):
+            return {}
+        else:
+            return None
+
+
 # --- Dang ky ---
 NODE_CLASS_MAPPINGS = {
     "NH_Compare": NH_Compare,
     "NH_LogicGate": NH_LogicGate,
     "NH_IfElse": NH_IfElse,
     "NH_SwitchN": NH_SwitchN,
+    "NH_AnySwitch": NH_AnySwitch,
 }
 
 NODE_DISPLAY_NAME_MAPPINGS = {
@@ -193,4 +252,5 @@ NODE_DISPLAY_NAME_MAPPINGS = {
     "NH_LogicGate": "Logic Gate (NH)",
     "NH_IfElse": "If/Else (NH)",
     "NH_SwitchN": "Switch N (NH)",
+    "NH_AnySwitch": "Any Switch (NH)",
 }
