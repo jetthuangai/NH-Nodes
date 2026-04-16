@@ -183,15 +183,10 @@ class NH_SwitchN:
 
 
 class NH_AnySwitch:
-    """Route 1 input to 1 of 5 outputs by index. Other outputs get empty values.
+    """Route 1 input to 1 of 5 outputs by index. Inactive outputs = None.
 
-    Automatically detects data type and creates matching empty values:
-    - IMAGE/MASK/LATENT tensors -> zero tensor with same shape
-    - STRING -> ""
-    - INT -> 0
-    - FLOAT -> 0.0
-    - BOOLEAN -> False
-    - Others -> None
+    Only the selected output carries data. The other 4 outputs are None,
+    so downstream nodes connected to inactive outputs will not execute.
     """
 
     @classmethod
@@ -210,32 +205,11 @@ class NH_AnySwitch:
 
     def route(self, value, index):
         index = max(0, min(index, 4))
-        empty = self._make_empty(value)
 
-        outputs = [empty] * 5
+        outputs = [None, None, None, None, None]
         outputs[index] = value
 
         return (*outputs, index)
-
-    @staticmethod
-    def _make_empty(value):
-        """Create a type-matched empty value."""
-        if isinstance(value, torch.Tensor):
-            return torch.zeros_like(value)
-        elif isinstance(value, str):
-            return ""
-        elif isinstance(value, bool):
-            return False
-        elif isinstance(value, int):
-            return 0
-        elif isinstance(value, float):
-            return 0.0
-        elif isinstance(value, list):
-            return []
-        elif isinstance(value, dict):
-            return {}
-        else:
-            return None
 
 
 # --- Dang ky ---
