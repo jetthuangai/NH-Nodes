@@ -215,6 +215,47 @@ class NH_AnySwitch:
         return (*outputs, index)
 
 
+class NH_GateSwitch:
+    """Gate that passes or blocks data AND upstream execution.
+
+    - enabled = True:  upstream runs, data passes through to output.
+    - enabled = False: upstream is NEVER executed (lazy skip),
+      output is blocked (ExecutionBlocker). Nothing runs.
+
+    Use this to completely disable a branch — e.g. prevent a model
+    from loading, skip an entire pipeline, etc.
+    """
+
+    @classmethod
+    def INPUT_TYPES(cls):
+        return {
+            "required": {
+                "input": ("*", {"lazy": True}),
+                "enabled": ("BOOLEAN", {"default": True}),
+            },
+        }
+
+    RETURN_TYPES = ("*",)
+    RETURN_NAMES = ("output",)
+    FUNCTION = "gate"
+    CATEGORY = "NH-Nodes/Logic"
+
+    def check_lazy_status(self, input, enabled):
+        """Only request the input when enabled=True.
+        When False, input stays None and upstream never executes."""
+        if enabled:
+            # Input not yet evaluated -> request it
+            if input is None:
+                return ["input"]
+        # enabled=False or input already evaluated -> don't need anything
+        return []
+
+    def gate(self, input, enabled):
+        if enabled and input is not None:
+            return (input,)
+        return (ExecutionBlocker(None),)
+
+
 # --- Dang ky ---
 NODE_CLASS_MAPPINGS = {
     "NH_Compare": NH_Compare,
@@ -222,6 +263,7 @@ NODE_CLASS_MAPPINGS = {
     "NH_IfElse": NH_IfElse,
     "NH_SwitchN": NH_SwitchN,
     "NH_AnySwitch": NH_AnySwitch,
+    "NH_GateSwitch": NH_GateSwitch,
 }
 
 NODE_DISPLAY_NAME_MAPPINGS = {
@@ -230,4 +272,5 @@ NODE_DISPLAY_NAME_MAPPINGS = {
     "NH_IfElse": "If/Else (NH)",
     "NH_SwitchN": "Switch N (NH)",
     "NH_AnySwitch": "Any Switch (NH)",
+    "NH_GateSwitch": "Gate Switch (NH)",
 }
