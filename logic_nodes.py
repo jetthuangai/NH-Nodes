@@ -195,22 +195,22 @@ class NH_AnySwitch:
     def INPUT_TYPES(cls):
         return {
             "required": {
-                "value": ("*",),
+                "input": ("*",),
                 "index": ("INT", {"default": 0, "min": 0, "max": 4}),
             },
         }
 
     RETURN_TYPES = ("*", "*", "*", "*", "*", "INT")
-    RETURN_NAMES = ("out_0", "out_1", "out_2", "out_3", "out_4", "active_index")
+    RETURN_NAMES = ("output 0", "output 1", "output 2", "output 3", "output 4", "index")
     FUNCTION = "route"
     CATEGORY = "NH-Nodes/Logic"
 
-    def route(self, value, index):
+    def route(self, input, index):
         index = max(0, min(index, 4))
         blocked = ExecutionBlocker(None)
 
         outputs = [blocked, blocked, blocked, blocked, blocked]
-        outputs[index] = value
+        outputs[index] = input
 
         return (*outputs, index)
 
