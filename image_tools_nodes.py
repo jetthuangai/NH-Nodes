@@ -1,6 +1,7 @@
 import os
-import random
 import re
+import unicodedata
+import uuid
 from pathlib import Path
 
 import numpy as np
@@ -20,6 +21,14 @@ _FONT_EXTENSIONS = {".ttf", ".otf", ".ttc"}
 
 def _natural_key(value):
     return [int(part) if part.isdigit() else part.lower() for part in re.split(r"(\d+)", value)]
+
+
+def _normalize_match_value(value):
+    value = unicodedata.normalize("NFD", str(value or ""))
+    value = "".join(char for char in value if unicodedata.category(char) != "Mn")
+    value = re.sub(r"[_\-]+", " ", value)
+    value = re.sub(r"\s+", " ", value)
+    return value.strip().casefold()
 
 
 def _input_image_choices():
@@ -145,7 +154,7 @@ def _save_dir_from_text(folder_path):
     return os.path.join(folder_paths.get_output_directory(), folder_path)
 
 
-def _resolve_load_dir(folder_path, upload_probe):
+def _resolve_load_dir(folder_path, image="", upload_probe=""):
     folder_path = (folder_path or "").strip()
     if folder_path:
         resolved = folder_path
@@ -155,13 +164,14 @@ def _resolve_load_dir(folder_path, upload_probe):
             resolved = os.path.dirname(resolved)
         return resolved
 
-    if upload_probe:
-        return os.path.dirname(folder_paths.get_annotated_filepath(upload_probe))
+    upload_name = image or upload_probe
+    if upload_name:
+        return os.path.dirname(folder_paths.get_annotated_filepath(upload_name))
 
     return folder_paths.get_input_directory()
 
 
-def _collect_image_files(folder_path):
+def _collect_image_files(folder_path, recursive=False):
     if not os.path.isdir(folder_path):
         raise ValueError(f"Folder does not exist: {folder_path}")
 
@@ -171,10 +181,63 @@ def _collect_image_files(folder_path):
         if os.path.isfile(full_path) and Path(entry).suffix.lower() in _IMAGE_EXTENSIONS:
             files.append(entry)
 
+    if recursive or not files:
+        for current_root, dir_names, file_names in os.walk(folder_path):
+            dir_names.sort(key=_natural_key)
+            for file_name in sorted(file_names, key=_natural_key):
+                full_path = os.path.join(current_root, file_name)
+                if os.path.isfile(full_path) and Path(file_name).suffix.lower() in _IMAGE_EXTENSIONS:
+                    rel_path = os.path.relpath(full_path, folder_path)
+                    if rel_path not in files:
+                        files.append(rel_path)
+
     files.sort(key=_natural_key)
     if not files:
         raise ValueError(f"No images found in folder: {folder_path}")
     return files
+
+
+def _resolve_matching_folder(root_path, match_text, match_mode, recursive):
+    root_path = (root_path or "").strip()
+    if not root_path:
+        raise ValueError("Matching root path is empty")
+    if not os.path.isabs(root_path):
+        root_path = os.path.join(folder_paths.get_input_directory(), root_path)
+    if not os.path.isdir(root_path):
+        raise ValueError(f"Matching root folder does not exist: {root_path}")
+
+    normalized_match = _normalize_match_value(match_text)
+    if not normalized_match:
+        raise ValueError("Match text is empty")
+
+    candidates = [root_path]
+    if recursive:
+        for current_root, dir_names, _file_names in os.walk(root_path):
+            dir_names.sort(key=_natural_key)
+            for dir_name in dir_names:
+                candidates.append(os.path.join(current_root, dir_name))
+    else:
+        candidates.extend(
+            os.path.join(root_path, entry)
+            for entry in sorted(os.listdir(root_path), key=_natural_key)
+            if os.path.isdir(os.path.join(root_path, entry))
+        )
+
+    exact_matches = []
+    contains_matches = []
+    for candidate in candidates:
+        normalized_name = _normalize_match_value(os.path.basename(candidate))
+        if normalized_name == normalized_match:
+            exact_matches.append(candidate)
+        if normalized_match in normalized_name:
+            contains_matches.append(candidate)
+
+    matches = exact_matches if match_mode == "exact" else contains_matches or exact_matches
+    if not matches:
+        raise ValueError(f"No matching folder found for '{match_text}' under: {root_path}")
+
+    matches.sort(key=lambda item: _natural_key(os.path.relpath(item, root_path)))
+    return matches[0]
 
 
 def _match_batch_sizes(batch_a, batch_b):
@@ -235,6 +298,8 @@ class NH_SaveImagePath:
                 "images": ("IMAGE",),
                 "folder_path": ("STRING", {"default": "", "multiline": False}),
                 "filename_prefix": ("STRING", {"default": "NH", "multiline": False}),
+                "number_suffix": ("BOOLEAN", {"default": True}),
+                "preview_image": ("BOOLEAN", {"default": False}),
                 "file_format": (["png", "jpg", "webp", "avif"],),
                 "dpi": ("INT", {"default": 300, "min": 1, "max": 2400, "step": 1}),
             }
@@ -245,37 +310,68 @@ class NH_SaveImagePath:
     FUNCTION = "save_images"
     CATEGORY = "NH-Nodes/Image"
 
-    def save_images(self, images, folder_path, filename_prefix, file_format, dpi):
+    def save_images(self, images, folder_path, filename_prefix, number_suffix=True, preview_image=False, file_format="png", dpi=300):
         save_dir = _save_dir_from_text(folder_path)
         os.makedirs(save_dir, exist_ok=True)
 
         prefix = (filename_prefix or "NH").strip() or "NH"
-        pattern = re.compile(rf"^(?:{re.escape(prefix)})?(\d+)\.(?:png|jpe?g|webp|avif)$", re.IGNORECASE)
+        numbered_pattern = re.compile(rf"^{re.escape(prefix)}(\d+)\.(?:png|jpe?g|webp|avif)$", re.IGNORECASE)
+        legacy_numbered_pattern = re.compile(rf"^(?:{re.escape(prefix)})?(\d+)\.(?:png|jpe?g|webp|avif)$", re.IGNORECASE)
+        bare_pattern = re.compile(rf"^{re.escape(prefix)}\.(?:png|jpe?g|webp|avif)$", re.IGNORECASE)
 
         used_numbers = set()
+        bare_exists = False
         for name in os.listdir(save_dir):
-            match = pattern.match(name)
+            if bare_pattern.match(name):
+                bare_exists = True
+                continue
+            match = numbered_pattern.match(name)
+            if match is None and number_suffix:
+                match = legacy_numbered_pattern.match(name)
             if match:
                 used_numbers.add(int(match.group(1)))
 
         saved_files = []
+        preview_results = []
+        preview_dir = folder_paths.get_temp_directory()
         next_number = 1
-        for image in images:
-            while next_number in used_numbers:
+        for batch_index, image in enumerate(images):
+            if number_suffix:
+                while next_number in used_numbers:
+                    next_number += 1
+                filename = f"{prefix}{next_number:04d}.{file_format}"
+                used_numbers.add(next_number)
+                next_number += 1
+            elif not bare_exists and not used_numbers:
+                filename = f"{prefix}.{file_format}"
+                bare_exists = True
+            else:
+                while next_number in used_numbers:
+                    next_number += 1
+                filename = f"{prefix}{next_number}.{file_format}"
+                used_numbers.add(next_number)
                 next_number += 1
 
-            filename = f"{prefix}{next_number:04d}.{file_format}"
-            _save_pil_image(_tensor_to_pil(image), os.path.join(save_dir, filename), file_format, int(dpi))
-            used_numbers.add(next_number)
+            pil_image = _tensor_to_pil(image)
+            _save_pil_image(pil_image, os.path.join(save_dir, filename), file_format, int(dpi))
             saved_files.append(filename)
-            next_number += 1
 
-        return ("\n".join(saved_files), save_dir, len(saved_files))
+            if preview_image:
+                preview_filename = f"NH_preview_{uuid.uuid4().hex}_{batch_index}.png"
+                _save_pil_image(pil_image, os.path.join(preview_dir, preview_filename), "png", int(dpi))
+                preview_results.append({
+                    "filename": preview_filename,
+                    "subfolder": "",
+                    "type": "temp",
+                })
+
+        result = ("\n".join(saved_files), save_dir, len(saved_files))
+        if preview_image:
+            return {"ui": {"images": preview_results}, "result": result}
+        return result
 
 
 class NH_LoadImagesFromFolder:
-    _states = {}
-
     @classmethod
     def INPUT_TYPES(cls):
         return {
@@ -284,10 +380,7 @@ class NH_LoadImagesFromFolder:
                 "index": ("INT", {"default": 0, "min": 0, "max": 999999}),
                 "step": ("INT", {"default": 1, "min": 1, "max": 9999}),
                 "seed_mode": (["fixed", "increment", "decrement", "random"],),
-                "seed": ("INT", {"default": 0, "min": 0, "max": 0xFFFFFFFF}),
-            },
-            "optional": {
-                "upload_probe": (_input_image_choices(), {"image_upload": True}),
+                "recursive": ("BOOLEAN", {"default": False}),
             },
         }
 
@@ -297,37 +390,13 @@ class NH_LoadImagesFromFolder:
     CATEGORY = "NH-Nodes/Image"
 
     @classmethod
-    def IS_CHANGED(cls, folder_path, index, step, seed_mode, seed, upload_probe=""):
+    def IS_CHANGED(cls, folder_path, index, step, seed_mode, recursive=False, **kwargs):
         return float("nan")
 
-    def _resolve_start_index(self, folder_path, index, step, seed_mode, seed, file_count):
-        node_id = id(self)
-        config = (folder_path, index, step, seed_mode, seed, file_count)
-        state = self._states.get(node_id)
-
-        if state is None or state.get("config") != config:
-            state = {"config": config, "cursor": index % file_count, "turn": 0}
-            self._states[node_id] = state
-
-        if seed_mode == "fixed":
-            return index % file_count
-        if seed_mode == "increment":
-            start = state["cursor"] % file_count
-            state["cursor"] = (start + step) % file_count
-            return start
-        if seed_mode == "decrement":
-            start = state["cursor"] % file_count
-            state["cursor"] = (start - step) % file_count
-            return start
-
-        rng = random.Random(seed + state["turn"] if seed > 0 else None)
-        state["turn"] += 1
-        return rng.randrange(file_count)
-
-    def load_images(self, folder_path, index, step, seed_mode, seed, upload_probe=""):
-        resolved_folder = _resolve_load_dir(folder_path, upload_probe)
-        image_files = _collect_image_files(resolved_folder)
-        start_index = self._resolve_start_index(resolved_folder, index, step, seed_mode, seed, len(image_files))
+    def load_images(self, folder_path, index, step, seed_mode, recursive=False, **kwargs):
+        resolved_folder = _resolve_load_dir(folder_path)
+        image_files = _collect_image_files(resolved_folder, recursive=recursive)
+        start_index = index % len(image_files)
 
         if seed_mode == "decrement":
             indices = [((start_index - offset) % len(image_files)) for offset in range(step)]
@@ -336,6 +405,7 @@ class NH_LoadImagesFromFolder:
 
         selected_files = [image_files[i] for i in indices]
         output_images = []
+        output_paths = []
         target_size = None
 
         for file_name in selected_files:
@@ -347,8 +417,87 @@ class NH_LoadImagesFromFolder:
             elif img.size != target_size:
                 img = _resize_image(img, target_size, "lanczos")
             output_images.append(_pil_to_tensor(img))
+            output_paths.append(full_path)
 
-        return (torch.cat(output_images, dim=0), "\n".join(selected_files), resolved_folder)
+        return (torch.cat(output_images, dim=0), "\n".join(selected_files), "\n".join(output_paths))
+
+
+class NH_LoadImagesMatching:
+    @classmethod
+    def INPUT_TYPES(cls):
+        return {
+            "required": {
+                "source_folder_path": ("STRING", {"default": "", "multiline": False}),
+                "matching_root_path": ("STRING", {"default": "", "multiline": False}),
+                "match_text": ("STRING", {"default": "", "multiline": False}),
+                "match_mode": (["contains", "exact"],),
+                "recursive": ("BOOLEAN", {"default": True}),
+                "index": ("INT", {"default": 0, "min": 0, "max": 999999}),
+                "step": ("INT", {"default": 1, "min": 1, "max": 9999}),
+                "repeat_count": ("INT", {"default": 1, "min": 1, "max": 9999}),
+            },
+            "optional": {
+                "source_file_names": ("STRING", {"default": "", "multiline": True}),
+            },
+        }
+
+    RETURN_TYPES = ("IMAGE", "STRING", "STRING", "STRING", "BOOLEAN")
+    RETURN_NAMES = ("images", "filename", "path", "matched_text", "found")
+    FUNCTION = "load_matching"
+    CATEGORY = "NH-Nodes/Image"
+
+    @classmethod
+    def IS_CHANGED(cls, source_folder_path, matching_root_path, match_text, match_mode, recursive, index, step, repeat_count, source_file_names="", **kwargs):
+        return float("nan")
+
+    def load_matching(self, source_folder_path, matching_root_path, match_text, match_mode, recursive, index, step, repeat_count, source_file_names="", **kwargs):
+        if not source_folder_path and kwargs.get("person_folder_path"):
+            source_folder_path = kwargs["person_folder_path"]
+
+        first_source_path = str(source_folder_path or "").splitlines()[0].strip()
+        resolved_source_folder = _resolve_load_dir(first_source_path)
+        selected_match_text = (match_text or "").strip()
+        source_names = [line.strip() for line in str(source_file_names or "").splitlines() if line.strip()]
+        if selected_match_text:
+            match_values = [selected_match_text]
+        elif source_names:
+            match_values = []
+            for source_name in source_names:
+                source_dir = os.path.dirname(source_name)
+                match_values.append(os.path.basename(os.path.normpath(source_dir)) if source_dir else os.path.basename(os.path.normpath(resolved_source_folder)))
+        else:
+            selected_match_text = os.path.basename(os.path.normpath(resolved_source_folder))
+            match_values = [selected_match_text]
+
+        selected_files = []
+        matched_folders = []
+        output_images = []
+        target_size = None
+
+        for current_match_text in match_values:
+            matched_folder = _resolve_matching_folder(matching_root_path, current_match_text, match_mode, recursive)
+            image_files = _collect_image_files(matched_folder)
+            start_index = index % len(image_files)
+            indices = [((start_index + offset) % len(image_files)) for offset in range(step)]
+
+            for image_index in indices:
+                file_name = image_files[image_index]
+                full_path = os.path.join(matched_folder, file_name)
+                img = node_helpers.pillow(Image.open, full_path)
+                img = node_helpers.pillow(ImageOps.exif_transpose, img).convert("RGB")
+                if target_size is None:
+                    target_size = img.size
+                elif img.size != target_size:
+                    img = _resize_image(img, target_size, "lanczos")
+                output_images.append(_pil_to_tensor(img))
+                selected_files.append(file_name)
+                matched_folders.append(matched_folder)
+
+        images = torch.cat(output_images, dim=0)
+        if repeat_count > 1:
+            images = images.repeat(repeat_count, 1, 1, 1)
+
+        return (images, "\n".join(selected_files), "\n".join(matched_folders), "\n".join(match_values), True)
 
 
 class NH_ImageResizeByUnit:
@@ -599,6 +748,7 @@ class NH_ImageLabel:
 NODE_CLASS_MAPPINGS = {
     "NH_SaveImagePath": NH_SaveImagePath,
     "NH_LoadImagesFromFolder": NH_LoadImagesFromFolder,
+    "NH_LoadImagesMatching": NH_LoadImagesMatching,
     "NH_ImageResizeByUnit": NH_ImageResizeByUnit,
     "NH_ImageCompare": NH_ImageCompare,
     "NH_ImageLabel": NH_ImageLabel,
@@ -607,6 +757,7 @@ NODE_CLASS_MAPPINGS = {
 NODE_DISPLAY_NAME_MAPPINGS = {
     "NH_SaveImagePath": "Save Image Path (NH)",
     "NH_LoadImagesFromFolder": "Load Images Folder (NH)",
+    "NH_LoadImagesMatching": "Load images matching",
     "NH_ImageResizeByUnit": "Image Resize Unit (NH)",
     "NH_ImageCompare": "Image Compare (NH)",
     "NH_ImageLabel": "Image Label (NH)",
