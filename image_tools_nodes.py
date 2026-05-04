@@ -2,6 +2,7 @@ import os
 import re
 import unicodedata
 import uuid
+import ast
 from pathlib import Path
 
 import numpy as np
@@ -17,6 +18,7 @@ import node_helpers
 _RESAMPLING = getattr(Image, "Resampling", Image)
 _IMAGE_EXTENSIONS = {".png", ".jpg", ".jpeg", ".webp", ".avif", ".bmp", ".tif", ".tiff"}
 _FONT_EXTENSIONS = {".ttf", ".otf", ".ttc"}
+_MAX_LAYER_STACK_INPUTS = 64
 
 
 def _natural_key(value):
@@ -143,6 +145,226 @@ def _pad_samples(samples, target_width, target_height, fill_rgb):
     return canvas
 
 
+def _resize_cover(image, target_size):
+    target_width, target_height = target_size
+    width, height = image.size
+    scale = max(target_width / max(width, 1), target_height / max(height, 1))
+    resized = _resize_image(image, (max(1, round(width * scale)), max(1, round(height * scale))), "lanczos")
+    left = max(0, (resized.width - target_width) // 2)
+    top = max(0, (resized.height - target_height) // 2)
+    return resized.crop((left, top, left + target_width, top + target_height))
+
+
+def _resize_contain(image, target_size):
+    target_width, target_height = target_size
+    width, height = image.size
+    scale = min(target_width / max(width, 1), target_height / max(height, 1))
+    return _resize_image(image, (max(1, round(width * scale)), max(1, round(height * scale))), "lanczos")
+
+
+def _fit_layer_image(image, target_size, resize_mode):
+    target_width, target_height = target_size
+    if target_width <= 0 or target_height <= 0:
+        raise ValueError("Layer slot width and height must be greater than 0")
+    if resize_mode == "stretch":
+        return _resize_image(image, (target_width, target_height), "lanczos"), 0, 0
+    if resize_mode == "contain":
+        fitted = _resize_contain(image, (target_width, target_height))
+        return fitted, (target_width - fitted.width) // 2, (target_height - fitted.height) // 2
+    fitted = _resize_cover(image, (target_width, target_height))
+    return fitted, 0, 0
+
+
+def _grid_slots(canvas_width, canvas_height, columns, rows, margin_x, margin_y, gap_x, gap_y):
+    columns = max(1, int(columns))
+    rows = max(1, int(rows))
+    content_width = max(1, canvas_width - (2 * margin_x) - (gap_x * (columns - 1)))
+    content_height = max(1, canvas_height - (2 * margin_y) - (gap_y * (rows - 1)))
+    cell_width = max(1, content_width // columns)
+    cell_height = max(1, content_height // rows)
+    slots = []
+    right_edge = canvas_width - margin_x
+    bottom_edge = canvas_height - margin_y
+
+    for row in range(rows):
+        for column in range(columns):
+            x = margin_x + column * (cell_width + gap_x)
+            y = margin_y + row * (cell_height + gap_y)
+            width = max(1, (right_edge - x) if column == columns - 1 else cell_width)
+            height = max(1, (bottom_edge - y) if row == rows - 1 else cell_height)
+            slots.append((x, y, width, height))
+    return slots
+
+
+def _relative_slot(canvas_width, canvas_height, x, y, width, height):
+    return (
+        int(round(canvas_width * x)),
+        int(round(canvas_height * y)),
+        int(round(canvas_width * width)),
+        int(round(canvas_height * height)),
+    )
+
+
+def _preset_layout_slots(preset, canvas_width, canvas_height, margin_x, margin_y, gap_x, gap_y):
+    content_x = margin_x
+    content_y = margin_y
+    content_width = max(1, canvas_width - (2 * margin_x))
+    content_height = max(1, canvas_height - (2 * margin_y))
+
+    if preset == "1_full":
+        return [(content_x, content_y, content_width, content_height)]
+    if preset == "2_vertical":
+        return _grid_slots(canvas_width, canvas_height, 1, 2, margin_x, margin_y, gap_x, gap_y)
+    if preset == "2_horizontal":
+        return _grid_slots(canvas_width, canvas_height, 2, 1, margin_x, margin_y, gap_x, gap_y)
+    if preset == "3_vertical":
+        return _grid_slots(canvas_width, canvas_height, 1, 3, margin_x, margin_y, gap_x, gap_y)
+    if preset == "4_grid":
+        return _grid_slots(canvas_width, canvas_height, 2, 2, margin_x, margin_y, gap_x, gap_y)
+    if preset == "2_top_1_bottom":
+        top_height = max(1, round((content_height - gap_y) * 0.42))
+        bottom_y = content_y + top_height + gap_y
+        bottom_height = max(1, content_y + content_height - bottom_y)
+        half_width = max(1, (content_width - gap_x) // 2)
+        return [
+            (content_x, content_y, half_width, top_height),
+            (content_x + half_width + gap_x, content_y, max(1, content_width - half_width - gap_x), top_height),
+            (content_x, bottom_y, content_width, bottom_height),
+        ]
+    if preset == "2x3_mixed":
+        row_heights = [0.20, 0.20, 0.44]
+        usable_height = max(1, content_height - (2 * gap_y))
+        heights = [max(1, round(usable_height * ratio / sum(row_heights))) for ratio in row_heights]
+        heights[-1] = max(1, content_height - (2 * gap_y) - heights[0] - heights[1])
+        half_width = max(1, (content_width - gap_x) // 2)
+        slots = []
+        y = content_y
+        for height in heights:
+            slots.append((content_x, y, half_width, height))
+            slots.append((content_x + half_width + gap_x, y, max(1, content_width - half_width - gap_x), height))
+            y += height + gap_y
+        return slots
+    return _grid_slots(canvas_width, canvas_height, 2, 3, margin_x, margin_y, gap_x, gap_y)
+
+
+def _parse_custom_layout(custom_layout, canvas_width, canvas_height, custom_units):
+    slots = []
+    for raw_line in str(custom_layout or "").splitlines():
+        line = raw_line.split("#", 1)[0].strip()
+        if not line:
+            continue
+        values = [float(value) for value in re.split(r"[\s,;]+", line) if value.strip()]
+        if len(values) < 4:
+            raise ValueError(f"Invalid custom layout line: {raw_line}")
+        if len(values) >= 5:
+            values = values[-4:]
+        x, y, width, height = values[:4]
+
+        units = custom_units
+        if units == "auto":
+            units = "relative" if max(abs(x), abs(y), abs(width), abs(height)) <= 1.0 else "pixels"
+        if units == "relative":
+            slot = _relative_slot(canvas_width, canvas_height, x, y, width, height)
+        elif units == "percent":
+            slot = _relative_slot(canvas_width, canvas_height, x / 100.0, y / 100.0, width / 100.0, height / 100.0)
+        else:
+            slot = (int(round(x)), int(round(y)), int(round(width)), int(round(height)))
+
+        if slot[2] <= 0 or slot[3] <= 0:
+            raise ValueError(f"Custom layout slot size must be greater than 0: {raw_line}")
+        slots.append(slot)
+    return slots
+
+
+def _layout_slots(layout_mode, layout_preset, canvas_width, canvas_height, columns, rows, margin_x, margin_y, gap_x, gap_y, custom_layout, custom_units):
+    if layout_mode == "custom":
+        slots = _parse_custom_layout(custom_layout, canvas_width, canvas_height, custom_units)
+        if not slots:
+            raise ValueError("Custom layout is empty")
+        return slots
+    if layout_mode == "grid":
+        return _grid_slots(canvas_width, canvas_height, columns, rows, margin_x, margin_y, gap_x, gap_y)
+    return _preset_layout_slots(layout_preset, canvas_width, canvas_height, margin_x, margin_y, gap_x, gap_y)
+
+
+def _eval_position_expr(expression, variables):
+    operators = {
+        ast.Add: lambda left, right: left + right,
+        ast.Sub: lambda left, right: left - right,
+        ast.Mult: lambda left, right: left * right,
+        ast.Div: lambda left, right: left / right,
+        ast.FloorDiv: lambda left, right: left // right,
+        ast.Mod: lambda left, right: left % right,
+        ast.Pow: lambda left, right: left ** right,
+    }
+    unary_operators = {
+        ast.UAdd: lambda value: value,
+        ast.USub: lambda value: -value,
+    }
+
+    def visit(node):
+        if isinstance(node, ast.Expression):
+            return visit(node.body)
+        if isinstance(node, ast.Constant) and isinstance(node.value, (int, float)):
+            return node.value
+        if isinstance(node, ast.Num):
+            return node.n
+        if isinstance(node, ast.Name):
+            key = node.id.casefold()
+            if key not in variables:
+                raise ValueError(f"Unknown position variable: {node.id}")
+            return variables[key]
+        if isinstance(node, ast.BinOp) and type(node.op) in operators:
+            return operators[type(node.op)](visit(node.left), visit(node.right))
+        if isinstance(node, ast.UnaryOp) and type(node.op) in unary_operators:
+            return unary_operators[type(node.op)](visit(node.operand))
+        raise ValueError(f"Unsupported position expression: {expression}")
+
+    try:
+        return visit(ast.parse(str(expression), mode="eval"))
+    except SyntaxError as exc:
+        raise ValueError(f"Invalid position expression: {expression}") from exc
+
+
+def _split_position_line(line):
+    parts = [part.strip() for part in re.split(r"[,;]+", line, maxsplit=1)]
+    if len(parts) < 2 or not parts[0] or not parts[1]:
+        raise ValueError(f"Invalid position line: {line}")
+    return parts[0], parts[1]
+
+
+def _parse_layer_positions(positions, count, background_width=0, background_height=0, layer_sizes=None):
+    variables = {
+        "a": int(background_width),
+        "b": int(background_height),
+        "bg_w": int(background_width),
+        "bg_h": int(background_height),
+        "width": int(background_width),
+        "height": int(background_height),
+    }
+    for index, (layer_width, layer_height) in enumerate(layer_sizes or [], start=1):
+        variables[f"w{index}"] = int(layer_width)
+        variables[f"h{index}"] = int(layer_height)
+
+    parsed = []
+    for raw_line in str(positions or "").splitlines():
+        line = raw_line.split("#", 1)[0].strip()
+        if not line:
+            continue
+        x_expr, y_expr = _split_position_line(line)
+        x = int(round(_eval_position_expr(x_expr, variables)))
+        y = int(round(_eval_position_expr(y_expr, variables)))
+        parsed.append((x, y))
+
+        index = len(parsed)
+        variables[f"x{index}"] = x
+        variables[f"y{index}"] = y
+
+    while len(parsed) < count:
+        parsed.append((0, 0))
+    return parsed[:count]
+
+
 def _save_dir_from_text(folder_path):
     folder_path = (folder_path or "").strip()
     if not folder_path:
@@ -197,7 +419,121 @@ def _collect_image_files(folder_path, recursive=False):
     return files
 
 
-def _resolve_matching_folder(root_path, match_text, match_mode, recursive):
+def _path_parts(value):
+    return [part.strip() for part in re.split(r"[\\/]+", str(value or "")) if part.strip()]
+
+
+def _normalized_path_parts(value):
+    return [part for part in (_normalize_match_value(item) for item in _path_parts(value)) if part]
+
+
+def _longest_common_path_run(candidate_parts, source_parts):
+    if not candidate_parts or not source_parts:
+        return 0
+
+    previous = [0] * (len(source_parts) + 1)
+    best = 0
+    for candidate_part in candidate_parts:
+        current = [0] * (len(source_parts) + 1)
+        for index, source_part in enumerate(source_parts, start=1):
+            if candidate_part == source_part:
+                current[index] = previous[index - 1] + 1
+                best = max(best, current[index])
+        previous = current
+    return best
+
+
+def _ordered_path_overlap(candidate_parts, source_parts):
+    if not candidate_parts or not source_parts:
+        return 0
+
+    count = 0
+    cursor = 0
+    for candidate_part in candidate_parts:
+        while cursor < len(source_parts) and source_parts[cursor] != candidate_part:
+            cursor += 1
+        if cursor >= len(source_parts):
+            break
+        count += 1
+        cursor += 1
+    return count
+
+
+def _candidate_context_score(candidate_path, source_context_paths):
+    if not source_context_paths:
+        return 0
+
+    candidate_parts = _normalized_path_parts(candidate_path)
+    best_score = 0
+    for source_path in source_context_paths:
+        source_parts = _normalized_path_parts(source_path)
+        run = _longest_common_path_run(candidate_parts, source_parts)
+        ordered = _ordered_path_overlap(candidate_parts, source_parts)
+        score = run * 100 + ordered
+        if candidate_parts and len(source_parts) >= 2 and candidate_parts[-1] == source_parts[-2]:
+            score += 10
+        elif candidate_parts and source_parts and candidate_parts[-1] == source_parts[-1]:
+            score += 5
+        best_score = max(best_score, score)
+    return best_score
+
+
+def _source_segment_set(source_context_paths):
+    segments = set()
+    for path_value in source_context_paths or []:
+        segments.update(_normalized_path_parts(path_value))
+    return segments
+
+
+def _add_unique_path(paths, path_value):
+    if not path_value:
+        return
+    key = os.path.normcase(os.path.normpath(path_value))
+    if key not in {os.path.normcase(os.path.normpath(path)) for path in paths}:
+        paths.append(path_value)
+
+
+def _context_root_candidates(root_path, source_context_paths):
+    root_path = (root_path or "").strip()
+    if not root_path:
+        return []
+    if not os.path.isabs(root_path):
+        root_path = os.path.join(folder_paths.get_input_directory(), root_path)
+
+    candidates = []
+    _add_unique_path(candidates, root_path)
+
+    source_segments = _source_segment_set(source_context_paths)
+    if not source_segments:
+        return candidates
+
+    def add_matching_children(parent_path):
+        if not os.path.isdir(parent_path):
+            return
+        try:
+            entries = sorted(os.listdir(parent_path), key=_natural_key)
+        except OSError:
+            return
+        for entry in entries:
+            child_path = os.path.join(parent_path, entry)
+            if os.path.isdir(child_path) and _normalize_match_value(entry) in source_segments:
+                _add_unique_path(candidates, child_path)
+
+    add_matching_children(root_path)
+
+    current_path = root_path
+    while True:
+        parent_path = os.path.dirname(current_path)
+        if not parent_path or parent_path == current_path:
+            break
+        add_matching_children(parent_path)
+        current_path = parent_path
+
+    candidates.sort(key=lambda item: (-_candidate_context_score(item, source_context_paths), _natural_key(item)))
+    return candidates
+
+
+def _resolve_matching_folder(root_path, match_text, match_mode, recursive, source_context_paths=None):
     root_path = (root_path or "").strip()
     if not root_path:
         raise ValueError("Matching root path is empty")
@@ -236,8 +572,81 @@ def _resolve_matching_folder(root_path, match_text, match_mode, recursive):
     if not matches:
         raise ValueError(f"No matching folder found for '{match_text}' under: {root_path}")
 
-    matches.sort(key=lambda item: _natural_key(os.path.relpath(item, root_path)))
+    if source_context_paths:
+        matches.sort(key=lambda item: (
+            -_candidate_context_score(item, source_context_paths),
+            _natural_key(os.path.relpath(item, root_path)),
+        ))
+    else:
+        matches.sort(key=lambda item: _natural_key(os.path.relpath(item, root_path)))
     return matches[0]
+
+
+def _resolve_best_matching_folder(root_path, match_text, match_mode, recursive, source_context_paths=None):
+    matched_folders = []
+    errors = []
+    for search_root in _context_root_candidates(root_path, source_context_paths):
+        try:
+            matched_folder = _resolve_matching_folder(
+                search_root,
+                match_text,
+                match_mode,
+                recursive,
+                source_context_paths=source_context_paths,
+            )
+            _add_unique_path(matched_folders, matched_folder)
+        except ValueError as exc:
+            errors.append(str(exc))
+
+    if not matched_folders:
+        if errors:
+            raise ValueError(errors[0])
+        raise ValueError(f"No matching folder found for '{match_text}' under: {root_path}")
+
+    matched_folders.sort(key=lambda item: (-_candidate_context_score(item, source_context_paths), _natural_key(item)))
+    return matched_folders[0]
+
+
+def _parse_context_folder_names(value):
+    names = [item.strip() for item in re.split(r"[\n,;|]+", str(value or "")) if item.strip()]
+    return names
+
+
+def _detect_context_folder(paths, context_folder_names):
+    if not context_folder_names:
+        return ""
+
+    normalized_context = {_normalize_match_value(name): name for name in context_folder_names}
+    for path_value in paths:
+        for part in re.split(r"[\\/]+", str(path_value or "")):
+            match = normalized_context.get(_normalize_match_value(part))
+            if match:
+                return match
+    return ""
+
+
+def _resolve_context_root(root_path, context_folder, context_folder_names):
+    root_path = (root_path or "").strip()
+    if not root_path or not context_folder:
+        return root_path
+    if not os.path.isabs(root_path):
+        root_path = os.path.join(folder_paths.get_input_directory(), root_path)
+
+    normalized_context = {_normalize_match_value(name) for name in context_folder_names}
+    root_parts = list(Path(os.path.normpath(root_path)).parts)
+    for index, part in enumerate(root_parts):
+        if _normalize_match_value(part) in normalized_context:
+            candidate_parts = root_parts[:]
+            candidate_parts[index] = context_folder
+            candidate = str(Path(*candidate_parts))
+            if os.path.isdir(candidate):
+                return candidate
+
+    child_candidate = os.path.join(root_path, context_folder)
+    if os.path.isdir(child_candidate):
+        return child_candidate
+
+    return root_path
 
 
 def _match_batch_sizes(batch_a, batch_b):
@@ -381,6 +790,7 @@ class NH_LoadImagesFromFolder:
                 "step": ("INT", {"default": 1, "min": 1, "max": 9999}),
                 "seed_mode": (["fixed", "increment", "decrement", "random"],),
                 "recursive": ("BOOLEAN", {"default": False}),
+                "filename_extension": ("BOOLEAN", {"default": True}),
             },
         }
 
@@ -390,10 +800,10 @@ class NH_LoadImagesFromFolder:
     CATEGORY = "NH-Nodes/Image"
 
     @classmethod
-    def IS_CHANGED(cls, folder_path, index, step, seed_mode, recursive=False, **kwargs):
+    def IS_CHANGED(cls, folder_path, index, step, seed_mode, recursive=False, filename_extension=True, **kwargs):
         return float("nan")
 
-    def load_images(self, folder_path, index, step, seed_mode, recursive=False, **kwargs):
+    def load_images(self, folder_path, index, step, seed_mode, recursive=False, filename_extension=True, **kwargs):
         resolved_folder = _resolve_load_dir(folder_path)
         image_files = _collect_image_files(resolved_folder, recursive=recursive)
         start_index = index % len(image_files)
@@ -419,7 +829,14 @@ class NH_LoadImagesFromFolder:
             output_images.append(_pil_to_tensor(img))
             output_paths.append(full_path)
 
-        return (torch.cat(output_images, dim=0), "\n".join(selected_files), "\n".join(output_paths))
+        display_filenames = []
+        for file_name in selected_files:
+            base_name = os.path.basename(file_name)
+            if not filename_extension:
+                base_name = os.path.splitext(base_name)[0]
+            display_filenames.append(base_name)
+
+        return (torch.cat(output_images, dim=0), "\n".join(display_filenames), "\n".join(output_paths))
 
 
 class NH_LoadImagesMatching:
@@ -435,6 +852,7 @@ class NH_LoadImagesMatching:
                 "index": ("INT", {"default": 0, "min": 0, "max": 999999}),
                 "step": ("INT", {"default": 1, "min": 1, "max": 9999}),
                 "repeat_count": ("INT", {"default": 1, "min": 1, "max": 9999}),
+                "context_folder_names": ("STRING", {"default": "Nam\nNu", "multiline": True}),
             },
             "optional": {
                 "source_file_names": ("STRING", {"default": "", "multiline": True}),
@@ -447,35 +865,63 @@ class NH_LoadImagesMatching:
     CATEGORY = "NH-Nodes/Image"
 
     @classmethod
-    def IS_CHANGED(cls, source_folder_path, matching_root_path, match_text, match_mode, recursive, index, step, repeat_count, source_file_names="", **kwargs):
+    def IS_CHANGED(cls, source_folder_path, matching_root_path, match_text, match_mode, recursive, index, step, repeat_count, context_folder_names="Nam\nNu", source_file_names="", **kwargs):
         return float("nan")
 
-    def load_matching(self, source_folder_path, matching_root_path, match_text, match_mode, recursive, index, step, repeat_count, source_file_names="", **kwargs):
+    def load_matching(self, source_folder_path, matching_root_path, match_text, match_mode, recursive, index, step, repeat_count, context_folder_names="Nam\nNu", source_file_names="", **kwargs):
         if not source_folder_path and kwargs.get("person_folder_path"):
             source_folder_path = kwargs["person_folder_path"]
 
-        first_source_path = str(source_folder_path or "").splitlines()[0].strip()
+        source_paths = [line.strip() for line in str(source_folder_path or "").splitlines() if line.strip()]
+        first_source_path = source_paths[0] if source_paths else ""
         resolved_source_folder = _resolve_load_dir(first_source_path)
         selected_match_text = (match_text or "").strip()
         source_names = [line.strip() for line in str(source_file_names or "").splitlines() if line.strip()]
+        context_names = _parse_context_folder_names(context_folder_names)
+        match_items = []
+
         if selected_match_text:
-            match_values = [selected_match_text]
+            item_count = max(len(source_paths), len(source_names), 1)
+            for item_index in range(item_count):
+                match_items.append((
+                    selected_match_text,
+                    source_paths[item_index] if item_index < len(source_paths) else "",
+                    source_names[item_index] if item_index < len(source_names) else "",
+                ))
         elif source_names:
-            match_values = []
-            for source_name in source_names:
+            for item_index, source_name in enumerate(source_names):
                 source_dir = os.path.dirname(source_name)
-                match_values.append(os.path.basename(os.path.normpath(source_dir)) if source_dir else os.path.basename(os.path.normpath(resolved_source_folder)))
+                source_match_text = os.path.basename(os.path.normpath(source_dir)) if source_dir else os.path.basename(os.path.normpath(resolved_source_folder))
+                match_items.append((
+                    source_match_text,
+                    source_paths[item_index] if item_index < len(source_paths) else "",
+                    source_name,
+                ))
         else:
             selected_match_text = os.path.basename(os.path.normpath(resolved_source_folder))
-            match_values = [selected_match_text]
+            match_items.append((selected_match_text, first_source_path, ""))
 
         selected_files = []
         matched_folders = []
+        matched_texts = []
         output_images = []
         target_size = None
 
-        for current_match_text in match_values:
-            matched_folder = _resolve_matching_folder(matching_root_path, current_match_text, match_mode, recursive)
+        for current_match_text, current_source_path, current_source_name in match_items:
+            context_paths = [current_source_path, current_source_name, resolved_source_folder]
+            context_folder = _detect_context_folder(
+                context_paths,
+                context_names,
+            )
+            if context_folder:
+                context_paths.append(context_folder)
+            matched_folder = _resolve_best_matching_folder(
+                matching_root_path,
+                current_match_text,
+                match_mode,
+                recursive,
+                source_context_paths=context_paths,
+            )
             image_files = _collect_image_files(matched_folder)
             start_index = index % len(image_files)
             indices = [((start_index + offset) % len(image_files)) for offset in range(step)]
@@ -492,12 +938,215 @@ class NH_LoadImagesMatching:
                 output_images.append(_pil_to_tensor(img))
                 selected_files.append(file_name)
                 matched_folders.append(matched_folder)
+                matched_texts.append(current_match_text)
 
         images = torch.cat(output_images, dim=0)
         if repeat_count > 1:
             images = images.repeat(repeat_count, 1, 1, 1)
 
-        return (images, "\n".join(selected_files), "\n".join(matched_folders), "\n".join(match_values), True)
+        return (images, "\n".join(selected_files), "\n".join(matched_folders), "\n".join(matched_texts), True)
+
+
+class NH_LayerLayoutComposite:
+    @classmethod
+    def INPUT_TYPES(cls):
+        return {
+            "required": {
+                "images": ("IMAGE",),
+                "canvas_width": ("INT", {"default": 2480, "min": 1, "max": 20000, "step": 1}),
+                "canvas_height": ("INT", {"default": 3508, "min": 1, "max": 20000, "step": 1}),
+                "background_color": ("STRING", {"default": "#FFFFFF", "multiline": False}),
+                "layout_mode": (["preset", "grid", "custom"],),
+                "layout_preset": (["2x3", "2x3_mixed", "2_top_1_bottom", "1_full", "2_vertical", "2_horizontal", "3_vertical", "4_grid"],),
+                "resize_mode": (["cover", "contain", "stretch"],),
+                "columns": ("INT", {"default": 2, "min": 1, "max": 20, "step": 1}),
+                "rows": ("INT", {"default": 3, "min": 1, "max": 20, "step": 1}),
+                "margin_x": ("INT", {"default": 150, "min": 0, "max": 10000, "step": 1}),
+                "margin_y": ("INT", {"default": 150, "min": 0, "max": 10000, "step": 1}),
+                "gap_x": ("INT", {"default": 150, "min": 0, "max": 10000, "step": 1}),
+                "gap_y": ("INT", {"default": 150, "min": 0, "max": 10000, "step": 1}),
+                "custom_units": (["auto", "relative", "percent", "pixels"],),
+                "custom_layout": ("STRING", {
+                    "default": "0.06,0.04,0.39,0.20\n0.55,0.04,0.39,0.20\n0.06,0.28,0.39,0.20\n0.55,0.28,0.39,0.20\n0.06,0.58,0.39,0.36\n0.55,0.58,0.39,0.36",
+                    "multiline": True,
+                }),
+                "background_fit": (["stretch", "cover", "contain"],),
+            },
+            "optional": {
+                "background_image": ("IMAGE",),
+            },
+        }
+
+    RETURN_TYPES = ("IMAGE", "INT", "INT", "STRING")
+    RETURN_NAMES = ("image", "slot_count", "used_count", "layout_info")
+    FUNCTION = "composite"
+    CATEGORY = "NH-Nodes/Image"
+
+    @staticmethod
+    def _paste_clipped(canvas, layer, x, y):
+        left = max(0, int(x))
+        top = max(0, int(y))
+        right = min(canvas.width, int(x) + layer.width)
+        bottom = min(canvas.height, int(y) + layer.height)
+        if right <= left or bottom <= top:
+            return
+        crop_box = (left - int(x), top - int(y), right - int(x), bottom - int(y))
+        canvas.paste(layer.crop(crop_box), (left, top))
+
+    def _create_canvas(self, canvas_width, canvas_height, background_color, background_fit, background_image=None):
+        fill_rgb = _parse_hex_color(background_color, (255, 255, 255))
+        canvas = Image.new("RGB", (canvas_width, canvas_height), fill_rgb)
+
+        if background_image is None:
+            return canvas
+
+        background = _tensor_to_pil(background_image[0])
+        fitted, offset_x, offset_y = _fit_layer_image(background, (canvas_width, canvas_height), background_fit)
+        self._paste_clipped(canvas, fitted, offset_x, offset_y)
+        return canvas
+
+    def composite(
+        self,
+        images,
+        canvas_width,
+        canvas_height,
+        background_color,
+        layout_mode,
+        layout_preset,
+        resize_mode,
+        columns,
+        rows,
+        margin_x,
+        margin_y,
+        gap_x,
+        gap_y,
+        custom_units,
+        custom_layout,
+        background_fit,
+        background_image=None,
+    ):
+        canvas_width = int(canvas_width)
+        canvas_height = int(canvas_height)
+        slots = _layout_slots(
+            layout_mode,
+            layout_preset,
+            canvas_width,
+            canvas_height,
+            int(columns),
+            int(rows),
+            int(margin_x),
+            int(margin_y),
+            int(gap_x),
+            int(gap_y),
+            custom_layout,
+            custom_units,
+        )
+
+        canvas = self._create_canvas(canvas_width, canvas_height, background_color, background_fit, background_image)
+        used_count = min(int(images.shape[0]), len(slots))
+        info_lines = []
+
+        for image_index in range(used_count):
+            x, y, width, height = slots[image_index]
+            layer = _tensor_to_pil(images[image_index])
+            fitted, offset_x, offset_y = _fit_layer_image(layer, (int(width), int(height)), resize_mode)
+            paste_x = int(x) + offset_x
+            paste_y = int(y) + offset_y
+            self._paste_clipped(canvas, fitted, paste_x, paste_y)
+            info_lines.append(
+                f"{image_index}: x={int(x)}, y={int(y)}, w={int(width)}, h={int(height)}, mode={resize_mode}"
+            )
+
+        return (_pil_to_tensor(canvas), len(slots), used_count, "\n".join(info_lines))
+
+
+class NH_LayerStackComposite:
+    @classmethod
+    def INPUT_TYPES(cls):
+        optional_inputs = {
+            f"layer_{index}": ("IMAGE",)
+            for index in range(1, _MAX_LAYER_STACK_INPUTS + 1)
+        }
+        return {
+            "required": {
+                "background_image": ("IMAGE",),
+                "layer_count": ("INT", {"default": 1, "min": 0, "max": _MAX_LAYER_STACK_INPUTS, "step": 1}),
+                "positions": ("STRING", {
+                    "default": "0,0",
+                    "multiline": True,
+                }),
+            },
+            "optional": optional_inputs,
+        }
+
+    RETURN_TYPES = ("IMAGE", "INT", "STRING")
+    RETURN_NAMES = ("image", "used_count", "layer_info")
+    FUNCTION = "composite"
+    CATEGORY = "NH-Nodes/Image"
+
+    @classmethod
+    def IS_CHANGED(cls, **kwargs):
+        return float("nan")
+
+    @staticmethod
+    def _paste_clipped(canvas, layer, x, y):
+        x = int(x)
+        y = int(y)
+        left = max(0, x)
+        top = max(0, y)
+        right = min(canvas.width, x + layer.width)
+        bottom = min(canvas.height, y + layer.height)
+        if right <= left or bottom <= top:
+            return False
+
+        crop_box = (left - x, top - y, right - x, bottom - y)
+        canvas.paste(layer.crop(crop_box), (left, top))
+        return True
+
+    def composite(self, background_image, layer_count, positions, **kwargs):
+        background = _tensor_to_pil(background_image[0])
+        canvas = background.copy()
+        requested_count = max(0, min(int(layer_count), _MAX_LAYER_STACK_INPUTS))
+        layer_images = {}
+        layer_sizes = []
+        for index in range(1, requested_count + 1):
+            layer = kwargs.get(f"layer_{index}")
+            if layer is None:
+                layer_sizes.append((0, 0))
+                continue
+            layer_image = _tensor_to_pil(layer[0])
+            layer_images[index] = layer_image
+            layer_sizes.append((layer_image.width, layer_image.height))
+
+        layer_positions = _parse_layer_positions(
+            positions,
+            requested_count,
+            background.width,
+            background.height,
+            layer_sizes=layer_sizes,
+        )
+        used_count = 0
+        info_lines = []
+
+        for index in range(1, requested_count + 1):
+            layer_image = layer_images.get(index)
+            if layer_image is None:
+                info_lines.append(f"layer_{index}: missing")
+                continue
+
+            x, y = layer_positions[index - 1]
+            pasted = self._paste_clipped(canvas, layer_image, x, y)
+            if pasted:
+                used_count += 1
+                info_lines.append(
+                    f"layer_{index}: x={x}, y={y}, w={layer_image.width}, h={layer_image.height}"
+                )
+            else:
+                info_lines.append(
+                    f"layer_{index}: outside canvas x={x}, y={y}, w={layer_image.width}, h={layer_image.height}"
+                )
+
+        return (_pil_to_tensor(canvas), used_count, "\n".join(info_lines))
 
 
 class NH_ImageResizeByUnit:
@@ -749,6 +1398,8 @@ NODE_CLASS_MAPPINGS = {
     "NH_SaveImagePath": NH_SaveImagePath,
     "NH_LoadImagesFromFolder": NH_LoadImagesFromFolder,
     "NH_LoadImagesMatching": NH_LoadImagesMatching,
+    "NH_LayerLayoutComposite": NH_LayerLayoutComposite,
+    "NH_LayerStackComposite": NH_LayerStackComposite,
     "NH_ImageResizeByUnit": NH_ImageResizeByUnit,
     "NH_ImageCompare": NH_ImageCompare,
     "NH_ImageLabel": NH_ImageLabel,
@@ -758,6 +1409,8 @@ NODE_DISPLAY_NAME_MAPPINGS = {
     "NH_SaveImagePath": "Save Image Path (NH)",
     "NH_LoadImagesFromFolder": "Load Images Folder (NH)",
     "NH_LoadImagesMatching": "Load images matching",
+    "NH_LayerLayoutComposite": "Layer Layout Composite (NH)",
+    "NH_LayerStackComposite": "Layer Stack Composite (NH)",
     "NH_ImageResizeByUnit": "Image Resize Unit (NH)",
     "NH_ImageCompare": "Image Compare (NH)",
     "NH_ImageLabel": "Image Label (NH)",

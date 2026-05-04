@@ -29,6 +29,8 @@ _MODULE_NAMES = [
     "list_nodes",
     # NEW — Phase 6: Batch & Counter
     "batch_nodes",
+    # Resolution
+    "smart_resolution_picker",
 ]
 
 NODE_CLASS_MAPPINGS = {}
@@ -61,6 +63,20 @@ try:
             return web.json_response({"count": image_count, "path": resolved_folder})
         except Exception as exc:
             return web.json_response({"count": 0, "error": str(exc)})
+
+    @PromptServer.instance.routes.get("/nh-nodes/smart-resolution-picker/presets")
+    async def nh_smart_resolution_picker_presets(request):
+        try:
+            from .resolution_data import DEFAULT_MODEL_LABEL, DEFAULT_PRESET, MODEL_LABELS, PRESET_LABELS_BY_MODEL
+
+            return web.json_response({
+                "models": MODEL_LABELS,
+                "default_model": DEFAULT_MODEL_LABEL,
+                "default_preset": DEFAULT_PRESET,
+                "presets_by_model": PRESET_LABELS_BY_MODEL,
+            })
+        except Exception as exc:
+            return web.json_response({"error": str(exc)}, status=500)
 except Exception as e:
     print(f"[NH-Nodes] Failed to register web routes: {e}")
 
