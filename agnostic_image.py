@@ -92,24 +92,24 @@ class NH_AgnosticImageGenerator:
         h, w = img_np.shape[:2]
 
         # Tìm contour của mask để vẽ viền
-        mask_uint8 = (alpha * 255).astype(np.uint8)
+        mask_uint8 = np.ascontiguousarray((alpha * 255).astype(np.uint8))
         contours, _ = cv2.findContours(mask_uint8, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
 
         # Nửa trái: ảnh gốc + viền xanh
-        left = (img_np * 255).astype(np.uint8)
+        left = np.ascontiguousarray((np.clip(img_np, 0.0, 1.0) * 255).astype(np.uint8))
         cv2.drawContours(left, contours, -1, (0, 255, 0), 2)
 
         # Tô nhẹ vùng mask bằng màu xanh semi-transparent
-        overlay = left.copy()
+        overlay = np.ascontiguousarray(left.copy())
         cv2.drawContours(overlay, contours, -1, (0, 255, 0), -1)
         left = cv2.addWeighted(left, 0.7, overlay, 0.3, 0)
 
         # Nửa phải: agnostic
-        right = (agnostic * 255).astype(np.uint8)
+        right = np.ascontiguousarray((np.clip(agnostic, 0.0, 1.0) * 255).astype(np.uint8))
 
         # Ghép 2 nửa
         mid = w // 2
-        composite = left.copy()
+        composite = np.ascontiguousarray(left.copy())
         composite[:, mid:] = right[:, mid:]
 
         # Vẽ đường chia giữa
