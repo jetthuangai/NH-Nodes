@@ -2,6 +2,12 @@
 
 import re
 
+from comfy_execution.graph_utils import ExecutionBlocker
+
+
+_MAX_TEXT_INDEX_ITEMS = 64
+_MAX_TEXT_CONCAT_ITEMS = 64
+
 
 class NH_StringOps:
     """Xu ly chuoi da nang."""
@@ -224,12 +230,100 @@ class NH_RegexExtract:
             return (text, False, "", 0)
 
 
+class NH_TextIndex:
+    """Output one text slot by 1-based index."""
+
+    @classmethod
+    def INPUT_TYPES(cls):
+        texts = {
+            f"text_{index}": ("STRING", {"default": "", "multiline": True})
+            for index in range(1, _MAX_TEXT_INDEX_ITEMS + 1)
+        }
+        return {
+            "required": {
+                "index": ("INT", {"default": 1, "min": 1, "max": _MAX_TEXT_INDEX_ITEMS}),
+                "text_count": ("INT", {"default": 5, "min": 1, "max": _MAX_TEXT_INDEX_ITEMS}),
+            },
+            "optional": texts,
+        }
+
+    RETURN_TYPES = ("STRING",)
+    RETURN_NAMES = ("text",)
+    FUNCTION = "pick_text"
+    CATEGORY = "NH-Nodes/Text"
+
+    def pick_text(self, index, text_count, **kwargs):
+        try:
+            index = int(index)
+            text_count = max(1, min(int(text_count), _MAX_TEXT_INDEX_ITEMS))
+        except (TypeError, ValueError):
+            return (ExecutionBlocker(None),)
+
+        if index < 1 or index > text_count:
+            return (ExecutionBlocker(None),)
+
+        text = kwargs.get(f"text_{index}", "")
+        if text is None or text == "":
+            return (ExecutionBlocker(None),)
+
+        return (str(text),)
+
+
+class NH_TextConcatenate:
+    """Concatenate two or more string slots."""
+
+    @classmethod
+    def INPUT_TYPES(cls):
+        strings = {
+            f"string_{index}": ("STRING", {"default": "", "multiline": False})
+            for index in range(1, _MAX_TEXT_CONCAT_ITEMS + 1)
+        }
+        return {
+            "required": {
+                "string_count": ("INT", {"default": 2, "min": 2, "max": _MAX_TEXT_CONCAT_ITEMS}),
+                "delimiter": ("STRING", {"default": "/"}),
+                "clean_whitespace": ("BOOLEAN", {"default": True}),
+            },
+            "optional": strings,
+        }
+
+    RETURN_TYPES = ("STRING",)
+    RETURN_NAMES = ("text",)
+    FUNCTION = "concatenate"
+    CATEGORY = "NH-Nodes/Text"
+
+    def concatenate(self, string_count, delimiter, clean_whitespace, **kwargs):
+        try:
+            string_count = max(2, min(int(string_count), _MAX_TEXT_CONCAT_ITEMS))
+        except (TypeError, ValueError):
+            string_count = 2
+
+        actual_delimiter = str(delimiter).replace("\\n", "\n").replace("\\t", "\t")
+        parts = []
+
+        for index in range(1, string_count + 1):
+            value = kwargs.get(f"string_{index}", "")
+            if value is None:
+                value = ""
+            value = str(value)
+
+            if clean_whitespace:
+                value = " ".join(value.split())
+
+            if value:
+                parts.append(value)
+
+        return (actual_delimiter.join(parts),)
+
+
 # --- Dang ky ---
 NODE_CLASS_MAPPINGS = {
     "NH_StringOps": NH_StringOps,
     "NH_PromptJoin": NH_PromptJoin,
     "NH_TextSplit": NH_TextSplit,
     "NH_RegexExtract": NH_RegexExtract,
+    "NH_TextIndex": NH_TextIndex,
+    "NH_TextConcatenate": NH_TextConcatenate,
 }
 
 NODE_DISPLAY_NAME_MAPPINGS = {
@@ -237,4 +331,6 @@ NODE_DISPLAY_NAME_MAPPINGS = {
     "NH_PromptJoin": "Prompt Join (NH)",
     "NH_TextSplit": "Text Split (NH)",
     "NH_RegexExtract": "Regex Extract (NH)",
+    "NH_TextIndex": "Text Index (NH)",
+    "NH_TextConcatenate": "Text Concatenate (NH)",
 }

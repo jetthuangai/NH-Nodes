@@ -29,6 +29,8 @@ _MODULE_NAMES = [
     "list_nodes",
     # NEW — Phase 6: Batch & Counter
     "batch_nodes",
+    # Indexed loaders
+    "loader_index_nodes",
     # Resolution
     "smart_resolution_picker",
 ]

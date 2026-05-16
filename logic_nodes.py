@@ -5,6 +5,9 @@ import re
 from comfy_execution.graph_utils import ExecutionBlocker
 
 
+_MAX_VALUE_MATCH_ITEMS = 64
+
+
 class NH_Compare:
     """Compare two values and return a BOOL result."""
 
@@ -289,6 +292,62 @@ class NH_GateSwitch:
         return (ExecutionBlocker(None),)
 
 
+class NH_ValueMatchIndex:
+    """Return the 1-based index of the only configured value matching input."""
+
+    @classmethod
+    def INPUT_TYPES(cls):
+        values = {
+            f"value_{index}": ("STRING", {"default": "", "multiline": False})
+            for index in range(1, _MAX_VALUE_MATCH_ITEMS + 1)
+        }
+
+        return {
+            "required": {
+                "input": ("*",),
+                "compare_mode": (["in", "is"], {"default": "in"}),
+                "value_count": (
+                    "INT",
+                    {"default": 5, "min": 1, "max": _MAX_VALUE_MATCH_ITEMS},
+                ),
+                "no_match_index": ("INT", {"default": -1, "min": -9999, "max": 9999}),
+                "multi_match_index": ("INT", {"default": -1, "min": -9999, "max": 9999}),
+            },
+            "optional": values,
+        }
+
+    RETURN_TYPES = ("INT",)
+    RETURN_NAMES = ("index",)
+    FUNCTION = "match_index"
+    CATEGORY = "NH-Nodes/Logic"
+
+    def match_index(self, input, compare_mode, value_count, no_match_index, multi_match_index, **kwargs):
+        input_text = "" if input is None else str(input)
+        count = max(1, min(int(value_count), _MAX_VALUE_MATCH_ITEMS))
+        matches = []
+
+        for index in range(1, count + 1):
+            raw_value = kwargs.get(f"value_{index}", "")
+            value = "" if raw_value is None else str(raw_value)
+            if value == "":
+                continue
+
+            if compare_mode == "is":
+                matched = value == input_text
+            else:
+                matched = value in input_text
+
+            if matched:
+                matches.append(index)
+                if len(matches) > 1:
+                    return (int(multi_match_index),)
+
+        if len(matches) == 1:
+            return (matches[0],)
+
+        return (int(no_match_index),)
+
+
 NODE_CLASS_MAPPINGS = {
     "NH_Compare": NH_Compare,
     "NH_LogicGate": NH_LogicGate,
@@ -297,6 +356,7 @@ NODE_CLASS_MAPPINGS = {
     "NH_AnySwitchBoolean": NH_AnySwitchBoolean,
     "NH_AnySwitch": NH_AnyBranchSwitch,
     "NH_GateSwitch": NH_GateSwitch,
+    "NH_ValueMatchIndex": NH_ValueMatchIndex,
 }
 
 NODE_DISPLAY_NAME_MAPPINGS = {
@@ -307,4 +367,5 @@ NODE_DISPLAY_NAME_MAPPINGS = {
     "NH_AnySwitchBoolean": "Any Switch (NH)",
     "NH_AnySwitch": "Any Branch Switch (NH)",
     "NH_GateSwitch": "Gate Switch (NH)",
+    "NH_ValueMatchIndex": "Value Match Index (NH)",
 }

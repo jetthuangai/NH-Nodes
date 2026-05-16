@@ -3,6 +3,7 @@ import re
 import unicodedata
 import uuid
 import ast
+import hashlib
 from pathlib import Path
 
 import numpy as np
@@ -376,6 +377,18 @@ def _save_dir_from_text(folder_path):
     return os.path.join(folder_paths.get_output_directory(), folder_path)
 
 
+def _save_child_dir(save_dir, folder_name):
+    folder_name = str(folder_name or "").strip()
+    if not folder_name:
+        return save_dir
+
+    base_dir = os.path.abspath(save_dir)
+    child_dir = os.path.abspath(os.path.join(base_dir, folder_name))
+    if os.path.commonpath([base_dir, child_dir]) != base_dir:
+        raise ValueError("new_folder_name must stay inside folder_path")
+    return child_dir
+
+
 def _resolve_load_dir(folder_path, image="", upload_probe=""):
     folder_path = (folder_path or "").strip()
     if folder_path:
@@ -706,6 +719,8 @@ class NH_SaveImagePath:
             "required": {
                 "images": ("IMAGE",),
                 "folder_path": ("STRING", {"default": "", "multiline": False}),
+                "create_new_folder": ("BOOLEAN", {"default": False}),
+                "new_folder_name": ("STRING", {"default": "", "multiline": False}),
                 "filename_prefix": ("STRING", {"default": "NH", "multiline": False}),
                 "number_suffix": ("BOOLEAN", {"default": True}),
                 "preview_image": ("BOOLEAN", {"default": False}),
@@ -719,8 +734,10 @@ class NH_SaveImagePath:
     FUNCTION = "save_images"
     CATEGORY = "NH-Nodes/Image"
 
-    def save_images(self, images, folder_path, filename_prefix, number_suffix=True, preview_image=False, file_format="png", dpi=300):
+    def save_images(self, images, folder_path, filename_prefix, number_suffix=True, preview_image=False, file_format="png", dpi=300, create_new_folder=False, new_folder_name=""):
         save_dir = _save_dir_from_text(folder_path)
+        if create_new_folder:
+            save_dir = _save_child_dir(save_dir, new_folder_name)
         os.makedirs(save_dir, exist_ok=True)
 
         prefix = (filename_prefix or "NH").strip() or "NH"
@@ -791,6 +808,7 @@ class NH_LoadImagesFromFolder:
                 "seed_mode": (["fixed", "increment", "decrement", "random"],),
                 "recursive": ("BOOLEAN", {"default": False}),
                 "filename_extension": ("BOOLEAN", {"default": True}),
+                "path_output": (["file_path", "folder_path"], {"default": "file_path"}),
             },
         }
 
@@ -800,10 +818,46 @@ class NH_LoadImagesFromFolder:
     CATEGORY = "NH-Nodes/Image"
 
     @classmethod
-    def IS_CHANGED(cls, folder_path, index, step, seed_mode, recursive=False, filename_extension=True, **kwargs):
-        return float("nan")
+    def IS_CHANGED(cls, folder_path, index, step, seed_mode, recursive=False, filename_extension=True, path_output="file_path", **kwargs):
+        try:
+            resolved_folder = _resolve_load_dir(folder_path)
+            image_files = _collect_image_files(resolved_folder, recursive=recursive)
+            step = max(1, int(step))
+            start_index = int(index) % len(image_files)
 
-    def load_images(self, folder_path, index, step, seed_mode, recursive=False, filename_extension=True, **kwargs):
+            if seed_mode == "decrement":
+                indices = [((start_index - offset) % len(image_files)) for offset in range(step)]
+            else:
+                indices = [((start_index + offset) % len(image_files)) for offset in range(step)]
+
+            hasher = hashlib.sha256()
+            signature_parts = (
+                os.path.abspath(resolved_folder),
+                str(start_index),
+                str(step),
+                str(seed_mode),
+                str(bool(recursive)),
+                str(bool(filename_extension)),
+                str(path_output),
+            )
+            for part in signature_parts:
+                hasher.update(part.encode("utf-8", errors="replace"))
+                hasher.update(b"\0")
+
+            for selected_index in indices:
+                rel_path = image_files[selected_index]
+                full_path = os.path.join(resolved_folder, rel_path)
+                stat = os.stat(full_path)
+                file_parts = (rel_path, str(stat.st_size), str(stat.st_mtime_ns))
+                for part in file_parts:
+                    hasher.update(str(part).encode("utf-8", errors="replace"))
+                    hasher.update(b"\0")
+
+            return hasher.hexdigest()
+        except Exception as exc:
+            return f"error:{type(exc).__name__}:{exc}"
+
+    def load_images(self, folder_path, index, step, seed_mode, recursive=False, filename_extension=True, path_output="file_path", **kwargs):
         resolved_folder = _resolve_load_dir(folder_path)
         image_files = _collect_image_files(resolved_folder, recursive=recursive)
         start_index = index % len(image_files)
@@ -827,7 +881,10 @@ class NH_LoadImagesFromFolder:
             elif img.size != target_size:
                 img = _resize_image(img, target_size, "lanczos")
             output_images.append(_pil_to_tensor(img))
-            output_paths.append(full_path)
+            if path_output == "folder_path":
+                output_paths.append(os.path.dirname(full_path))
+            else:
+                output_paths.append(full_path)
 
         display_filenames = []
         for file_name in selected_files:
