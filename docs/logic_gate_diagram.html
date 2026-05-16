@@ -1,0 +1,312 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+<meta charset="UTF-8">
+<title>Logic Gate (NH) — Visual Guide</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body { background: #1a1a2e; color: #e0e0e0; font-family: 'Segoe UI', sans-serif; padding: 40px; }
+  h1 { text-align: center; color: #00d4aa; margin-bottom: 10px; font-size: 28px; }
+  .subtitle { text-align: center; color: #888; margin-bottom: 50px; font-size: 14px; }
+
+  .scenario {
+    background: #16213e; border-radius: 16px; padding: 36px; margin-bottom: 40px;
+    border: 1px solid #2a3a5c;
+  }
+  .scenario-title {
+    font-size: 18px; font-weight: 700; color: #00d4aa; margin-bottom: 6px;
+  }
+  .scenario-desc {
+    font-size: 13px; color: #999; margin-bottom: 24px;
+  }
+
+  .flow { display: flex; align-items: center; justify-content: center; gap: 0; flex-wrap: wrap; }
+
+  .node {
+    background: #2d2d3f; border-radius: 10px; padding: 14px 18px; min-width: 160px;
+    border: 2px solid #3a3a5c; position: relative; text-align: center;
+  }
+  .node-label { font-size: 11px; color: #888; margin-bottom: 4px; }
+  .node-name { font-size: 14px; font-weight: 700; color: #fff; margin-bottom: 8px; }
+  .node-detail { font-size: 12px; color: #aaa; line-height: 1.6; }
+  .node-output {
+    font-size: 13px; font-weight: 700; margin-top: 8px; padding: 4px 10px;
+    border-radius: 6px; display: inline-block;
+  }
+  .val-true { background: #1b4332; color: #52b788; }
+  .val-false { background: #4a1525; color: #e85d75; }
+  .val-data { background: #1a3a5c; color: #64b5f6; }
+  .val-blocked { background: #3d2c2c; color: #ff6b6b; }
+  .val-pass { background: #1b4332; color: #52b788; }
+
+  .node.highlight { border-color: #00d4aa; box-shadow: 0 0 20px rgba(0,212,170,0.2); }
+  .node.gate { border-color: #ffd166; }
+  .node.dim { opacity: 0.4; border-style: dashed; }
+
+  .arrow {
+    width: 50px; height: 2px; background: #555; position: relative; flex-shrink: 0;
+  }
+  .arrow::after {
+    content: ''; position: absolute; right: -1px; top: -5px;
+    border: 6px solid transparent; border-left: 8px solid #555;
+  }
+  .arrow.active { background: #52b788; }
+  .arrow.active::after { border-left-color: #52b788; }
+  .arrow.blocked { background: #e85d75; opacity: 0.4; }
+  .arrow.blocked::after { border-left-color: #e85d75; }
+
+  .truth-table {
+    width: 100%; border-collapse: collapse; margin-top: 30px;
+  }
+  .truth-table th {
+    background: #2a3a5c; padding: 10px 16px; text-align: center;
+    font-size: 13px; color: #00d4aa; border: 1px solid #3a3a5c;
+  }
+  .truth-table td {
+    padding: 8px 16px; text-align: center; font-size: 13px;
+    border: 1px solid #2a3a5c;
+  }
+  .truth-table tr:nth-child(even) { background: #1a2744; }
+
+  .section-title {
+    font-size: 22px; font-weight: 700; color: #ffd166; margin: 50px 0 20px 0;
+    text-align: center;
+  }
+
+  .examples-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 20px; }
+  @media (max-width: 900px) { .examples-grid { grid-template-columns: 1fr; } }
+
+  .example-card {
+    background: #16213e; border-radius: 12px; padding: 20px;
+    border: 1px solid #2a3a5c;
+  }
+  .example-card h3 { font-size: 15px; color: #ffd166; margin-bottom: 12px; }
+  .example-card .flow { justify-content: flex-start; }
+  .example-card .node { min-width: 120px; padding: 10px 14px; }
+  .example-card .arrow { width: 30px; }
+</style>
+</head>
+<body>
+
+<h1>Logic Gate (NH) — Visual Guide</h1>
+<p class="subtitle">NH-Nodes for ComfyUI &mdash; jetthuang.com</p>
+
+<!-- ============ SCENARIO 1 ============ -->
+<div class="scenario">
+  <div class="scenario-title">Scenario 1: Process only large landscape images</div>
+  <div class="scenario-desc">AND gate &mdash; Both conditions must be True to proceed. Skip small or portrait images.</div>
+
+  <div class="flow">
+    <div class="node">
+      <div class="node-label">NH-Nodes</div>
+      <div class="node-name">Compare</div>
+      <div class="node-detail">width > 1024</div>
+      <div class="node-output val-true">True</div>
+    </div>
+    <div class="arrow active"></div>
+    <div class="node gate highlight" style="min-width: 200px;">
+      <div class="node-label">NH-Nodes</div>
+      <div class="node-name" style="color: #ffd166;">Logic Gate</div>
+      <div class="node-detail">
+        a = True<br>
+        op = <b>AND</b><br>
+        b = True
+      </div>
+      <div class="node-output val-true">True</div>
+    </div>
+    <div class="arrow active"></div>
+    <div class="node">
+      <div class="node-label">NH-Nodes</div>
+      <div class="node-name">Gate Switch</div>
+      <div class="node-detail">enabled = True</div>
+      <div class="node-output val-pass">PASS</div>
+    </div>
+    <div class="arrow active"></div>
+    <div class="node">
+      <div class="node-name">Upscale Model</div>
+      <div class="node-detail">Executes!</div>
+      <div class="node-output val-data">IMAGE</div>
+    </div>
+  </div>
+
+  <div style="margin-top:16px;"></div>
+
+  <div class="flow">
+    <div class="node">
+      <div class="node-label">NH-Nodes</div>
+      <div class="node-name">Compare</div>
+      <div class="node-detail">height > 1024</div>
+      <div class="node-output val-true">True</div>
+    </div>
+    <div class="arrow active" style="width:30px;"></div>
+    <div style="font-size:12px; color:#52b788; padding: 0 8px;">b &uarr;</div>
+  </div>
+</div>
+
+<!-- ============ SCENARIO 2 ============ -->
+<div class="scenario">
+  <div class="scenario-title">Scenario 2: Run when EITHER condition is met</div>
+  <div class="scenario-desc">OR gate &mdash; At least one condition True. E.g., apply face fix if face detected OR user forced it.</div>
+
+  <div class="flow">
+    <div class="node">
+      <div class="node-name">Face Detect</div>
+      <div class="node-detail">face_count > 0</div>
+      <div class="node-output val-false">False</div>
+    </div>
+    <div class="arrow blocked"></div>
+    <div class="node gate highlight">
+      <div class="node-label">NH-Nodes</div>
+      <div class="node-name" style="color: #ffd166;">Logic Gate</div>
+      <div class="node-detail">
+        a = False<br>
+        op = <b>OR</b><br>
+        b = True
+      </div>
+      <div class="node-output val-true">True</div>
+    </div>
+    <div class="arrow active"></div>
+    <div class="node">
+      <div class="node-label">NH-Nodes</div>
+      <div class="node-name">If/Else</div>
+      <div class="node-detail">condition = True</div>
+      <div class="node-output val-data">Face Fix</div>
+    </div>
+  </div>
+
+  <div style="margin-top:16px;"></div>
+
+  <div class="flow">
+    <div class="node">
+      <div class="node-name">Boolean Switch</div>
+      <div class="node-detail">force_fix = True</div>
+      <div class="node-output val-true">True</div>
+    </div>
+    <div class="arrow active" style="width:30px;"></div>
+    <div style="font-size:12px; color:#52b788; padding: 0 8px;">b &uarr;</div>
+  </div>
+</div>
+
+<!-- ============ SCENARIO 3 ============ -->
+<div class="scenario">
+  <div class="scenario-title">Scenario 3: Toggle pipeline OFF with NOT</div>
+  <div class="scenario-desc">NOT gate &mdash; Invert a boolean. One switch controls enable/disable.</div>
+
+  <div class="flow">
+    <div class="node">
+      <div class="node-label">NH-Nodes</div>
+      <div class="node-name">Boolean Switch</div>
+      <div class="node-detail">skip_upscale = True</div>
+      <div class="node-output val-true">True</div>
+    </div>
+    <div class="arrow active"></div>
+    <div class="node gate highlight">
+      <div class="node-label">NH-Nodes</div>
+      <div class="node-name" style="color: #ffd166;">Logic Gate</div>
+      <div class="node-detail">
+        a = True<br>
+        op = <b>NOT</b>
+      </div>
+      <div class="node-output val-false">False</div>
+    </div>
+    <div class="arrow blocked"></div>
+    <div class="node dim">
+      <div class="node-label">NH-Nodes</div>
+      <div class="node-name">Gate Switch</div>
+      <div class="node-detail">enabled = False</div>
+      <div class="node-output val-blocked">BLOCKED</div>
+    </div>
+    <div class="arrow blocked"></div>
+    <div class="node dim">
+      <div class="node-name">Upscale 4x</div>
+      <div class="node-detail">Skipped!</div>
+      <div class="node-output val-blocked">SKIP</div>
+    </div>
+  </div>
+</div>
+
+<!-- ============ TRUTH TABLE ============ -->
+<div class="section-title">Truth Table</div>
+
+<table class="truth-table">
+  <tr>
+    <th>a</th><th>b</th><th>AND</th><th>OR</th><th>NOT a</th><th>XOR</th><th>NAND</th><th>NOR</th>
+  </tr>
+  <tr>
+    <td style="color:#e85d75">F</td><td style="color:#e85d75">F</td>
+    <td style="color:#e85d75">F</td><td style="color:#e85d75">F</td><td style="color:#52b788">T</td>
+    <td style="color:#e85d75">F</td><td style="color:#52b788">T</td><td style="color:#52b788">T</td>
+  </tr>
+  <tr>
+    <td style="color:#e85d75">F</td><td style="color:#52b788">T</td>
+    <td style="color:#e85d75">F</td><td style="color:#52b788">T</td><td style="color:#52b788">T</td>
+    <td style="color:#52b788">T</td><td style="color:#52b788">T</td><td style="color:#e85d75">F</td>
+  </tr>
+  <tr>
+    <td style="color:#52b788">T</td><td style="color:#e85d75">F</td>
+    <td style="color:#e85d75">F</td><td style="color:#52b788">T</td><td style="color:#e85d75">F</td>
+    <td style="color:#52b788">T</td><td style="color:#52b788">T</td><td style="color:#e85d75">F</td>
+  </tr>
+  <tr>
+    <td style="color:#52b788">T</td><td style="color:#52b788">T</td>
+    <td style="color:#52b788">T</td><td style="color:#52b788">T</td><td style="color:#e85d75">F</td>
+    <td style="color:#e85d75">F</td><td style="color:#e85d75">F</td><td style="color:#e85d75">F</td>
+  </tr>
+</table>
+
+<!-- ============ QUICK EXAMPLES ============ -->
+<div class="section-title">Quick Patterns</div>
+
+<div class="examples-grid">
+  <div class="example-card">
+    <h3>AND: Both must pass</h3>
+    <div class="flow">
+      <div class="node"><div class="node-name" style="font-size:12px">Check A</div><div class="node-output val-true" style="font-size:11px">T</div></div>
+      <div class="arrow active" style="width:20px"></div>
+      <div class="node gate"><div class="node-name" style="font-size:12px;color:#ffd166">AND</div><div class="node-output val-true" style="font-size:11px">T</div></div>
+      <div class="arrow active" style="width:20px"></div>
+      <div class="node"><div class="node-name" style="font-size:12px">Run</div></div>
+    </div>
+  </div>
+
+  <div class="example-card">
+    <h3>OR: Any one passes</h3>
+    <div class="flow">
+      <div class="node"><div class="node-name" style="font-size:12px">Check A</div><div class="node-output val-false" style="font-size:11px">F</div></div>
+      <div class="arrow blocked" style="width:20px"></div>
+      <div class="node gate"><div class="node-name" style="font-size:12px;color:#ffd166">OR</div><div class="node-output val-true" style="font-size:11px">T</div></div>
+      <div class="arrow active" style="width:20px"></div>
+      <div class="node"><div class="node-name" style="font-size:12px">Run</div></div>
+    </div>
+  </div>
+
+  <div class="example-card">
+    <h3>NOT: Invert toggle</h3>
+    <div class="flow">
+      <div class="node"><div class="node-name" style="font-size:12px">Skip?</div><div class="node-output val-true" style="font-size:11px">T</div></div>
+      <div class="arrow active" style="width:20px"></div>
+      <div class="node gate"><div class="node-name" style="font-size:12px;color:#ffd166">NOT</div><div class="node-output val-false" style="font-size:11px">F</div></div>
+      <div class="arrow blocked" style="width:20px"></div>
+      <div class="node dim"><div class="node-name" style="font-size:12px">Block</div></div>
+    </div>
+  </div>
+
+  <div class="example-card">
+    <h3>XOR: Only one, not both</h3>
+    <div class="flow">
+      <div class="node"><div class="node-name" style="font-size:12px">Mode A</div><div class="node-output val-true" style="font-size:11px">T</div></div>
+      <div class="arrow active" style="width:20px"></div>
+      <div class="node gate"><div class="node-name" style="font-size:12px;color:#ffd166">XOR</div><div class="node-output val-true" style="font-size:11px">T</div></div>
+      <div class="arrow active" style="width:20px"></div>
+      <div class="node"><div class="node-name" style="font-size:12px">Run</div></div>
+    </div>
+  </div>
+</div>
+
+<p style="text-align:center; margin-top: 50px; color: #555; font-size: 12px;">
+  NH-Nodes &mdash; <a href="https://jetthuang.com" style="color:#00d4aa">jetthuang.com</a> &mdash;
+  <a href="https://github.com/jetthuangai/NH-Nodes" style="color:#64b5f6">GitHub</a>
+</p>
+
+</body>
+</html>
