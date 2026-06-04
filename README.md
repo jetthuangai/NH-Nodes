@@ -1,189 +1,279 @@
 # NH-Nodes for ComfyUI
 
-**32 custom nodes** to supercharge your ComfyUI workflows — from mask editing and image processing to logic control, prompt building, and batch automation.
+Production-focused custom nodes for ComfyUI workflows: image loading, tiling,
+compositing, mask utilities, smart resize, logic routing, prompt/text tooling,
+batch helpers, indexed model loaders, and VTON preprocessing.
 
-[![Registry](https://img.shields.io/badge/ComfyUI_Registry-NH--Nodes-blue)](https://registry.comfy.org/nodes/nh-nodes)
-[![GitHub](https://img.shields.io/github/stars/jetthuangai/NH-Nodes?style=social)](https://github.com/jetthuangai/NH-Nodes)
-[![License: MIT](https://img.shields.io/badge/License-MIT-green.svg)](LICENSE)
+[![ComfyUI Registry](https://img.shields.io/badge/ComfyUI_Registry-nh--nodes-2563eb)](https://registry.comfy.org/nodes/nh-nodes)
+[![GitHub](https://img.shields.io/badge/GitHub-jetthuangai%2FNH--Nodes-111827)](https://github.com/jetthuangai/NH-Nodes)
+[![License: MIT](https://img.shields.io/badge/License-MIT-16a34a.svg)](LICENSE)
 
-**Author:** [jetthuang.com](https://jetthuang.com) | **Hugging Face:** [nhathoangfoto](https://huggingface.co/nhathoangfoto) | **Support:** [PayPal](https://paypal.me/nhathoangfoto)
+- **Author:** [jetthuang.com](https://jetthuang.com)
+- **Hugging Face:** [nhathoangfoto](https://huggingface.co/nhathoangfoto)
+- **Support:** [PayPal](https://paypal.me/nhathoangfoto)
+
+---
+
+## Why NH-Nodes
+
+NH-Nodes is built for practical workflow construction. It focuses on reusable
+building blocks that remove repetitive graph work:
+
+- Load images with filename/path metadata.
+- Split images into tiles, upscale or process tiles, then stitch them back.
+- Build image grids, layer composites, comparisons, and labeled previews.
+- Resize images and masks with predictable aspect-ratio behavior.
+- Route workflow branches with boolean logic and generic data switches.
+- Generate prompts from templates, regex, lists, schedules, and text utilities.
+- Pick indexed LoRA/diffusion models for larger configurable workflows.
+- Prepare VTON masks, agnostic images, DensePose/parsing outputs, and related masks.
 
 ---
 
 ## Installation
 
-**Option A — ComfyUI Manager (recommended):**
-> Search `NH-Nodes` in Custom Nodes Manager -> Install -> Restart
+### ComfyUI Manager
 
-**Option B — CLI:**
+Search for `NH-Nodes`, install, then restart ComfyUI.
+
+### Comfy CLI
+
 ```bash
 comfy node install nh-nodes
 ```
 
-**Option C — Manual:**
+### Manual
+
 ```bash
 cd ComfyUI/custom_nodes
 git clone https://github.com/jetthuangai/NH-Nodes.git
 cd NH-Nodes
 pip install -r requirements.txt
-# Restart ComfyUI
 ```
+
+Restart ComfyUI after installation.
 
 ---
 
-## All 32 Nodes at a Glance
+## Featured Workflows
 
-### Mask Operations — `NH-Nodes/Mask`
+### Tile, Process, Untile
 
-| # | Node | What it does | Inputs | Outputs |
-|---|------|-------------|--------|---------|
-| 1 | **Mask Morphology** | Expand/shrink mask independently in H/V direction, fill holes, blur edges | `mask`, `horizontal_expand`, `vertical_expand`, `fill_holes`, `blur_radius` | `MASK` |
-| 2 | **Mask Properties** | Read bounding box coordinates and dimensions from a mask | `mask` | `width`, `height`, `x1`, `y1`, `x2`, `y2`, `bbox` |
-| 3 | **Create Box Mask** | Convert any shape mask into a solid rectangle | `mask` | `box_mask` |
-| 4 | **Mask Aspect Ratio Match** | Adjust one mask to match another's aspect ratio | `target_ratio_mask`, `mask_to_adjust`, `mode` | `MASK` |
+Use this when an image is too large for a model, or when every tile needs the
+same enhancement/upscale step.
 
-### Image Processing — `NH-Nodes/Image`
+```text
+Load Image -> Image Tile (NH) -> upscale/process tiles -> Image Untile (NH)
+```
 
-| # | Node | What it does | Inputs | Outputs |
-|---|------|-------------|--------|---------|
-| 5 | **Agnostic Image Generator** | Remove masked region and fill with gray / noise / blur | `image`, `mask`, `fill_mode`, `blur_radius`, `noise_strength`, `gray_value`, `feathering` | `agnostic_img`, `masked_img`, `composite` |
-| 6 | **Mask-Aware Resize** | Resize image to exact W x H while keeping the mask region intact | `image`, `mask`, `width`, `height`, `mode`, `pad_color_hex` | `IMAGE`, `MASK` |
-| 7 | **Simple Face Paste** | Paste a face onto another image with feathered blending | `dest_image`, `dest_mask`, `source_image`, `source_mask`, `feathering` | `IMAGE` |
+`Image Tile (NH)` supports:
 
-### Logic & Control — `NH-Nodes/Logic`
+- `original_ratio`: derive tile dimensions from the original image aspect ratio.
+- `custom`: use explicit tile width and height.
+- `square`: force square tiles, for example `1024 x 1024`.
+- Automatic overlap calculation.
+- Edge padding so square/custom tile outputs keep the requested tile size.
 
-| # | Node | What it does | Inputs | Outputs |
-|---|------|-------------|--------|---------|
-| 8 | **Compare** | Compare two values (`==`, `!=`, `>`, `<`, `>=`, `<=`) | `a`, `b`, `op`, `type_cast` | `result` (BOOL), `a_passthrough`, `b_passthrough` |
-| 9 | **Logic Gate** | Combine booleans: AND, OR, NOT, XOR, NAND, NOR | `a`, `op`, `b` (optional) | `result` (BOOL) |
-| 10 | **If/Else** | Route data based on a condition | `condition`, `if_true`, `if_false` | `result`, `condition_out` |
-| 11 | **Switch N** | Pick 1 of up to 10 inputs by index | `index`, `input_0`..`input_9` | `result`, `count` |
-| 12 | **Math Eval** | Safe math expressions: `a * 2 + sqrt(b)` | `expression`, `a`, `b`, `c`, `d`, `round_to` | `result_float`, `result_int`, `result_string` |
-| 13 | **Random Choice** | Weighted random pick from up to 6 inputs | `seed`, `weights`, `input_0`..`input_5` | `result`, `picked_index`, `probabilities` |
+`Image Untile (NH)` uses `tile_data` from the tile node to stitch results back.
+It also handles tiles that were resized or upscaled, such as 2x or 3x per tile.
 
-> **Math Eval** supports: `+ - * / // % **`, functions `min`, `max`, `abs`, `round`, `sqrt`, `floor`, `ceil`, `clamp`. No `eval()` — uses safe AST parsing.
+### Grid Contact Sheet
 
-### Text & Prompt — `NH-Nodes/Text`
+```text
+Image batch -> Image Grid Composite (NH) -> Preview Image
+```
 
-| # | Node | What it does | Inputs | Outputs |
-|---|------|-------------|--------|---------|
-| 14 | **String Operations** | upper, lower, strip, title, replace, contains, startswith, endswith, length, slice | `text`, `operation`, `param_a`, `param_b` | `text_out`, `bool_out`, `int_out` |
-| 15 | **Prompt Join** | Merge up to 5 text inputs with a separator | `separator`, `skip_empty`, `text_1`..`text_5` | `result`, `count` |
-| 16 | **Text Split** | Split text by delimiter | `text`, `delimiter`, `max_splits` | `items_joined`, `count`, `first`, `last` |
-| 17 | **Regex Extract** | Match, find all, replace, or split with regex | `text`, `pattern`, `mode`, `replacement` | `result`, `matched`, `groups`, `count` |
-| 18 | **Prompt Template** | Fill `{placeholders}` in a template string | `template`, `var_names`, `var1`..`var6` | `result`, `missing_vars` |
-| 19 | **Prompt Scheduler** | Cycle through prompts by step (sequential / pingpong / random) | `prompts`, `current_step`, `total_steps`, `mode`, `seed` | `current_prompt`, `progress`, `step_index` |
+Use manual cell size or first-image cell size. Resize modes include `stretch`,
+`pad`, and `fill`.
 
-> **Prompt Template** example: `"a {color} {garment}, {style}"` + var_names `"color,garment,style"` -> connect text nodes to var1, var2, var3.
+### Metadata-Aware Image Load
 
-### List & Batch — `NH-Nodes/Batch`
+```text
+Load Image Info (NH) -> image / mask / file_name / path
+```
 
-| # | Node | What it does | Inputs | Outputs |
-|---|------|-------------|--------|---------|
-| 20 | **List Create** | Create a list from multiline text | `text`, `delimiter` | `items` (NH_LIST), `count`, `first`, `last` |
-| 21 | **List Index** | Get an item from a list by index | `items`, `index`, `wrap` | `item`, `is_first`, `is_last`, `count` |
-| 22 | **List Filter** | Filter a list by condition | `items`, `condition`, `mode` | `passed`, `rejected`, `passed_count`, `rejected_count` |
-| 23 | **Batch Index** | Extract slice from an IMAGE batch | `batch`, `index`, `end_index`, `step` | `result`, `original_count` |
-| 24 | **Batch Merge** | Concatenate multiple IMAGE batches | `batch_a`, `batch_b`, `batch_c`, `resize_mode` | `result`, `count` |
-| 25 | **Counter** | Auto-increment counter across Queue runs | `start`, `step`, `max_value`, `reset` | `current`, `is_done`, `progress`, `remaining` |
+Useful for naming outputs, logging source images, or routing by filename.
 
-> **List Filter** conditions: `contains:dress`, `startswith:img_`, `endswith:.png`, `regex:^\d+`, `equals:red`, `len>5`, `len<=10`.
+### Smart Resolution Resize
 
-### Workflow Utilities — `NH-Nodes/Utils`
+```text
+Load Image -> NH Smart Resolution Picker -> NH Smart Ratio Image Resize
+```
 
-| # | Node | What it does | Inputs | Outputs |
-|---|------|-------------|--------|---------|
-| 26 | **Multi-Slider (FLOAT)** | 5 float sliders in one node | `float_1`..`float_5` | 5x `FLOAT` |
-| 27 | **Multi-Slider (INT)** | 5 integer sliders in one node | `int_1`..`int_5` | 5x `INT` |
-| 28 | **Universal Slider Builder** | Create sliders from text config | `config` (multiline) | Dynamic outputs |
-| 29 | **Boolean Switch** | Simple on/off toggle | `boolean_switch` | `boolean` |
-| 30 | **Pack Universal** | Bundle up to 10 values of any type into one pipe | `input_0`..`input_9` | `NH_UNIVERSAL_PIPE` |
-| 31 | **Unpack Universal** | Extract one value from a pipe by index | `pipe`, `index` | `*` (any type) |
-
-### Preprocessing — `NH-Nodes/VTON`
-
-| # | Node | What it does | Inputs | Outputs |
-|---|------|-------------|--------|---------|
-| 32 | **VTON Ultimate Processor** | Generate garment masks using DWPose + human parsing | `human_image`, `category`, `mask_feathering`, `cover_shoes`, `refine_hands`, `refine_hair`, `device`, offsets | `final_mask`, `agnostic_mask`, `densepose_image`, `parsing_image`, `masked_img`, `parsing_map_raw`, `hair_mask`, `hands_mask` |
-
-> Categories: Upper-body, Lower-body, Dresses, Upper-body (Sleeveless), Lower-body (Shorts/Skirt). Models auto-download on first use.
+Pick model-oriented target sizes and resize with cover crop, contain pad, or
+stretch behavior.
 
 ---
 
-## Common Workflow Examples
+## Node Catalog
 
-### Example 1: Conditional image routing
-```
-[Load Image A] -> [Compare (a > b)] -> [If/Else] -> [Save Image]
-[Load Image B] ----^                      ^--- if_true / if_false
-```
+### Image Loading and Saving
 
-### Example 2: Prompt building with template
-```
-[String "red"]   -> var1 --\
-[String "dress"] -> var2 ---+--> [Prompt Template: "a {color} {garment}, 8k"] -> "a red dress, 8k"
-```
+| Node | Purpose |
+|---|---|
+| `Load Image Info (NH)` | Load one image and output `IMAGE`, `MASK`, file name, and path. |
+| `Save Image Path (NH)` | Save image batches to a chosen folder and output saved filenames/path/count. |
+| `Load Images Folder (NH)` | Load images from a folder by index/step, with filename and path outputs. |
+| `Load images matching` | Load source/matching images by text, folder context, and matching rules. |
 
-### Example 3: Batch processing with counter
-```
-[Counter (0 to 9)] -> [List Index] -> [Prompt Scheduler] -> [KSampler]
-                          ^--- [List Create: "cat\ndog\nbird"]
-```
+### Image Tiling, Grid, and Composition
 
-### Example 4: Mask-aware resize for inpainting
-```
-[Load Image] ---> [Mask-Aware Resize (pad, 512x512, #000000)] -> [Inpaint Model]
-[Load Mask]  ---^                                                      ^--- mask output
-```
+| Node | Purpose |
+|---|---|
+| `Image Tile (NH)` | Split image batches into overlapping tiles with metadata for reconstruction. |
+| `Image Untile (NH)` | Rebuild full images from processed/upscaled tiles and tile metadata. |
+| `Image Grid Composite (NH)` | Combine an image batch into a configurable grid. |
+| `Layer Layout Composite (NH)` | Place layers into preset, grid, or custom layout slots. |
+| `Layer Stack Composite (NH)` | Paste multiple layers onto a background using explicit coordinates. |
+| `Image Resize Unit (NH)` | Resize by pixel/mm/cm using stretch, pad, crop, or lock-ratio modes. |
+| `Image Compare (NH)` | Compare two images side-by-side, top/bottom, split, difference, or overlay. |
+| `Image Label (NH)` | Add header/bottom labels with font, padding, color, and outline controls. |
+| `NH Agnostic Image Generator` | Create agnostic/masked/composite images for inpaint and VTON workflows. |
+| `NH Simple Face Paste` | Paste a source face region into a target using mask feathering. |
+
+### Smart Resolution
+
+| Node | Purpose |
+|---|---|
+| `NH Smart Resolution Picker` | Pick model/preset-aware dimensions and latent setup. |
+| `NH Smart Ratio Image Resize` | Resize images to picked dimensions with cover, contain, or stretch behavior. |
+
+### Mask Tools
+
+| Node | Purpose |
+|---|---|
+| `Mask Morphology (NH)` | Expand/shrink masks, fill holes, and blur edges. |
+| `Mask Properties (NH)` | Output mask bounding box, dimensions, and related measurements. |
+| `NH Create Box Mask` | Convert a mask area into a rectangular box mask. |
+| `NH Mask Aspect Ratio Match` | Adjust one mask to match another mask's aspect ratio. |
+| `NH Mask-Aware Resize` | Resize an image/mask pair while preserving the masked subject region. |
+
+### Logic and Flow Control
+
+| Node | Purpose |
+|---|---|
+| `Compare (NH)` | Compare values with typed operators. |
+| `Logic Gate (NH)` | AND, OR, NOT, XOR, NAND, and NOR boolean logic. |
+| `If/Else (NH)` | Select between two inputs by condition. |
+| `Switch N (NH)` | Pick one of several generic inputs by index. |
+| `Any Switch (NH)` | Boolean switch helper. |
+| `Any Branch Switch (NH)` | Route generic data through selected branches. |
+| `Gate Switch (NH)` | Pass or block a generic input by boolean state. |
+| `Value Match Index (NH)` | Return index of matching configured value. |
+| `Math Eval (NH)` | Safe math expression evaluator with numeric/string outputs. |
+| `Random Choice (NH)` | Weighted random choice from generic inputs. |
+
+### Text and Prompt Tools
+
+| Node | Purpose |
+|---|---|
+| `String Operations (NH)` | Strip, case convert, replace, slice, inspect, and test strings. |
+| `Prompt Join (NH)` | Join text fragments with separators and empty-line handling. |
+| `Text Split (NH)` | Split text by delimiter and expose count/first/last values. |
+| `Regex Extract (NH)` | Extract, replace, split, and match with regex patterns. |
+| `Text Index (NH)` | Select a line/item from text by index. |
+| `Text Concatenate (NH)` | Concatenate multiple text inputs. |
+| `Text Split Lines (NH)` | Split multiline text into selected parts and metadata. |
+| `Text Random Line (NH)` | Pick a random line from multiline text. |
+| `Prompt Template (NH)` | Fill `{placeholder}` variables from connected text values. |
+| `Prompt Scheduler (NH)` | Select prompts by step, sequence, ping-pong, or seed. |
+
+### Lists and Batch Helpers
+
+| Node | Purpose |
+|---|---|
+| `List Create (NH)` | Build an `NH_LIST` from multiline or delimited text. |
+| `List Index (NH)` | Select an item from an `NH_LIST`. |
+| `List Filter (NH)` | Filter lists with contains, regex, equals, length, and related conditions. |
+| `Batch Index (NH)` | Extract one or more images from an image batch. |
+| `Batch Merge (NH)` | Merge image batches with resize handling. |
+| `Counter (NH)` | Stateful counter for repeated queue runs. |
+
+### Indexed Loaders
+
+| Node | Purpose |
+|---|---|
+| `Load LoRA Model Index (NH)` | Apply one selected LoRA to `MODEL` by 1-based index. |
+| `Load LoRA Clip Index (NH)` | Apply one selected LoRA to `CLIP` by 1-based index. |
+| `Load Diffusion Model Index (NH)` | Load one diffusion model by 1-based index. |
+
+### Workflow Utilities
+
+| Node | Purpose |
+|---|---|
+| `Multi-Slider (FLOAT)` | Five float controls in one node. |
+| `Multi-Slider (INT)` | Five integer controls in one node. |
+| `Universal Slider Builder (NH)` | Generate dynamic slider outputs from text config. |
+| `Boolean Switch (NH)` | Simple boolean toggle. |
+| `Pack Universal (NH)` | Bundle generic values into an `NH_UNIVERSAL_PIPE`. |
+| `Unpack Universal (NH)` | Extract values from an `NH_UNIVERSAL_PIPE`. |
+
+### VTON Preprocessing
+
+| Node | Purpose |
+|---|---|
+| `VTON Ultimate Processor (NH)` | Generate masks, agnostic image data, DensePose/parsing outputs, hair/hands masks, and related VTON preprocessing assets. |
 
 ---
 
-## Node Menu Structure in ComfyUI
+## Menu Structure
 
-```
+```text
 NH-Nodes/
-  +-- Batch/
-  |     List Create, List Index, List Filter
-  |     Batch Index, Batch Merge, Counter
-  +-- Image/
-  |     Agnostic Image Generator, Mask-Aware Resize, Simple Face Paste
-  +-- Logic/
-  |     Compare, Logic Gate, If/Else, Switch N, Math Eval, Random Choice
-  +-- Mask/
-  |     Mask Morphology, Mask Properties, Create Box Mask, Mask Aspect Ratio Match
-  +-- Text/
-  |     String Operations, Prompt Join, Text Split, Regex Extract
-  |     Prompt Template, Prompt Scheduler
-  +-- Utils/
-  |     Multi-Slider (FLOAT), Multi-Slider (INT)
-  |     Universal Slider Builder, Boolean Switch
-  |     +-- Pipe/
-  |           Pack Universal, Unpack Universal
-  +-- VTON/
-        VTON Ultimate Processor
+  Image/
+    Load/save helpers
+    Tile/untile
+    Grid and layer composition
+    Resize, compare, label
+  Mask/
+    Morphology, properties, bbox, aspect matching
+  Logic/
+    Compare, gates, switches, branching, math, random choice
+  Text/
+    String, regex, split, concatenate, templates, scheduling
+  Batch/
+    Image batch and list helpers
+  Loaders/
+    Indexed LoRA and diffusion model loaders
+  Utils/
+    Sliders, booleans, universal pipe
+  VTON/
+    VTON Ultimate Processor
 ```
 
 ---
 
 ## Requirements
 
-```
-numpy, Pillow, scipy, opencv-python
-scikit-image >= 0.18.0
-onnxruntime >= 1.8.0
-transformers >= 4.20.0
-tqdm >= 4.62.0
-huggingface_hub >= 0.16.0
+```text
+numpy
+Pillow
+scipy
+opencv-python
+scikit-image>=0.18.0
+onnxruntime>=1.8.0
+transformers>=4.20.0
+tqdm>=4.62.0
+huggingface_hub>=0.16.0
 ```
 
-Most are already included with a standard ComfyUI installation.
+Most image/text/logic nodes use common ComfyUI dependencies. VTON-related nodes
+may download or require additional model assets on first use.
+
+---
+
+## Development Notes
+
+- Restart ComfyUI after installing or updating nodes.
+- If a node appears cached in the browser, refresh the ComfyUI page after restart.
+- `Image Tile (NH)` and `Image Untile (NH)` must pass `tile_data` directly through
+  the workflow so reconstruction uses the original tile layout.
 
 ---
 
 ## License
 
-[MIT](LICENSE) - Free for personal and commercial use.
+[MIT](LICENSE). Free for personal and commercial use.
 
----
-
-**If NH-Nodes helps your workflow, a star on [GitHub](https://github.com/jetthuangai/NH-Nodes) means a lot!**
+If NH-Nodes helps your workflow, consider starring the repository:
+[github.com/jetthuangai/NH-Nodes](https://github.com/jetthuangai/NH-Nodes)

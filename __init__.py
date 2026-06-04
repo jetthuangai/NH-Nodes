@@ -9,7 +9,9 @@ _MODULE_NAMES = [
     "mask_to_bbox",
     "mask_resize_image",
     "agnostic_image",
+    "image_grid_nodes",
     "image_load_nodes",
+    "image_tile_nodes",
     "image_tools_nodes",
     # Existing — VTON
     "vton_preprocessor_nodes",
