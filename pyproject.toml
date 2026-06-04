@@ -1,7 +1,7 @@
 [project]
 name = "nh-nodes"
-description = "32 custom nodes for ComfyUI — mask operations, image processing, logic/control flow, text/prompt building, list/batch management, and workflow utilities."
-version = "1.0.0"
+description = "ComfyUI custom nodes for image workflows, tiling, masks, smart resize, logic routing, prompt and text tools, batch automation, and VTON preprocessing."
+version = "1.1.0"
 license = { file = "LICENSE" }
 dependencies = [
     "numpy",
