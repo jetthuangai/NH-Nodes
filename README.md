@@ -113,6 +113,7 @@ stretch behavior.
 |---|---|
 | `Load Image Info (NH)` | Load one image and output `IMAGE`, `MASK`, file name, and path. |
 | `Save Image Path (NH)` | Save image batches to a chosen folder and output saved filenames/path/count. |
+| `NH Save Large Image` | Save full-resolution images without attaching heavy full-res previews to the canvas. |
 | `Load Images Folder (NH)` | Load images from a folder by index/step, with filename and path outputs. |
 | `Load images matching` | Load source/matching images by text, folder context, and matching rules. |
 
@@ -123,6 +124,9 @@ stretch behavior.
 | `Image Tile (NH)` | Split image batches into overlapping tiles with metadata for reconstruction. |
 | `Image Untile (NH)` | Rebuild full images from processed/upscaled tiles and tile metadata. |
 | `Image Grid Composite (NH)` | Combine an image batch into a configurable grid. |
+| `NH Large Image Preview` | Preview large images with lightweight canvas thumbnails and passthrough output. |
+| `NH Large Image Compare` | Compare large A/B images with lightweight canvas proxy and tiled slider/side/difference viewer. |
+| `NH Large Preview Cache Manager` | Inspect and clean the NH large preview tile cache by age, size, or cache id. |
 | `Layer Layout Composite (NH)` | Place layers into preset, grid, or custom layout slots. |
 | `Layer Stack Composite (NH)` | Paste multiple layers onto a background using explicit coordinates. |
 | `Image Resize Unit (NH)` | Resize by pixel/mm/cm using stretch, pad, crop, or lock-ratio modes. |
@@ -137,6 +141,7 @@ stretch behavior.
 |---|---|
 | `NH Smart Resolution Picker` | Pick model/preset-aware dimensions and latent setup. |
 | `NH Smart Ratio Image Resize` | Resize images to picked dimensions with cover, contain, or stretch behavior. |
+| `NH Ratio Preset Image Resize` | Resize to a chosen model preset ratio with crop, pad, or fill behavior. |
 
 ### Mask Tools
 

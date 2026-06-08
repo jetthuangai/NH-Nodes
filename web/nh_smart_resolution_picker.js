@@ -1,6 +1,7 @@
 import { app } from "../../../scripts/app.js";
 
 const NODE_NAME = "NH_SmartResolutionPicker";
+const RATIO_RESIZE_NODE_NAME = "NH_RatioPresetImageResize";
 const PRESETS_ENDPOINT = "/nh-nodes/smart-resolution-picker/presets";
 
 let cachedPresetData = null;
@@ -48,6 +49,30 @@ function updatePresetDropdown(node, presetData, keepCurrent = true) {
     app.graph?.setDirtyCanvas?.(true, true);
 }
 
+function updateRatioDropdown(node, presetData, keepCurrent = true) {
+    const modelWidget = findWidget(node, "model_family");
+    const levelWidget = findWidget(node, "resolution_level");
+    const ratioWidget = findWidget(node, "target_ratio");
+    if (!modelWidget || !levelWidget || !ratioWidget) {
+        return;
+    }
+
+    const model = modelWidget.value || presetData.default_model;
+    const level = levelWidget.value || presetData.resolution_levels?.[0];
+    const ratios = presetData.ratios_by_model_level?.[model]?.[level]
+        || presetData.ratios_by_model_level?.[presetData.default_model]?.[level]
+        || ["1:1"];
+    const current = ratioWidget.value;
+
+    setComboValues(ratioWidget, ratios);
+    if (!keepCurrent || !ratios.includes(current)) {
+        ratioWidget.value = ratios.includes("1:1") ? "1:1" : ratios[0];
+    }
+
+    node.setDirtyCanvas?.(true, true);
+    app.graph?.setDirtyCanvas?.(true, true);
+}
+
 function installSmartResolutionPicker(node) {
     if (node.__nhSmartResolutionPickerInstalled) {
         return;
@@ -72,24 +97,58 @@ function installSmartResolutionPicker(node) {
     });
 }
 
+function installRatioPresetImageResize(node) {
+    if (node.__nhRatioPresetImageResizeInstalled) {
+        return;
+    }
+    node.__nhRatioPresetImageResizeInstalled = true;
+
+    getPresetData().then((presetData) => {
+        updateRatioDropdown(node, presetData, true);
+
+        for (const widgetName of ["model_family", "resolution_level"]) {
+            const widget = findWidget(node, widgetName);
+            if (!widget) {
+                continue;
+            }
+
+            const oldCallback = widget.callback;
+            widget.callback = function () {
+                oldCallback?.apply(this, arguments);
+                updateRatioDropdown(node, presetData, false);
+            };
+        }
+    }).catch((error) => {
+        console.warn("[NH-Nodes] Ratio Preset Image Resize ratio update failed:", error);
+    });
+}
+
 app.registerExtension({
     name: "NH.Nodes.SmartResolutionPicker",
     async beforeRegisterNodeDef(nodeType, nodeData) {
-        if (nodeData.name !== NODE_NAME) {
+        if (![NODE_NAME, RATIO_RESIZE_NODE_NAME].includes(nodeData.name)) {
             return;
         }
 
         const onNodeCreated = nodeType.prototype.onNodeCreated;
         nodeType.prototype.onNodeCreated = function () {
             const result = onNodeCreated?.apply(this, arguments);
-            installSmartResolutionPicker(this);
+            if (nodeData.name === NODE_NAME) {
+                installSmartResolutionPicker(this);
+            } else {
+                installRatioPresetImageResize(this);
+            }
             return result;
         };
 
         const onConfigure = nodeType.prototype.onConfigure;
         nodeType.prototype.onConfigure = function () {
             const result = onConfigure?.apply(this, arguments);
-            installSmartResolutionPicker(this);
+            if (nodeData.name === NODE_NAME) {
+                installSmartResolutionPicker(this);
+            } else {
+                installRatioPresetImageResize(this);
+            }
             return result;
         };
     },

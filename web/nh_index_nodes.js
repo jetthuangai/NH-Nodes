@@ -3,23 +3,50 @@ import { app } from "../../../scripts/app.js";
 const MAX_ITEMS = 64;
 
 const NODE_CONFIGS = {
+    NH_DiffusionModelIndex: {
+        countWidget: "model_count",
+        prefix: "diffusion_model",
+        enablePrefix: "enable",
+        selectModeWidget: "select_mode",
+        indexWidget: "index",
+        buttonLabel: "update models",
+        installedFlag: "__nhDiffusionModelIndexInstalled",
+    },
     NH_LoraModelIndex: {
         countWidget: "lora_count",
         prefix: "lora",
+        enablePrefix: "enable",
+        selectModeWidget: "select_mode",
+        indexWidget: "index",
         buttonLabel: "update loras",
         installedFlag: "__nhLoraModelIndexInstalled",
     },
     NH_LoraClipIndex: {
         countWidget: "lora_count",
         prefix: "lora",
+        enablePrefix: "enable",
+        selectModeWidget: "select_mode",
+        indexWidget: "index",
         buttonLabel: "update loras",
         installedFlag: "__nhLoraClipIndexInstalled",
     },
-    NH_DiffusionModelIndex: {
-        countWidget: "model_count",
-        prefix: "diffusion_model",
-        buttonLabel: "update models",
-        installedFlag: "__nhDiffusionModelIndexInstalled",
+    NH_VAEIndex: {
+        countWidget: "vae_count",
+        prefix: "vae",
+        enablePrefix: "enable",
+        selectModeWidget: "select_mode",
+        indexWidget: "index",
+        buttonLabel: "update vaes",
+        installedFlag: "__nhVAEIndexInstalled",
+    },
+    NH_ClipIndex: {
+        countWidget: "clip_count",
+        prefix: "clip",
+        enablePrefix: "enable",
+        selectModeWidget: "select_mode",
+        indexWidget: "index",
+        buttonLabel: "update clips",
+        installedFlag: "__nhClipIndexInstalled",
     },
     NH_TextIndex: {
         countWidget: "text_count",
@@ -82,12 +109,31 @@ function updateIndexedWidgets(node, config) {
         countWidget.value = count;
     }
 
+    const selectModeWidget = config.selectModeWidget ? findWidget(node, config.selectModeWidget) : null;
+    const selectMode = selectModeWidget?.value || "index";
+    const indexWidget = config.indexWidget ? findWidget(node, config.indexWidget) : null;
+
+    if (indexWidget) {
+        if (selectMode === "index") showWidget(indexWidget);
+        else hideWidget(indexWidget);
+    }
+
     for (let index = 1; index <= MAX_ITEMS; index++) {
-        const widget = findWidget(node, `${config.prefix}_${index}`);
+        const itemWidget = findWidget(node, `${config.prefix}_${index}`);
+        const enableWidget = config.enablePrefix ? findWidget(node, `${config.enablePrefix}_${index}`) : null;
+
         if (index <= count) {
-            showWidget(widget);
+            showWidget(itemWidget);
+            if (enableWidget) {
+                if (selectMode === "boolean") {
+                    showWidget(enableWidget);
+                } else {
+                    hideWidget(enableWidget);
+                }
+            }
         } else {
-            hideWidget(widget);
+            hideWidget(itemWidget);
+            if (enableWidget) hideWidget(enableWidget);
         }
     }
 
@@ -114,6 +160,40 @@ function installIndexedControls(node, config) {
             oldCallback?.apply(this, arguments);
             updateIndexedWidgets(node, config);
         };
+    }
+
+    if (config.selectModeWidget) {
+        const smWidget = findWidget(node, config.selectModeWidget);
+        if (smWidget) {
+            const smOld = smWidget.callback;
+            smWidget.callback = function () {
+                smOld?.apply(this, arguments);
+                updateIndexedWidgets(node, config);
+            };
+        }
+    }
+
+    if (config.enablePrefix) {
+        for (let i = 1; i <= MAX_ITEMS; i++) {
+            const enableWidget = findWidget(node, `${config.enablePrefix}_${i}`);
+            if (enableWidget) {
+                const enOld = enableWidget.callback;
+                enableWidget.callback = function () {
+                    enOld?.apply(this, arguments);
+                    if (this.value) {
+                        for (let j = 1; j <= MAX_ITEMS; j++) {
+                            if (j !== i) {
+                                const other = findWidget(node, `${config.enablePrefix}_${j}`);
+                                if (other && other.value) {
+                                    other.value = false;
+                                }
+                            }
+                        }
+                        updateIndexedWidgets(node, config);
+                    }
+                };
+            }
+        }
     }
 
     setTimeout(() => updateIndexedWidgets(node, config), 0);

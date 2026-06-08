@@ -8,6 +8,7 @@ import torch.nn.functional as F
 from PIL import Image
 
 from .resolution_data import (
+    ASPECT_SORT_ORDER,
     DEFAULT_MODEL_LABEL,
     DEFAULT_PRESET,
     MODEL_ID_BY_LABEL,
@@ -20,13 +21,15 @@ from .resolution_data import (
 )
 
 
-TARGET_RESOLUTION_LEVELS = ["1 MP", "2 MP", "3 MP", "4 MP"]
+TARGET_RESOLUTION_LEVELS = [f"{mp} MP" for mp in range(1, 13)]
 RESIZE_METHODS = ["lanczos", "bicubic", "bilinear", "nearest", "nearest-exact", "area", "box", "hamming"]
+TARGET_RATIO_LABELS = sorted(
+    {entry["aspect"] for entry in RESOLUTION_PRESETS},
+    key=lambda aspect: ASPECT_SORT_ORDER.get(aspect, 99),
+)
 TARGET_MP_VALUES = {
-    "1 MP": 1.0,
-    "2 MP": 2.0,
-    "3 MP": 3.0,
-    "4 MP": 4.0,
+    f"{mp} MP": float(mp)
+    for mp in range(1, 13)
 }
 
 Z_IMAGE_TIER_MAP = {
@@ -140,6 +143,45 @@ def _entry_matches_resolution_level(entry, resolution_level):
     return tier.startswith(resolution_level)
 
 
+def _extrapolated_ratio_entry(model_family, resolution_level, aspect):
+    target_mp = TARGET_MP_VALUES.get(resolution_level, 1.0)
+    target_pixels = max(1.0, target_mp * 1_000_000)
+    ratio = _ratio_value(aspect)
+    model_id = MODEL_ID_BY_LABEL.get(model_family, MODEL_ID_BY_LABEL[DEFAULT_MODEL_LABEL])
+    model_spec = MODEL_SPECS[model_id]
+    multiple_of = int(model_spec.get("multiple_of", 16))
+
+    width = max(multiple_of, _snap_half_up(math.sqrt(target_pixels * ratio), multiple_of))
+    height = max(multiple_of, _snap_half_up(math.sqrt(target_pixels / ratio), multiple_of))
+    actual_mp = (width * height) / 1_000_000
+    warning = (
+        f"Extrapolated {resolution_level} preset generated from ratio {aspect}; "
+        f"actual size is {actual_mp:.2f}MP and may exceed the model's usual tested range."
+    )
+
+    return {
+        "model_id": model_id,
+        "model": model_family,
+        "tier": f"{resolution_level} extrapolated",
+        "aspect": aspect,
+        "width": int(width),
+        "height": int(height),
+        "reliability": "extrapolation",
+        "warning": warning,
+        "sweet": False,
+        "label": f"{resolution_level} extrapolated | {aspect} | {int(width)}×{int(height)}",
+    }
+
+
+def _extrapolated_resolution_candidates(model_family, resolution_level):
+    model_entries = [entry for entry in RESOLUTION_PRESETS if entry["model"] == model_family]
+    aspects = sorted(
+        {entry["aspect"] for entry in model_entries},
+        key=lambda aspect: ASPECT_SORT_ORDER.get(aspect, 99),
+    )
+    return [_extrapolated_ratio_entry(model_family, resolution_level, aspect) for aspect in aspects]
+
+
 def _resolution_candidates(model_family, resolution_level):
     model_entries = [entry for entry in RESOLUTION_PRESETS if entry["model"] == model_family]
     candidates = [entry for entry in model_entries if _entry_matches_resolution_level(entry, resolution_level)]
@@ -147,6 +189,9 @@ def _resolution_candidates(model_family, resolution_level):
         return candidates
 
     target_mp = TARGET_MP_VALUES.get(resolution_level, 1.0)
+    if target_mp > 4.0:
+        return _extrapolated_resolution_candidates(model_family, resolution_level)
+
     return sorted(
         model_entries,
         key=lambda entry: (abs(((entry["width"] * entry["height"]) / 1_000_000) - target_mp), _entry_reliability_rank(entry)),
@@ -167,6 +212,48 @@ def _pick_closest_ratio_entry(model_family, resolution_level, source_width, sour
         return (ratio_distance, _entry_reliability_rank(entry), mp_distance, entry["width"] * entry["height"])
 
     return min(candidates, key=score)
+
+
+def _ratio_value(ratio_label):
+    try:
+        width_text, height_text = str(ratio_label).split(":", 1)
+        return max(float(width_text), 1.0) / max(float(height_text), 1.0)
+    except Exception:
+        return 1.0
+
+
+def _pick_requested_ratio_entry(model_family, resolution_level, target_ratio):
+    requested_ratio = _ratio_value(target_ratio)
+    target_mp = TARGET_MP_VALUES.get(resolution_level, 1.0)
+    candidates = _resolution_candidates(model_family, resolution_level)
+    if not candidates:
+        raise ValueError(f"No resolution candidates for {model_family} / {resolution_level}")
+
+    exact_candidates = [entry for entry in candidates if entry["aspect"] == target_ratio]
+    selectable = exact_candidates or candidates
+
+    def score(entry):
+        entry_ratio = _ratio_value(entry["aspect"])
+        ratio_distance = abs(math.log(entry_ratio / requested_ratio))
+        mp_distance = abs(((entry["width"] * entry["height"]) / 1_000_000) - target_mp)
+        return (ratio_distance, _entry_reliability_rank(entry), mp_distance, entry["width"] * entry["height"])
+
+    entry = min(selectable, key=score)
+    return entry, bool(exact_candidates)
+
+
+def _normalize_resize_mode(resize_mode):
+    aliases = {
+        "crop": "cover_crop",
+        "cover": "cover_crop",
+        "cover_crop": "cover_crop",
+        "pad": "contain_pad",
+        "contain": "contain_pad",
+        "contain_pad": "contain_pad",
+        "fill": "stretch",
+        "stretch": "stretch",
+    }
+    return aliases.get(str(resize_mode), "cover_crop")
 
 
 def _resize_bchw_pil(samples, height, width, resize_method):
@@ -208,6 +295,7 @@ def _resize_image_batch(images, target_width, target_height, resize_mode, resize
     if int(target_width) <= 0 or int(target_height) <= 0:
         raise ValueError("Target width and height must be greater than 0")
 
+    resize_mode = _normalize_resize_mode(resize_mode)
     batch, source_height, source_width, channels = images.shape
     samples = images.movedim(-1, 1)
 
@@ -400,12 +488,104 @@ class NH_SmartRatioImageResize:
         )
 
 
+class NH_RatioPresetImageResize:
+    @classmethod
+    def INPUT_TYPES(cls):
+        return {
+            "required": {
+                "image": ("IMAGE",),
+                "model_family": (MODEL_LABELS, {"default": DEFAULT_MODEL_LABEL}),
+                "resolution_level": (TARGET_RESOLUTION_LEVELS, {"default": "1 MP"}),
+                "target_ratio": (TARGET_RATIO_LABELS, {"default": "1:1"}),
+                "resize_mode": (["crop", "pad", "fill"], {"default": "crop"}),
+                "resize_method": (RESIZE_METHODS, {"default": "lanczos"}),
+                "pad_color_hex": ("STRING", {"default": "#FFFFFF", "multiline": False}),
+            },
+        }
+
+    RETURN_TYPES = ("IMAGE", "INT", "INT", "STRING", "FLOAT", "FLOAT", "STRING")
+    RETURN_NAMES = (
+        "image",
+        "width",
+        "height",
+        "info",
+        "source_aspect_ratio",
+        "target_aspect_ratio",
+        "selected_preset",
+    )
+    FUNCTION = "resize"
+    CATEGORY = "NH-Nodes/Resolution"
+
+    def resize(
+        self,
+        image,
+        model_family=DEFAULT_MODEL_LABEL,
+        resolution_level="1 MP",
+        target_ratio="1:1",
+        resize_mode="crop",
+        resize_method="lanczos",
+        pad_color_hex="#FFFFFF",
+    ):
+        if model_family not in MODEL_ID_BY_LABEL:
+            model_family = DEFAULT_MODEL_LABEL
+        if resolution_level not in TARGET_RESOLUTION_LEVELS:
+            resolution_level = "1 MP"
+        if target_ratio not in TARGET_RATIO_LABELS:
+            target_ratio = "1:1"
+        if resize_method not in RESIZE_METHODS:
+            resize_method = "lanczos"
+
+        source_height = int(image.shape[1])
+        source_width = int(image.shape[2])
+        entry, exact_match = _pick_requested_ratio_entry(model_family, resolution_level, target_ratio)
+        target_width = int(entry["width"])
+        target_height = int(entry["height"])
+
+        resized = _resize_image_batch(image, target_width, target_height, resize_mode, resize_method, pad_color_hex)
+        model_spec = MODEL_SPECS[entry["model_id"]]
+        source_aspect = float(source_width) / max(float(source_height), 1.0)
+        target_aspect = float(target_width) / max(float(target_height), 1.0)
+        requested_aspect = _ratio_value(target_ratio)
+        selected_delta = abs(math.log(target_aspect / requested_aspect))
+        notes = [
+            f"source {source_width}×{source_height} aspect={source_aspect:.4f}",
+            f"requested_ratio={target_ratio}",
+            f"selected_ratio={entry['aspect']}",
+            f"resize_mode={resize_mode}",
+            f"resize_method={resize_method}",
+        ]
+        if not exact_match:
+            notes.insert(2, f"requested ratio unavailable in this model/tier; closest delta={selected_delta:.4f}")
+
+        info = _build_info(
+            model_spec,
+            entry["tier"],
+            entry["aspect"],
+            target_width,
+            target_height,
+            entry,
+            notes,
+        )
+
+        return (
+            resized,
+            target_width,
+            target_height,
+            info,
+            source_aspect,
+            target_aspect,
+            entry["label"],
+        )
+
+
 NODE_CLASS_MAPPINGS = {
     "NH_SmartResolutionPicker": NH_SmartResolutionPicker,
     "NH_SmartRatioImageResize": NH_SmartRatioImageResize,
+    "NH_RatioPresetImageResize": NH_RatioPresetImageResize,
 }
 
 NODE_DISPLAY_NAME_MAPPINGS = {
     "NH_SmartResolutionPicker": "NH Smart Resolution Picker",
     "NH_SmartRatioImageResize": "NH Smart Ratio Image Resize",
+    "NH_RatioPresetImageResize": "NH Ratio Preset Image Resize",
 }

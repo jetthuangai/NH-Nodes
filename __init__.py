@@ -12,6 +12,11 @@ _MODULE_NAMES = [
     "image_grid_nodes",
     "image_load_nodes",
     "image_tile_nodes",
+    "large_image_preview",
+    "large_image_compare",
+    "large_image_save",
+    "large_preview_cache_manager",
+    "large_preview_routes",
     "image_tools_nodes",
     # Existing — VTON
     "vton_preprocessor_nodes",
@@ -73,12 +78,26 @@ try:
     async def nh_smart_resolution_picker_presets(request):
         try:
             from .resolution_data import DEFAULT_MODEL_LABEL, DEFAULT_PRESET, MODEL_LABELS, PRESET_LABELS_BY_MODEL
+            from .smart_resolution_picker import TARGET_RESOLUTION_LEVELS, _resolution_candidates
+
+            ratios_by_model_level = {}
+            for model_label in MODEL_LABELS:
+                ratios_by_model_level[model_label] = {}
+                for resolution_level in TARGET_RESOLUTION_LEVELS:
+                    candidates = _resolution_candidates(model_label, resolution_level)
+                    ratios = []
+                    for entry in candidates:
+                        if entry["aspect"] not in ratios:
+                            ratios.append(entry["aspect"])
+                    ratios_by_model_level[model_label][resolution_level] = ratios
 
             return web.json_response({
                 "models": MODEL_LABELS,
                 "default_model": DEFAULT_MODEL_LABEL,
                 "default_preset": DEFAULT_PRESET,
                 "presets_by_model": PRESET_LABELS_BY_MODEL,
+                "resolution_levels": TARGET_RESOLUTION_LEVELS,
+                "ratios_by_model_level": ratios_by_model_level,
             })
         except Exception as exc:
             return web.json_response({"error": str(exc)}, status=500)
