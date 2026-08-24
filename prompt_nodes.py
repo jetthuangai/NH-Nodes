@@ -4,6 +4,48 @@ import re
 import random
 
 
+def _as_prompt_text(value):
+    if value is None:
+        return ""
+    if isinstance(value, (int, float)):
+        return str(value)
+    return str(value)
+
+
+def _remove_placeholder_preserve_lines(text, name):
+    placeholder = r"\{" + re.escape(name) + r"\}"
+    horizontal_ws = r"[^\S\r\n]*"
+    return re.sub(
+        horizontal_ws + r",?" + horizontal_ws + placeholder + horizontal_ws + r",?" + horizontal_ws,
+        "",
+        text,
+    )
+
+
+def _cleanup_prompt_line(line):
+    newline = ""
+    body = line
+    if body.endswith("\r\n"):
+        body = body[:-2]
+        newline = "\r\n"
+    elif body.endswith("\n") or body.endswith("\r"):
+        body = body[:-1]
+        newline = line[-1]
+
+    previous = None
+    while previous != body:
+        previous = body
+        body = re.sub(r",[ \t]*,", ",", body)
+
+    body = re.sub(r"^[ \t]*,[ \t]*", "", body)
+    body = re.sub(r",[ \t]*$", "", body)
+    return body + newline
+
+
+def _cleanup_prompt_text(text):
+    return "".join(_cleanup_prompt_line(line) for line in text.splitlines(keepends=True))
+
+
 class NH_PromptTemplate:
     """Dien bien vao prompt template voi cac placeholder {name}."""
 
@@ -40,27 +82,17 @@ class NH_PromptTemplate:
         missing = []
 
         for i, name in enumerate(names):
-            value = kwargs.get(f"var{i + 1}")
-            if value is None:
-                value = ""
-            if isinstance(value, (int, float)):
-                value = str(value)
-            value = value.strip() if value else ""
+            value = _as_prompt_text(kwargs.get(f"var{i + 1}"))
 
             placeholder = "{" + name + "}"
             if placeholder in result:
-                if value:
+                if value != "":
                     result = result.replace(placeholder, value)
                 else:
                     missing.append(name)
-                    # Xoa placeholder + dau phay/space xung quanh
-                    result = re.sub(
-                        r',?\s*\{' + re.escape(name) + r'\}\s*,?', '', result
-                    )
+                    result = _remove_placeholder_preserve_lines(result, name)
 
-        # Clean: double space, trailing comma, leading comma
-        result = re.sub(r'\s{2,}', ' ', result)
-        result = result.strip(', ').strip()
+        result = _cleanup_prompt_text(result)
 
         return (result, ", ".join(missing))
 

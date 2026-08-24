@@ -142,6 +142,7 @@ stretch behavior.
 | `NH Smart Resolution Picker` | Pick model/preset-aware dimensions and latent setup. |
 | `NH Smart Ratio Image Resize` | Resize images to picked dimensions with cover, contain, or stretch behavior. |
 | `NH Ratio Preset Image Resize` | Resize to a chosen model preset ratio with crop, pad, or fill behavior. |
+| `NH Remove Resize Padding` | Remove the padded border from processed images using resize metadata. |
 
 ### Mask Tools
 

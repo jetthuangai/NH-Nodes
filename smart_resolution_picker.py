@@ -23,6 +23,7 @@ from .resolution_data import (
 
 TARGET_RESOLUTION_LEVELS = [f"{mp} MP" for mp in range(1, 13)]
 RESIZE_METHODS = ["lanczos", "bicubic", "bilinear", "nearest", "nearest-exact", "area", "box", "hamming"]
+RESIZE_DATA_TYPE = "NH_RESIZE_DATA"
 TARGET_RATIO_LABELS = sorted(
     {entry["aspect"] for entry in RESOLUTION_PRESETS},
     key=lambda aspect: ASPECT_SORT_ORDER.get(aspect, 99),
@@ -256,6 +257,84 @@ def _normalize_resize_mode(resize_mode):
     return aliases.get(str(resize_mode), "cover_crop")
 
 
+def _build_resize_data(source_width, source_height, target_width, target_height, resize_mode, resize_method, pad_color_hex):
+    source_width = max(1, int(source_width))
+    source_height = max(1, int(source_height))
+    target_width = max(1, int(target_width))
+    target_height = max(1, int(target_height))
+    normalized_mode = _normalize_resize_mode(resize_mode)
+
+    data = {
+        "version": 1,
+        "source_width": source_width,
+        "source_height": source_height,
+        "target_width": target_width,
+        "target_height": target_height,
+        "resize_mode": normalized_mode,
+        "requested_resize_mode": str(resize_mode),
+        "resize_method": str(resize_method),
+        "pad_color_hex": str(pad_color_hex),
+        "scale_x": float(target_width) / float(source_width),
+        "scale_y": float(target_height) / float(source_height),
+        "scale": None,
+        "resized_width": target_width,
+        "resized_height": target_height,
+        "content_left": 0,
+        "content_top": 0,
+        "content_right": target_width,
+        "content_bottom": target_height,
+        "pad_left": 0,
+        "pad_top": 0,
+        "pad_right": 0,
+        "pad_bottom": 0,
+        "crop_left": 0,
+        "crop_top": 0,
+        "crop_right": 0,
+        "crop_bottom": 0,
+    }
+
+    if normalized_mode == "stretch":
+        return data
+
+    scale_x = float(target_width) / float(source_width)
+    scale_y = float(target_height) / float(source_height)
+    scale = max(scale_x, scale_y) if normalized_mode == "cover_crop" else min(scale_x, scale_y)
+    resized_width = max(1, int(round(source_width * scale)))
+    resized_height = max(1, int(round(source_height * scale)))
+    data.update({
+        "scale": float(scale),
+        "resized_width": resized_width,
+        "resized_height": resized_height,
+    })
+
+    if normalized_mode == "cover_crop":
+        left = max(0, (resized_width - target_width) // 2)
+        top = max(0, (resized_height - target_height) // 2)
+        data.update({
+            "crop_left": left,
+            "crop_top": top,
+            "crop_right": max(0, resized_width - target_width - left),
+            "crop_bottom": max(0, resized_height - target_height - top),
+        })
+        return data
+
+    left = max(0, (target_width - resized_width) // 2)
+    top = max(0, (target_height - resized_height) // 2)
+    right = target_width - left - resized_width
+    bottom = target_height - top - resized_height
+    data.update({
+        "content_left": left,
+        "content_top": top,
+        "content_right": left + resized_width,
+        "content_bottom": top + resized_height,
+        "pad_left": left,
+        "pad_top": top,
+        "pad_right": max(0, right),
+        "pad_bottom": max(0, bottom),
+    })
+    return data
+
+
 def _resize_bchw_pil(samples, height, width, resize_method):
     original_dtype = samples.dtype
     original_device = samples.device
@@ -291,29 +370,36 @@ def _resize_bchw(samples, height, width, resize_method):
     return resized.clamp(0.0, 1.0)
 
 
-def _resize_image_batch(images, target_width, target_height, resize_mode, resize_method, pad_color_hex):
+def _resize_image_batch_with_data(images, target_width, target_height, resize_mode, resize_method, pad_color_hex):
     if int(target_width) <= 0 or int(target_height) <= 0:
         raise ValueError("Target width and height must be greater than 0")
 
-    resize_mode = _normalize_resize_mode(resize_mode)
     batch, source_height, source_width, channels = images.shape
+    resize_data = _build_resize_data(
+        source_width,
+        source_height,
+        target_width,
+        target_height,
+        resize_mode,
+        resize_method,
+        pad_color_hex,
+    )
+    resize_mode = resize_data["resize_mode"]
     samples = images.movedim(-1, 1)
 
     if resize_mode == "stretch":
-        return _resize_bchw(samples, target_height, target_width, resize_method).movedim(1, -1)
+        resized = _resize_bchw(samples, target_height, target_width, resize_method).movedim(1, -1)
+        return resized, resize_data
 
-    scale_x = float(target_width) / max(float(source_width), 1.0)
-    scale_y = float(target_height) / max(float(source_height), 1.0)
-    scale = max(scale_x, scale_y) if resize_mode == "cover_crop" else min(scale_x, scale_y)
-    resized_width = max(1, int(round(source_width * scale)))
-    resized_height = max(1, int(round(source_height * scale)))
+    resized_width = int(resize_data["resized_width"])
+    resized_height = int(resize_data["resized_height"])
     resized = _resize_bchw(samples, resized_height, resized_width, resize_method)
 
     if resize_mode == "cover_crop":
-        left = max(0, (resized_width - int(target_width)) // 2)
-        top = max(0, (resized_height - int(target_height)) // 2)
+        left = int(resize_data["crop_left"])
+        top = int(resize_data["crop_top"])
         cropped = resized[:, :, top:top + int(target_height), left:left + int(target_width)]
-        return cropped.movedim(1, -1)
+        return cropped.movedim(1, -1), resize_data
 
     fill_rgb = _parse_hex_color(pad_color_hex, (255, 255, 255))
     canvas = torch.empty(
@@ -324,10 +410,44 @@ def _resize_image_batch(images, target_width, target_height, resize_mode, resize
     for channel in range(channels):
         canvas[:, channel, :, :] = fill_rgb[min(channel, 2)] / 255.0
 
-    left = max(0, (int(target_width) - resized_width) // 2)
-    top = max(0, (int(target_height) - resized_height) // 2)
+    left = int(resize_data["content_left"])
+    top = int(resize_data["content_top"])
     canvas[:, :, top:top + resized_height, left:left + resized_width] = resized
-    return canvas.movedim(1, -1)
+    return canvas.movedim(1, -1), resize_data
+
+
+def _resize_image_batch(images, target_width, target_height, resize_mode, resize_method, pad_color_hex):
+    resized, _resize_data = _resize_image_batch_with_data(
+        images,
+        target_width,
+        target_height,
+        resize_mode,
+        resize_method,
+        pad_color_hex,
+    )
+    return resized
+
+
+def _scaled_content_bounds(resize_data, image_width, image_height):
+    target_width = max(1, int(resize_data.get("target_width", image_width)))
+    target_height = max(1, int(resize_data.get("target_height", image_height)))
+    scale_x = float(image_width) / float(target_width)
+    scale_y = float(image_height) / float(target_height)
+
+    left = int(round(float(resize_data.get("content_left", 0)) * scale_x))
+    top = int(round(float(resize_data.get("content_top", 0)) * scale_y))
+    right = int(round(float(resize_data.get("content_right", target_width)) * scale_x))
+    bottom = int(round(float(resize_data.get("content_bottom", target_height)) * scale_y))
+
+    left = _clamp(left, 0, max(0, int(image_width) - 1))
+    top = _clamp(top, 0, max(0, int(image_height) - 1))
+    right = _clamp(right, left + 1, int(image_width))
+    bottom = _clamp(bottom, top + 1, int(image_height))
+    return left, top, right, bottom
+
+
+def _has_padding(resize_data):
+    return any(int(resize_data.get(key, 0)) > 0 for key in ("pad_left", "pad_top", "pad_right", "pad_bottom"))
 
 
 class NH_SmartResolutionPicker:
@@ -422,7 +542,7 @@ class NH_SmartRatioImageResize:
             },
         }
 
-    RETURN_TYPES = ("IMAGE", "INT", "INT", "STRING", "FLOAT", "FLOAT", "STRING")
+    RETURN_TYPES = ("IMAGE", "INT", "INT", "STRING", "FLOAT", "FLOAT", "STRING", RESIZE_DATA_TYPE)
     RETURN_NAMES = (
         "image",
         "width",
@@ -431,6 +551,7 @@ class NH_SmartRatioImageResize:
         "source_aspect_ratio",
         "target_aspect_ratio",
         "selected_preset",
+        "resize_data",
     )
     FUNCTION = "resize"
     CATEGORY = "NH-Nodes/Resolution"
@@ -457,7 +578,14 @@ class NH_SmartRatioImageResize:
         target_width = int(entry["width"])
         target_height = int(entry["height"])
 
-        resized = _resize_image_batch(image, target_width, target_height, resize_mode, resize_method, pad_color_hex)
+        resized, resize_data = _resize_image_batch_with_data(
+            image,
+            target_width,
+            target_height,
+            resize_mode,
+            resize_method,
+            pad_color_hex,
+        )
         model_spec = MODEL_SPECS[entry["model_id"]]
         source_aspect = float(source_width) / max(float(source_height), 1.0)
         target_aspect = float(target_width) / max(float(target_height), 1.0)
@@ -485,6 +613,7 @@ class NH_SmartRatioImageResize:
             source_aspect,
             target_aspect,
             entry["label"],
+            resize_data,
         )
 
 
@@ -503,7 +632,7 @@ class NH_RatioPresetImageResize:
             },
         }
 
-    RETURN_TYPES = ("IMAGE", "INT", "INT", "STRING", "FLOAT", "FLOAT", "STRING")
+    RETURN_TYPES = ("IMAGE", "INT", "INT", "STRING", "FLOAT", "FLOAT", "STRING", RESIZE_DATA_TYPE)
     RETURN_NAMES = (
         "image",
         "width",
@@ -512,6 +641,7 @@ class NH_RatioPresetImageResize:
         "source_aspect_ratio",
         "target_aspect_ratio",
         "selected_preset",
+        "resize_data",
     )
     FUNCTION = "resize"
     CATEGORY = "NH-Nodes/Resolution"
@@ -541,7 +671,14 @@ class NH_RatioPresetImageResize:
         target_width = int(entry["width"])
         target_height = int(entry["height"])
 
-        resized = _resize_image_batch(image, target_width, target_height, resize_mode, resize_method, pad_color_hex)
+        resized, resize_data = _resize_image_batch_with_data(
+            image,
+            target_width,
+            target_height,
+            resize_mode,
+            resize_method,
+            pad_color_hex,
+        )
         model_spec = MODEL_SPECS[entry["model_id"]]
         source_aspect = float(source_width) / max(float(source_height), 1.0)
         target_aspect = float(target_width) / max(float(target_height), 1.0)
@@ -575,17 +712,83 @@ class NH_RatioPresetImageResize:
             source_aspect,
             target_aspect,
             entry["label"],
+            resize_data,
         )
+
+
+class NH_RemoveResizePadding:
+    @classmethod
+    def INPUT_TYPES(cls):
+        return {
+            "required": {
+                "image": ("IMAGE",),
+                "resize_data": (RESIZE_DATA_TYPE,),
+                "output_size": (["content_region", "original_size"], {"default": "content_region"}),
+                "resize_method": (RESIZE_METHODS, {"default": "lanczos"}),
+            },
+        }
+
+    RETURN_TYPES = ("IMAGE", "INT", "INT", "STRING")
+    RETURN_NAMES = ("image", "width", "height", "info")
+    FUNCTION = "remove_padding"
+    CATEGORY = "NH-Nodes/Resolution"
+
+    def remove_padding(self, image, resize_data, output_size="content_region", resize_method="lanczos"):
+        if resize_method not in RESIZE_METHODS:
+            resize_method = "lanczos"
+
+        image_height = int(image.shape[1])
+        image_width = int(image.shape[2])
+        if not isinstance(resize_data, dict):
+            return (
+                image,
+                image_width,
+                image_height,
+                f"No resize_data metadata found; passed through {image_width}×{image_height}.",
+            )
+
+        left, top, right, bottom = _scaled_content_bounds(resize_data, image_width, image_height)
+        cropped = image[:, top:bottom, left:right, :]
+
+        source_width = int(resize_data.get("source_width", cropped.shape[2]))
+        source_height = int(resize_data.get("source_height", cropped.shape[1]))
+        if output_size == "original_size":
+            cropped = _resize_image_batch(cropped, source_width, source_height, "stretch", resize_method, "#000000")
+
+        output_height = int(cropped.shape[1])
+        output_width = int(cropped.shape[2])
+        target_width = int(resize_data.get("target_width", image_width))
+        target_height = int(resize_data.get("target_height", image_height))
+        pad_text = (
+            f"pad L{int(resize_data.get('pad_left', 0))} "
+            f"T{int(resize_data.get('pad_top', 0))} "
+            f"R{int(resize_data.get('pad_right', 0))} "
+            f"B{int(resize_data.get('pad_bottom', 0))}"
+        )
+        if _has_padding(resize_data):
+            action = "removed padding"
+        else:
+            action = "no padding detected"
+
+        info = (
+            f"{action}; source {source_width}×{source_height}; "
+            f"resize target {target_width}×{target_height}; "
+            f"input {image_width}×{image_height}; crop box ({left},{top})-({right},{bottom}); "
+            f"output {output_width}×{output_height}; {pad_text}"
+        )
+        return (cropped, output_width, output_height, info)
 
 
 NODE_CLASS_MAPPINGS = {
     "NH_SmartResolutionPicker": NH_SmartResolutionPicker,
     "NH_SmartRatioImageResize": NH_SmartRatioImageResize,
     "NH_RatioPresetImageResize": NH_RatioPresetImageResize,
+    "NH_RemoveResizePadding": NH_RemoveResizePadding,
 }
 
 NODE_DISPLAY_NAME_MAPPINGS = {
     "NH_SmartResolutionPicker": "NH Smart Resolution Picker",
     "NH_SmartRatioImageResize": "NH Smart Ratio Image Resize",
     "NH_RatioPresetImageResize": "NH Ratio Preset Image Resize",
+    "NH_RemoveResizePadding": "NH Remove Resize Padding",
 }

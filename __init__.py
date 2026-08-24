@@ -35,6 +35,7 @@ _MODULE_NAMES = [
     "prompt_nodes",
     # NEW — Phase 5: List Management
     "list_nodes",
+    "any_list_nodes",
     # NEW — Phase 6: Batch & Counter
     "batch_nodes",
     # Indexed loaders
