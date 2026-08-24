@@ -97,11 +97,20 @@ Useful for naming outputs, logging source images, or routing by filename.
 ### Smart Resolution Resize
 
 ```text
-Load Image -> NH Smart Resolution Picker -> NH Smart Ratio Image Resize
+Load Image -> NH Smart Ratio Image Resize -> (your pipeline) -> NH Remove Resize Padding
 ```
 
-Pick model-oriented target sizes and resize with cover crop, contain pad, or
-stretch behavior.
+`NH Smart Ratio Image Resize` picks the closest model preset itself from
+`model_family` + `resolution_level`, so it does not need `NH Smart Resolution
+Picker` upstream. Resize with cover crop, contain pad, or stretch behavior.
+
+In `contain_pad` mode it also emits `resize_data` describing the content region,
+padding, and scale factor. Feed that into `NH Remove Resize Padding` at the end
+of the pipeline to crop the padded border back off (`content_region`) or to
+restore the original input size (`original_size`).
+
+Use `NH Smart Resolution Picker` when you need target dimensions and a latent
+for text-to-image, instead of resizing an existing image.
 
 ---
 
@@ -140,7 +149,7 @@ stretch behavior.
 | Node | Purpose |
 |---|---|
 | `NH Smart Resolution Picker` | Pick model/preset-aware dimensions and latent setup. |
-| `NH Smart Ratio Image Resize` | Resize images to picked dimensions with cover, contain, or stretch behavior. |
+| `NH Smart Ratio Image Resize` | Auto-pick the closest model preset for the source aspect, then resize with cover, contain, or stretch; outputs `resize_data` for padding removal. |
 | `NH Ratio Preset Image Resize` | Resize to a chosen model preset ratio with crop, pad, or fill behavior. |
 | `NH Remove Resize Padding` | Remove the padded border from processed images using resize metadata. |
 
@@ -194,6 +203,7 @@ stretch behavior.
 | `Batch Index (NH)` | Extract one or more images from an image batch. |
 | `Batch Merge (NH)` | Merge image batches with resize handling. |
 | `Counter (NH)` | Stateful counter for repeated queue runs. |
+| `Any List Split (NH)` | Split any incoming list into an `All` output plus up to 10 indexed outputs. |
 
 ### Indexed Loaders
 
@@ -202,6 +212,8 @@ stretch behavior.
 | `Load LoRA Model Index (NH)` | Apply one selected LoRA to `MODEL` by 1-based index. |
 | `Load LoRA Clip Index (NH)` | Apply one selected LoRA to `CLIP` by 1-based index. |
 | `Load Diffusion Model Index (NH)` | Load one diffusion model by 1-based index. |
+| `Load VAE Index (NH)` | Load one VAE by 1-based index or boolean toggle. |
+| `Load Clip Index (NH)` | Load one CLIP by 1-based index or boolean toggle, with CLIP type selection. |
 
 ### Workflow Utilities
 
@@ -238,9 +250,11 @@ NH-Nodes/
   Text/
     String, regex, split, concatenate, templates, scheduling
   Batch/
-    Image batch and list helpers
+    Image batch, list helpers, any-list split
+  Resolution/
+    Smart resolution picker, ratio resize, preset resize, padding removal
   Loaders/
-    Indexed LoRA and diffusion model loaders
+    Indexed LoRA, diffusion model, VAE, and CLIP loaders
   Utils/
     Sliders, booleans, universal pipe
   VTON/
