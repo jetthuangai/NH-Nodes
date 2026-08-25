@@ -2,7 +2,8 @@
 
 Production-focused custom nodes for ComfyUI workflows: image loading, tiling,
 compositing, mask utilities, smart resize, logic routing, prompt/text tooling,
-batch helpers, indexed model loaders, and VTON preprocessing.
+batch helpers, indexed model loaders, garment/portrait segmentation, and VTON
+preprocessing.
 
 [![ComfyUI Registry](https://img.shields.io/badge/ComfyUI_Registry-nh--nodes-2563eb)](https://registry.comfy.org/nodes/nh-nodes)
 [![GitHub](https://img.shields.io/badge/GitHub-jetthuangai%2FNH--Nodes-111827)](https://github.com/jetthuangai/NH-Nodes)
@@ -112,6 +113,19 @@ restore the original input size (`original_size`).
 Use `NH Smart Resolution Picker` when you need target dimensions and a latent
 for text-to-image, instead of resizing an existing image.
 
+### Garment and Portrait Segmentation
+
+```text
+Load Image -> Garment Segment (NH) [part=upper_garment] -> mask / cutout_rgba / mask_image
+Load Image -> Portrait Segment (NH) [hair + face] -> mask / cutout_rgba / mask_image
+```
+
+SegFormer-based masks at input resolution. `cutout_rgba` is the input image
+with the mask as alpha (RGB is left untouched outside the mask); `mask_image`
+is the mask as an RGB preview. Dresses and jumpsuits belong to `upper_garment`. Both nodes share `mask_expand`, `mask_blur`, and `fill_holes`.
+Models are auto-downloaded to `models/NH-Nodes/` on first use (existing
+`models/face_parsing` or `models/RMBG/segformer_fashion` copies are reused).
+
 ---
 
 ## Node Catalog
@@ -152,6 +166,13 @@ for text-to-image, instead of resizing an existing image.
 | `NH Smart Ratio Image Resize` | Auto-pick the closest model preset for the source aspect, then resize with cover, contain, or stretch; outputs `resize_data` for padding removal. |
 | `NH Ratio Preset Image Resize` | Resize to a chosen model preset ratio with crop, pad, or fill behavior. |
 | `NH Remove Resize Padding` | Remove the padded border from processed images using resize metadata. |
+
+### Vision Segmentation
+
+| Node | Purpose |
+|---|---|
+| `Garment Segment (NH)` | Mask one of `upper_garment` (tops, jackets, coats, dresses, ties, scarves, collars, sleeves), `lower_garment` (pants, shorts, skirts, belts, tights; no shoes), `footwear`, or `headwear`. Attached parts (pockets, zippers, bows...) merge only when touching the selected garment. |
+| `Portrait Segment (NH)` | Checklist mask of face, neck, hair, eyes, lips, nose, eyebrows, ears (+ optional mouth interior). `face` is the solid face region including features. |
 
 ### Mask Tools
 
@@ -245,6 +266,8 @@ NH-Nodes/
     Resize, compare, label
   Mask/
     Morphology, properties, bbox, aspect matching
+  Vision/
+    Garment and portrait segmentation
   Logic/
     Compare, gates, switches, branching, math, random choice
   Text/
@@ -277,8 +300,9 @@ tqdm>=4.62.0
 huggingface_hub>=0.16.0
 ```
 
-Most image/text/logic nodes use common ComfyUI dependencies. VTON-related nodes
-may download or require additional model assets on first use.
+Most image/text/logic nodes use common ComfyUI dependencies. VTON and Vision
+nodes download model assets on first use (`transformers` SegFormer weights for
+Vision: ~190 MB fashion, ~340 MB face).
 
 ---
 

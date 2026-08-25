@@ -42,6 +42,8 @@ _MODULE_NAMES = [
     "loader_index_nodes",
     # Resolution
     "smart_resolution_picker",
+    # Vision segmentation
+    "vision_segment_nodes",
 ]
 
 NODE_CLASS_MAPPINGS = {}
