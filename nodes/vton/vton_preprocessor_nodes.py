@@ -4,12 +4,11 @@ from PIL import Image, ImageFilter
 import os
 import folder_paths
 from ...core.utils import resize_image, tensor_to_pil, pil_to_tensor, pil_to_mask
-from scipy.ndimage import shift
 
-# Import logic cục bộ
-from .preprocess.humanparsing.run_parsing import Parsing
-from .preprocess.dwpose import DWposeDetector
-from ...core.utils_mask import get_mask_location
+# onnxruntime (via preprocess/) and scikit-image (via utils_mask) are imported
+# inside load_model()/process(), not here: they are native libraries that only
+# this node needs, and loading them at ComfyUI start-up makes the pack import
+# heavier and breaks process memory snapshots (Modal restores segfault).
 
 MODELS_DIR = os.path.join(folder_paths.models_dir, "ComfyUI-Vton-Mask")
 LOADED_VTON_MODELS = None
@@ -48,6 +47,8 @@ class NH_VTonUltimateProcessor:
     def load_model(self, device):
         global LOADED_VTON_MODELS
         if LOADED_VTON_MODELS is not None and LOADED_VTON_MODELS.get("device") == device: return LOADED_VTON_MODELS
+        from .preprocess.dwpose import DWposeDetector
+        from .preprocess.humanparsing.run_parsing import Parsing
         if not os.path.exists(MODELS_DIR):
             from huggingface_hub import snapshot_download
             os.makedirs(MODELS_DIR, exist_ok=True)
@@ -61,6 +62,8 @@ class NH_VTonUltimateProcessor:
 
     def process(self, human_image, category, mask_feathering, cover_shoes, refine_hands, refine_hair, device, 
                 offset_top=0, offset_bottom=0, offset_left=0, offset_right=0):
+        from ...core.utils_mask import get_mask_location
+
         vton_model = self.load_model(device)
         human_img_pil = tensor_to_pil(human_image)
         human_img_resized = resize_image(human_img_pil)

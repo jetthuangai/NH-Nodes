@@ -13,12 +13,19 @@ for path in (COMFY_ROOT, os.path.dirname(PACK_DIR)):
 pack = importlib.import_module("NH-Nodes")
 
 EXPECTED_NODE_COUNT = 68
+# Native libraries that only VTON needs; importing the pack must not load them.
+LAZY_ONLY = ("onnxruntime", "skimage")
 
 
 def test_registry_is_complete_and_consistent():
     assert len(pack.NODE_CLASS_MAPPINGS) == EXPECTED_NODE_COUNT
     assert set(pack.NODE_DISPLAY_NAME_MAPPINGS) == set(pack.NODE_CLASS_MAPPINGS)
     assert pack.WEB_DIRECTORY == "./web"
+
+
+def test_pack_import_does_not_load_vton_native_libraries():
+    loaded = [name for name in LAZY_ONLY if name in sys.modules]
+    assert not loaded, f"imported at pack load: {loaded}"
 
 
 def test_every_node_id_is_defined_by_exactly_one_module():
