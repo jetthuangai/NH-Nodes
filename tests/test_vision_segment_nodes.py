@@ -21,8 +21,8 @@ for path in (COMFY_ROOT, os.path.dirname(PACK_DIR)):
     if path not in sys.path:
         sys.path.insert(0, path)
 
-vs = importlib.import_module("NH-Nodes.vision_segment_nodes")
-backend = importlib.import_module("NH-Nodes.segformer_backend")
+vs = importlib.import_module("NH-Nodes.nodes.vision.vision_segment_nodes")
+backend = importlib.import_module("NH-Nodes.core.segformer_backend")
 
 
 # --- label map helpers -------------------------------------------------------

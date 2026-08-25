@@ -1,64 +1,55 @@
-import importlib
+"""NH-Nodes entry point.
 
-_MODULE_NAMES = [
-    # Existing — Mask & Image
-    "mask_morphology",
-    "mask_properties",
-    "face_paste",
-    "mask_aspect_match",
-    "mask_to_bbox",
-    "mask_resize_image",
-    "agnostic_image",
-    "image_grid_nodes",
-    "image_load_nodes",
-    "image_tile_nodes",
-    "large_image_preview",
-    "large_image_compare",
-    "large_image_save",
-    "large_preview_cache_manager",
-    "large_preview_routes",
-    "image_tools_nodes",
-    # Existing — VTON
-    "vton_preprocessor_nodes",
-    # Existing — Utils
-    "slider_nodes",
-    "universal_pipe_nodes",
-    "utils_nodes",
-    # NEW — Phase 1: Logic Core
-    "logic_nodes",
-    # NEW — Phase 2: Math & Random
-    "math_nodes",
-    # NEW — Phase 3: Text Processing
-    "text_nodes",
-    "text_split_lines",
-    # NEW — Phase 4: Prompt Building
-    "prompt_nodes",
-    # NEW — Phase 5: List Management
-    "list_nodes",
-    "any_list_nodes",
-    # NEW — Phase 6: Batch & Counter
-    "batch_nodes",
-    # Indexed loaders
-    "loader_index_nodes",
-    # Resolution
-    "smart_resolution_picker",
-    # Vision segmentation
-    "vision_segment_nodes",
-]
+Layout:
+  core/    shared helpers and backends (no nodes)
+  nodes/   one folder per ComfyUI menu category; every module that defines
+           NODE_CLASS_MAPPINGS is discovered and registered automatically
+  web/     frontend extensions
+"""
+
+import importlib
+import pkgutil
+
+from . import nodes as _nodes_pkg
 
 NODE_CLASS_MAPPINGS = {}
 NODE_DISPLAY_NAME_MAPPINGS = {}
 WEB_DIRECTORY = "./web"
 
-for _module_name in _MODULE_NAMES:
+# Layout is deliberately two levels deep: nodes/<category>/<module>.py. Sub-packages
+# inside a category (vendored code such as nodes/vton/preprocess) define no nodes
+# and are never imported here, so a broken one cannot take the whole pack down.
+_module_count = 0
+for _category in pkgutil.iter_modules(_nodes_pkg.__path__):
+    if not _category.ispkg:
+        continue
+    _category_name = f"{_nodes_pkg.__name__}.{_category.name}"
     try:
-        _module = importlib.import_module(f".{_module_name}", package=__name__)
-        _cls = getattr(_module, "NODE_CLASS_MAPPINGS", {})
-        _disp = getattr(_module, "NODE_DISPLAY_NAME_MAPPINGS", {})
-        NODE_CLASS_MAPPINGS.update(_cls)
-        NODE_DISPLAY_NAME_MAPPINGS.update(_disp)
+        _category_pkg = importlib.import_module(_category_name)
     except Exception as e:
-        print(f"[NH-Nodes] Failed to load module '{_module_name}': {e}")
+        print(f"[NH-Nodes] Failed to load category '{_category.name}': {e}")
+        continue
+    for _entry in pkgutil.iter_modules(_category_pkg.__path__):
+        if _entry.ispkg:
+            continue
+        _module_name = f"{_category_name}.{_entry.name}"
+        try:
+            _module = importlib.import_module(_module_name)
+        except Exception as e:
+            print(f"[NH-Nodes] Failed to load module '{_module_name}': {e}")
+            continue
+        _new_nodes = getattr(_module, "NODE_CLASS_MAPPINGS", {})
+        for _dup in _new_nodes.keys() & NODE_CLASS_MAPPINGS.keys():
+            print(f"[NH-Nodes] WARNING: node id '{_dup}' redefined by {_module_name}")
+        NODE_CLASS_MAPPINGS.update(_new_nodes)
+        NODE_DISPLAY_NAME_MAPPINGS.update(getattr(_module, "NODE_DISPLAY_NAME_MAPPINGS", {}))
+        _module_count += 1
+
+# Route-only module: registers /nh-nodes/large-preview/* on import.
+try:
+    from .core import large_preview_routes  # noqa: F401
+except Exception as e:
+    print(f"[NH-Nodes] Failed to import core.large_preview_routes: {e}")
 
 try:
     from aiohttp import web
@@ -69,7 +60,7 @@ try:
         folder_path = request.query.get("folder_path", "")
         recursive = request.query.get("recursive", "").lower() in {"1", "true", "yes", "on"}
         try:
-            from .image_tools_nodes import _collect_image_files, _resolve_load_dir
+            from .nodes.image.image_tools_nodes import _collect_image_files, _resolve_load_dir
 
             resolved_folder = _resolve_load_dir(folder_path)
             image_count = len(_collect_image_files(resolved_folder, recursive=recursive))
@@ -80,8 +71,8 @@ try:
     @PromptServer.instance.routes.get("/nh-nodes/smart-resolution-picker/presets")
     async def nh_smart_resolution_picker_presets(request):
         try:
-            from .resolution_data import DEFAULT_MODEL_LABEL, DEFAULT_PRESET, MODEL_LABELS, PRESET_LABELS_BY_MODEL
-            from .smart_resolution_picker import TARGET_RESOLUTION_LEVELS, _resolution_candidates
+            from .core.resolution_data import DEFAULT_MODEL_LABEL, DEFAULT_PRESET, MODEL_LABELS, PRESET_LABELS_BY_MODEL
+            from .nodes.resolution.smart_resolution_picker import TARGET_RESOLUTION_LEVELS, _resolution_candidates
 
             ratios_by_model_level = {}
             for model_label in MODEL_LABELS:
@@ -107,6 +98,6 @@ try:
 except Exception as e:
     print(f"[NH-Nodes] Failed to register web routes: {e}")
 
-__all__ = ['NODE_CLASS_MAPPINGS', 'NODE_DISPLAY_NAME_MAPPINGS', 'WEB_DIRECTORY']
+__all__ = ["NODE_CLASS_MAPPINGS", "NODE_DISPLAY_NAME_MAPPINGS", "WEB_DIRECTORY"]
 
-print(f"NH-Nodes: Loaded {len(NODE_CLASS_MAPPINGS)} nodes from {len(_MODULE_NAMES)} modules")
+print(f"NH-Nodes: Loaded {len(NODE_CLASS_MAPPINGS)} nodes from {_module_count} modules")

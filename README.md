@@ -308,6 +308,11 @@ Vision: ~190 MB fashion, ~340 MB face).
 
 ## Development Notes
 
+- Layout: `core/` holds shared helpers and model backends (no nodes); `nodes/<category>/`
+  mirrors the ComfyUI menu, and every module there that defines `NODE_CLASS_MAPPINGS`
+  is registered automatically by `__init__.py` - drop a file in the right folder
+  and restart. VTON's vendored preprocessing lives in `nodes/vton/preprocess/`.
+- Tests: `python -m pytest custom_nodes/NH-Nodes/tests -q` from the ComfyUI root.
 - Restart ComfyUI after installing or updating nodes.
 - If a node appears cached in the browser, refresh the ComfyUI page after restart.
 - `Image Tile (NH)` and `Image Untile (NH)` must pass `tile_data` directly through
