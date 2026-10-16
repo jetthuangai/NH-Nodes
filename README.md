@@ -110,6 +110,21 @@ padding, and scale factor. Feed that into `NH Remove Resize Padding` at the end
 of the pipeline to crop the padded border back off (`content_region`) or to
 restore the original input size (`original_size`).
 
+For `cover_crop`, use `NH Restore Image Geometry` after processing. Connect the
+processed image to `image`, the source image to `original_image`, and the resize
+node's `resize_data` to the matching input. It returns an image at the exact
+original dimensions, with processed content placed back in its original region
+and cropped-away borders retained from the source. Its `mask` is white in the
+restored region and black in the retained borders; use it for masked blending
+with the original, optionally softening the mask edges first.
+
+Processed images may be upscaled, including by a non-integer factor, provided
+their framing is unchanged. Additional crops, rotations, or model-generated
+changes in geometry cannot be reversed by this metadata. The restore node also
+accepts `contain_pad` and `stretch` metadata and supports matching batches or
+singleton batch broadcasting. Restoration uses bicubic (default), bilinear, or
+nearest sampling; it does not recover details lost during downsampling.
+
 Use `NH Smart Resolution Picker` when you need target dimensions and a latent
 for text-to-image, instead of resizing an existing image.
 
@@ -166,6 +181,7 @@ Models are auto-downloaded to `models/NH-Nodes/` on first use (existing
 | `NH Smart Ratio Image Resize` | Auto-pick the closest model preset for the source aspect, then resize with cover, contain, or stretch; outputs `resize_data` for padding removal. |
 | `NH Ratio Preset Image Resize` | Resize to a chosen model preset ratio with crop, pad, or fill behavior. |
 | `NH Remove Resize Padding` | Remove the padded border from processed images using resize metadata. |
+| `NH Restore Image Geometry` | Restore processed or upscaled images to original coordinates with a blend mask; keep source pixels outside the crop. |
 
 ### Vision Segmentation
 

@@ -12,7 +12,7 @@ for path in (COMFY_ROOT, os.path.dirname(PACK_DIR)):
 
 pack = importlib.import_module("NH-Nodes")
 
-EXPECTED_NODE_COUNT = 68
+EXPECTED_NODE_COUNT = 69
 # Native libraries that only VTON needs; importing the pack must not load them.
 LAZY_ONLY = ("onnxruntime", "skimage")
 
