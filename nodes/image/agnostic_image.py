@@ -1,4 +1,5 @@
 import torch
+import torch.nn.functional as F
 import numpy as np
 import cv2
 
@@ -10,6 +11,10 @@ class NH_AgnosticImageGenerator:
     - agnostic_img: ảnh đã fill vùng mask (dùng làm input cho inpaint/VTON)
     - masked_img: ảnh gốc với vùng mask bị xóa trắng (transparent)
     - composite: ảnh gốc với viền mask overlay để preview
+
+    Mask là alpha mềm: giá trị trung gian được blend một phần, feathering làm mềm thêm từ chính các giá trị đó.
+    Mask 2-D [H,W] coi như [1,H,W]; mask khác kích thước ảnh được resize về kích thước ảnh.
+    Fill "noise" tất định: ảnh thứ i trong batch dùng seed = i.
     """
 
     @classmethod
@@ -36,19 +41,30 @@ class NH_AgnosticImageGenerator:
         results_masked = []
         results_composite = []
 
+        # Chuẩn hoá mask về [B,H,W] đúng kích thước ảnh (batch 1 được dùng lại cho mọi ảnh ở vòng lặp dưới).
+        if mask.dim() == 2:
+            mask = mask.unsqueeze(0)
+        if mask.shape[-2:] != image.shape[1:3]:
+            mask = F.interpolate(
+                mask.unsqueeze(1).float(), size=tuple(image.shape[1:3]), mode="bilinear", align_corners=False, antialias=True,
+            ).squeeze(1)
+
         for i in range(image.shape[0]):
             img_np = image[i].cpu().numpy()  # (H, W, C) float32 [0,1]
             m_np = mask[i].cpu().numpy() if i < mask.shape[0] else mask[0].cpu().numpy()  # (H, W)
 
             h, w, c = img_np.shape
 
-            # Tạo alpha mask [0,1]
-            alpha = (m_np > 0.5).astype(np.float32)
+            # Alpha giữ nguyên giá trị mềm của mask (không ngưỡng hoá), kẹp về [0,1]
+            alpha = np.clip(m_np, 0.0, 1.0).astype(np.float32)
+            # Viền preview cần hình dạng rõ nét: lấy ở mức 0.5 của mask gốc (như trước đây), không dùng alpha mềm
+            outline_mask = (m_np > 0.5).astype(np.float32)
 
             # Feathering: làm mềm biên mask
             if feathering > 0:
                 kernel_size = feathering * 2 + 1
                 alpha = cv2.GaussianBlur(alpha, (kernel_size, kernel_size), 0)
+                outline_mask = cv2.GaussianBlur(outline_mask, (kernel_size, kernel_size), 0)
 
             alpha_3ch = alpha[:, :, np.newaxis]  # (H, W, 1)
 
@@ -57,7 +73,8 @@ class NH_AgnosticImageGenerator:
                 fill = np.full_like(img_np, gray_value)
 
             elif fill_mode == "noise":
-                noise = np.random.rand(h, w, c).astype(np.float32)
+                # Seed cố định theo index trong batch: cùng input luôn ra cùng noise
+                noise = np.random.default_rng(i).random((h, w, c), dtype=np.float32)
                 # Blend noise với gray trung tâm để bớt harsh
                 fill = noise * noise_strength + gray_value * (1.0 - noise_strength)
 
@@ -75,7 +92,7 @@ class NH_AgnosticImageGenerator:
             masked = np.clip(masked, 0.0, 1.0)
 
             # --- composite: overlay viền mask lên ảnh gốc ---
-            composite = self._create_composite(img_np, alpha, agnostic)
+            composite = self._create_composite(img_np, outline_mask, agnostic)
 
             results_agnostic.append(agnostic)
             results_masked.append(masked)
@@ -87,12 +104,12 @@ class NH_AgnosticImageGenerator:
         return (out_agnostic, out_masked, out_composite)
 
     @staticmethod
-    def _create_composite(img_np, alpha, agnostic):
+    def _create_composite(img_np, outline_mask, agnostic):
         """Tạo preview: nửa trái = ảnh gốc với viền mask, nửa phải = agnostic."""
         h, w = img_np.shape[:2]
 
         # Tìm contour của mask để vẽ viền
-        mask_uint8 = np.ascontiguousarray((alpha * 255).astype(np.uint8))
+        mask_uint8 = np.ascontiguousarray((outline_mask * 255).astype(np.uint8))
         contours, _ = cv2.findContours(mask_uint8, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
 
         # Nửa trái: ảnh gốc + viền xanh

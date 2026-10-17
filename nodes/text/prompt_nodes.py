@@ -13,12 +13,15 @@ def _as_prompt_text(value):
 
 
 def _remove_placeholder_preserve_lines(text, name):
+    # Chi bo placeholder + khoang trang truoc no (dau dong: ca khoang trang sau no).
+    # Dau phay de _cleanup_prompt_line gop: "a, {x}, b" -> "a,, b" -> "a, b" (khong dinh thanh "ab").
     placeholder = r"\{" + re.escape(name) + r"\}"
     horizontal_ws = r"[^\S\r\n]*"
     return re.sub(
-        horizontal_ws + r",?" + horizontal_ws + placeholder + horizontal_ws + r",?" + horizontal_ws,
+        r"^" + horizontal_ws + placeholder + horizontal_ws + r"|" + horizontal_ws + placeholder,
         "",
         text,
+        flags=re.MULTILINE,
     )
 
 
@@ -147,7 +150,8 @@ class NH_PromptScheduler:
                     idx = cycle_len - pos
 
         elif mode == "random":
-            rng = random.Random(seed + current_step if seed > 0 else None)
+            # Seed dung dung gia tri (0 cung tat dinh): ComfyUI cache output theo input
+            rng = random.Random(seed + current_step)
             idx = rng.randint(0, n - 1)
 
         else:

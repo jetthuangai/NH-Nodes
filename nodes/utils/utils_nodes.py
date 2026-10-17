@@ -22,6 +22,9 @@ class NH_UniversalSliderBuilder:
     FUNCTION = "build_sliders"
     CATEGORY = "NH-Nodes/Utils"
     OUTPUT_NODE = True # Đánh dấu đây là node có đầu ra động
+    # Node này không có input/output thật nên không dùng được. DEPRECATED ẩn nó khỏi search,
+    # còn workflow cũ đã lưu vẫn load được. Dùng Multi-Slider (FLOAT/INT) thay thế.
+    DEPRECATED = True
 
     def build_sliders(self, config, **kwargs):
         cls = self.__class__

@@ -191,7 +191,8 @@ class NH_RegexExtract:
             if mode == "match":
                 m = re.search(pattern, text)
                 if m:
-                    groups = "\n".join(m.groups()) if m.groups() else m.group(0)
+                    # Group tuy chon khong khop la None -> chuoi rong
+                    groups = "\n".join(g or "" for g in m.groups()) if m.groups() else m.group(0)
                     return (m.group(0), True, groups, 1)
                 return ("", False, "", 0)
 

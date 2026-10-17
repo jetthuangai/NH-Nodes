@@ -5,8 +5,22 @@ import os
 
 import folder_paths
 import numpy as np
+from comfy.cli_args import args
 from PIL import Image
 from PIL.PngImagePlugin import PngInfo
+
+# Cạnh dài nhất (px) mà từng định dạng ghi được; PNG/TIFF không bị giới hạn trong thực tế.
+# JPEG: spec cho tới 65535 nhưng libjpeg (Pillow) từ chối > 65500 (JPEG_MAX_DIMENSION).
+_MAX_SIDE_BY_EXTENSION = {"webp": 16383, "jpg": 65500}
+
+
+def _check_size_limit(extension, width, height):
+    limit = _MAX_SIDE_BY_EXTENSION.get(extension)
+    if limit is not None and max(width, height) > limit:
+        raise ValueError(
+            f"NH Save Large Image: {width}x{height} px is too large for {extension.upper()} "
+            f"(max {limit} px per side). Use png or tiff for images this large."
+        )
 
 
 def _extension_for_save_format(file_format):
@@ -85,6 +99,10 @@ class NH_SaveLargeImage:
 
     def save(self, image, filename_prefix="NH_Large", file_format="png", quality=95, embed_metadata=True, prompt=None, extra_pnginfo=None):
         extension = _extension_for_save_format(file_format)
+        # Kiểm tra giới hạn trước khi ghi bất kỳ file nào (mọi ảnh trong batch cùng kích thước), kể cả tạo thư mục.
+        _check_size_limit(extension, int(image.shape[2]), int(image.shape[1]))
+        # --disable-metadata của ComfyUI thắng ô embed_metadata: không nhúng prompt/workflow.
+        embed_metadata = bool(embed_metadata) and not args.disable_metadata
         first = image[0]
         full_output_folder, filename, counter, _subfolder, _filename_prefix = folder_paths.get_save_image_path(
             filename_prefix,
@@ -99,7 +117,7 @@ class NH_SaveLargeImage:
             file_name = f"{filename_with_batch_num}_{counter:05}_.{extension}"
             file_path = os.path.join(full_output_folder, file_name)
             pil_image = _tensor_to_pil(image_tensor)
-            _save_image(pil_image, file_path, extension, quality, bool(embed_metadata), prompt, extra_pnginfo)
+            _save_image(pil_image, file_path, extension, quality, embed_metadata, prompt, extra_pnginfo)
             saved_paths.append(file_path)
             counter += 1
 

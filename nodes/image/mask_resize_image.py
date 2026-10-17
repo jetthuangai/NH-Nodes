@@ -8,6 +8,7 @@ class NH_MaskResizeImage:
 
     - Crop: scale để mask vừa khít target, crop phần ảnh thừa (pad nếu ảnh nhỏ hơn target).
     - Pad: scale vừa đủ để mask nằm trong target, pad phần thừa bằng màu tùy chọn.
+    - Mask rỗng: coi như mask phủ cả ảnh (crop: lấp đầy target rồi cắt giữa; pad: cả ảnh nằm gọn trong target).
     """
 
     @classmethod
@@ -44,7 +45,8 @@ class NH_MaskResizeImage:
             results_img.append(out_img)
             results_mask.append(out_mask)
 
-        out_images = torch.from_numpy(np.stack(results_img, axis=0)).float()
+        # Lanczos có thể vọt ra ngoài [0,1] (ringing) quanh cạnh tương phản cao -> kẹp lại
+        out_images = torch.from_numpy(np.clip(np.stack(results_img, axis=0), 0.0, 1.0)).float()
         out_masks = torch.from_numpy(np.stack(results_mask, axis=0)).float()
         return (out_images, out_masks)
 
@@ -144,10 +146,23 @@ class NH_MaskResizeImage:
         return canvas_img, canvas_mask
 
     def _simple_resize(self, img_np, mask_np, tw, th, mode, pad_color):
-        """Fallback khi mask rỗng."""
-        img_resized = cv2.resize(img_np, (tw, th), interpolation=cv2.INTER_LANCZOS4)
-        mask_resized = cv2.resize(mask_np, (tw, th), interpolation=cv2.INTER_NEAREST)
-        return img_resized, mask_resized
+        """Fallback khi mask rỗng: coi như mask phủ cả ảnh, không méo ảnh.
+
+        crop = scale lớn nhất (lấp đầy target) rồi cắt giữa; pad = scale nhỏ nhất (cả ảnh nằm trong target), phần thừa pad_color.
+        """
+        sh, sw = img_np.shape[:2]
+        scale = max(tw / sw, th / sh) if mode == "crop" else min(tw / sw, th / sh)
+        new_sw = max(1, round(sw * scale))
+        new_sh = max(1, round(sh * scale))
+        img_scaled = cv2.resize(img_np, (new_sw, new_sh), interpolation=cv2.INTER_LANCZOS4)
+        mask_scaled = cv2.resize(mask_np, (new_sw, new_sh), interpolation=cv2.INTER_NEAREST)
+
+        # Tâm ảnh sau khi scale
+        cx = round(sw / 2.0 * scale)
+        cy = round(sh / 2.0 * scale)
+        if mode == "crop":
+            return self._crop_around_center(img_scaled, mask_scaled, tw, th, cx, cy, pad_color)
+        return self._pad_around_center(img_scaled, mask_scaled, tw, th, cx, cy, pad_color)
 
     @staticmethod
     def _hex_to_rgb(hex_str):

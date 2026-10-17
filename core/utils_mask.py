@@ -15,11 +15,27 @@ def remove_small(binary_mask, min_area=10000):
     small_white_regions = [region for region in regions if region.area < min_area]
 
     for region in small_white_regions:
-        min_row, min_col, max_row, max_col = region.bbox
-        binary_mask[min_row:max_row, min_col:max_col] = 0
+        # Only this region's pixels: its bounding box can overlap a large region.
+        binary_mask[tuple(region.coords.T)] = 0
     return binary_mask
 
 
+def _merge_bound(keypoint_bound, cloth_bound, pick):
+    """Combine a keypoint bound (None when the whole keypoint group is missing) with the garment contour bound."""
+    if keypoint_bound is None:
+        return cloth_bound
+    return pick(keypoint_bound, cloth_bound)
+
+
+def _fallback_box(x1, y1, x2, y2, shape):
+    """Whole-image edges only for bounds that neither keypoints nor the garment contour provided."""
+    height, width = shape[:2]
+    return (0 if x1 is None else x1, 0 if y1 is None else y1,
+            width if x2 is None else x2, height if y2 is None else y2)
+
+
+# pose_data rows: body 0-17, foot 18-23, face 24-91, hands 92-133. A keypoint that was not detected is
+# negative (DWPose marks it -1 and the node then scales it by the width/height), so only values > 0 count.
 def get_img_agnostic_upper_rectangle(im_parse, pose_data, offset_top, offset_bottom, offset_left, offset_right):
 
     faces = pose_data[24:92]
@@ -69,48 +85,37 @@ def get_img_agnostic_upper_rectangle(im_parse, pose_data, offset_top, offset_bot
     except Exception:
         cloth_exist = False
 
-    x1 = [body[i, 0] for i in [2, 3, 4] if body[i, 0] != 0]+\
-        [hands2[i, 0] for i in [5,9,13] if hands2[i, 0] != 0]+\
-        [hands1[i, 0] for i in [5,9,13] if hands1[i, 0] != 0]
-    if x1:
-        x1 = np.min(x1)
-    else:
-        x1 = 0
-    y1 = [body[i, 1] for i in [2, 5] if body[i, 1] != 0]+\
-          [hands2[i, 1] for i in [5,9,13] if hands2[i, 1] != 0]+\
-            [hands1[i, 1] for i in [5,9,13] if hands1[i, 1] != 0]
-    if y1:
-        y1 = np.min(y1)
-    else:
-        y1 = 0
-    x2 = [body[i, 0] for i in [5, 6, 7] if body[i, 0] != 0]+\
-        [hands1[i, 0] for i in [5,9,13] if hands1[i, 0] != 0]+\
-        [hands2[i, 0] for i in [5,9,13] if hands2[i, 0] != 0]
-    if x2:
-        x2 = np.max(x2)
-    else:
-        x2 = parse_array.shape[1]
-    y2 = [body[i, 1] for i in [8, 11] if body[i, 1] != 0]+\
-        [hands2[i, 1] for i in [5,9,13] if hands2[i, 1] != 0]+\
-        [hands1[i, 1] for i in [5,9,13] if hands1[i, 1] != 0]
-    if y2:
-        y2 = np.max(y2)
-    else:
-        y2 = parse_array.shape[0]
+    x1 = [body[i, 0] for i in [2, 3, 4] if body[i, 0] > 0]+\
+        [hands2[i, 0] for i in [5,9,13] if hands2[i, 0] > 0]+\
+        [hands1[i, 0] for i in [5,9,13] if hands1[i, 0] > 0]
+    x1 = np.min(x1) if x1 else None
+    y1 = [body[i, 1] for i in [2, 5] if body[i, 1] > 0]+\
+          [hands2[i, 1] for i in [5,9,13] if hands2[i, 1] > 0]+\
+            [hands1[i, 1] for i in [5,9,13] if hands1[i, 1] > 0]
+    y1 = np.min(y1) if y1 else None
+    x2 = [body[i, 0] for i in [5, 6, 7] if body[i, 0] > 0]+\
+        [hands1[i, 0] for i in [5,9,13] if hands1[i, 0] > 0]+\
+        [hands2[i, 0] for i in [5,9,13] if hands2[i, 0] > 0]
+    x2 = np.max(x2) if x2 else None
+    y2 = [body[i, 1] for i in [8, 11] if body[i, 1] > 0]+\
+        [hands2[i, 1] for i in [5,9,13] if hands2[i, 1] > 0]+\
+        [hands1[i, 1] for i in [5,9,13] if hands1[i, 1] > 0]
+    y2 = np.max(y2) if y2 else None
 
     pad_y1 = 20
     pad_y2 = 10
     pad_x1 = pad_x2 = 25
 
     if cloth_exist:
-        x1 = min(x1, _x1)
-        x2 = max(x2, _x2)
-        y1 = min(y1, _y1)
-        if y2>_y2:
+        x1 = _merge_bound(x1, _x1, min)
+        x2 = _merge_bound(x2, _x2, max)
+        y1 = _merge_bound(y1, _y1, min)
+        if y2 is not None and y2>_y2:
             pad_y2 = 0
-        y2 = max(y2, _y2)
+        y2 = _merge_bound(y2, _y2, max)
+    x1, y1, x2, y2 = _fallback_box(x1, y1, x2, y2, parse_array.shape)
 
-    y_face = [faces[i, 1] for i in [5, 11] if faces[i, 1] != 0]
+    y_face = [faces[i, 1] for i in [5, 11] if faces[i, 1] > 0]
 
     if y_face:
         y_face = np.mean(y_face)
@@ -180,33 +185,27 @@ def get_img_agnostic_lower_rectangle(im_parse, pose_data, offset_top, offset_bot
         except Exception:
             all_cloth_exist = False
 
-    x1 = [body[i, 0] for i in [8, 9, 10] if body[i, 0] != 0]+[foot2[i, 0] for i in [0, 1, 2] if foot2[i, 0] != 0]+\
-        [body[i, 0] for i in [11, 12, 13] if body[i, 0] != 0]+[foot1[i, 0] for i in [0, 1, 2] if foot1[i, 0] != 0]
-    if x1:
-        x1 = np.min(x1)
-    else:
-        x1=0
-    y1 = min(body[8, 1], body[11, 1])
-    x2 = [body[i, 0] for i in [11, 12, 13] if body[i, 0] != 0]+[foot1[i, 0] for i in [0, 1, 2] if foot1[i, 0] != 0]+\
-        [body[i, 0] for i in [8, 9, 10] if body[i, 0] != 0]+[foot2[i, 0] for i in [0, 1, 2] if foot2[i, 0] != 0]
-    if x2:
-        x2 = np.max(x2)
-    else:
-        x2 = parse_array.shape[1]
-    y2 = [body[i, 1] for i in [10, 13] if body[i, 1] != 0]+[foot1[i, 1] for i in [2] if foot2[i, 1] != 0]+\
-        [foot2[i, 1] for i in [2] if foot2[i, 1] != 0]
-    if y2:
-        y2 = np.max(y2)
-    else:
-        y2 = parse_array.shape[0]
+    x1 = [body[i, 0] for i in [8, 9, 10] if body[i, 0] > 0]+[foot2[i, 0] for i in [0, 1, 2] if foot2[i, 0] > 0]+\
+        [body[i, 0] for i in [11, 12, 13] if body[i, 0] > 0]+[foot1[i, 0] for i in [0, 1, 2] if foot1[i, 0] > 0]
+    x1 = np.min(x1) if x1 else None
+    # Keypoints that were not detected are negative (DWPose marks them -1): use only the detected hips.
+    y1 = [body[i, 1] for i in [8, 11] if body[i, 1] > 0]
+    y1 = np.min(y1) if y1 else None
+    x2 = [body[i, 0] for i in [11, 12, 13] if body[i, 0] > 0]+[foot1[i, 0] for i in [0, 1, 2] if foot1[i, 0] > 0]+\
+        [body[i, 0] for i in [8, 9, 10] if body[i, 0] > 0]+[foot2[i, 0] for i in [0, 1, 2] if foot2[i, 0] > 0]
+    x2 = np.max(x2) if x2 else None
+    y2 = [body[i, 1] for i in [10, 13] if body[i, 1] > 0]+[foot1[i, 1] for i in [2] if foot1[i, 1] > 0]+\
+        [foot2[i, 1] for i in [2] if foot2[i, 1] > 0]
+    y2 = np.max(y2) if y2 else None
     if cloth_exist:
-        x1 = min(x1, _x1)
-        x2 = max(x2, _x2)
-        y1 = min(y1, _y1)
-        y2 = max(y2, _y2)
+        x1 = _merge_bound(x1, _x1, min)
+        x2 = _merge_bound(x2, _x2, max)
+        y1 = _merge_bound(y1, _y1, min)
+        y2 = _merge_bound(y2, _y2, max)
     elif all_cloth_exist:
-        x1 = min(x1, _x1)
-        x2 = max(x2, _x2)
+        x1 = _merge_bound(x1, _x1, min)
+        x2 = _merge_bound(x2, _x2, max)
+    x1, y1, x2, y2 = _fallback_box(x1, y1, x2, y2, parse_array.shape)
 
     pad_y1 = 5 if cloth_exist else 50
     pad_y2 = 10
@@ -266,48 +265,37 @@ def get_img_agnostic_dresses_rectangle(im_parse, pose_data, offset_top, offset_b
     except Exception:
         cloth_exist = False
 
-    x1 = [body[i, 0] for i in [2, 3, 4] if body[i, 0] != 0]+\
-        [body[i, 0] for i in [8, 9, 10] if body[i, 0] != 0]+\
-        [foot2[i, 0] for i in [0, 1, 2] if foot2[i, 0] != 0]+\
-        [hands2[i, 0] for i in [5, 9, 13, 17] if hands2[i, 0] != 0]
-    if x1:
-        x1 = np.min(x1)
-    else:
-        x1 = 0
-    y1 = [body[2, 1], body[5, 1]]+\
-          [hands2[i, 1] for i in [5, 9, 13, 17] if hands2[i, 1] != 0]+\
-            [hands1[i, 1] for i in [5, 9, 13, 17] if hands1[i, 1] != 0]
-    if y1:
-        y1 = np.min(y1)
-    else:
-        y1 = 0
-    x2 = [body[i, 0] for i in [5, 6, 7] if body[i, 0] != 0]+\
-        [body[i, 0] for i in [11, 12, 13] if body[i, 0] != 0]+\
-            [foot1[i, 0] for i in [0, 1, 2] if foot1[i, 0] != 0]+\
-            [hands1[i, 0] for i in [5, 9, 13, 17] if hands1[i, 0] != 0]
-    if x2:
-        x2 = np.max(x2)
-    else:
-        x2 = parse_array.shape[1]
-    y2 = [body[i, 1] for i in [10, 13] if body[i, 1] != 0]+[foot1[i, 1] for i in [0, 1, 2] if foot1[i, 1] != 0]+\
-        [foot2[i, 1] for i in [0, 1, 2] if foot2[i, 1] != 0]
-    if y2:
-        y2 = np.max(y2)
-    else:
-        y2 = parse_array.shape[0]
+    x1 = [body[i, 0] for i in [2, 3, 4] if body[i, 0] > 0]+\
+        [body[i, 0] for i in [8, 9, 10] if body[i, 0] > 0]+\
+        [foot2[i, 0] for i in [0, 1, 2] if foot2[i, 0] > 0]+\
+        [hands2[i, 0] for i in [5, 9, 13, 17] if hands2[i, 0] > 0]
+    x1 = np.min(x1) if x1 else None
+    y1 = [body[i, 1] for i in [2, 5] if body[i, 1] > 0]+\
+          [hands2[i, 1] for i in [5, 9, 13, 17] if hands2[i, 1] > 0]+\
+            [hands1[i, 1] for i in [5, 9, 13, 17] if hands1[i, 1] > 0]
+    y1 = np.min(y1) if y1 else None
+    x2 = [body[i, 0] for i in [5, 6, 7] if body[i, 0] > 0]+\
+        [body[i, 0] for i in [11, 12, 13] if body[i, 0] > 0]+\
+            [foot1[i, 0] for i in [0, 1, 2] if foot1[i, 0] > 0]+\
+            [hands1[i, 0] for i in [5, 9, 13, 17] if hands1[i, 0] > 0]
+    x2 = np.max(x2) if x2 else None
+    y2 = [body[i, 1] for i in [10, 13] if body[i, 1] > 0]+[foot1[i, 1] for i in [0, 1, 2] if foot1[i, 1] > 0]+\
+        [foot2[i, 1] for i in [0, 1, 2] if foot2[i, 1] > 0]
+    y2 = np.max(y2) if y2 else None
 
     if cloth_exist:
-        x1 = min(x1, _x1)
-        x2 = max(x2, _x2)
-        y1 = min(y1, _y1)
-        y2 = max(y2, _y2)
+        x1 = _merge_bound(x1, _x1, min)
+        x2 = _merge_bound(x2, _x2, max)
+        y1 = _merge_bound(y1, _y1, min)
+        y2 = _merge_bound(y2, _y2, max)
+    x1, y1, x2, y2 = _fallback_box(x1, y1, x2, y2, parse_array.shape)
 
 
     pad_y1 = 20
     pad_y2 = 10
     pad_x1 = pad_x2 = 50
 
-    y_face = [faces[i, 1] for i in [5, 11] if faces[i, 1] != 0]
+    y_face = [faces[i, 1] for i in [5, 11] if faces[i, 1] > 0]
 
     if y_face:
         y_face = np.mean(y_face)

@@ -1,24 +1,81 @@
 import torch
 import numpy as np
-import cv2
 
 def get_bounding_box_and_ratio(mask_tensor):
     """Tính toán bounding box và tỷ lệ (width / height) từ một mask tensor."""
     m_np = mask_tensor.cpu().numpy()
     rows, cols = np.where(m_np > 0.5)
-    
+
     if len(rows) == 0:
         return None, 1.0 # Trả về None và tỷ lệ 1:1 nếu mask rỗng
 
     ymin, ymax = np.min(rows), np.max(rows)
     xmin, xmax = np.min(cols), np.max(cols)
-    
+
     bbox = (xmin, ymin, xmax, ymax)
     width = xmax - xmin + 1
     height = ymax - ymin + 1
-    
+
     aspect_ratio = width / height if height > 0 else 1.0
     return bbox, aspect_ratio
+
+
+def _fit_window(start, length, limit):
+    """Cửa sổ [start, start + length) trượt vào trong [0, limit); lớn hơn limit thì cắt ở mép cuối."""
+    start = max(0, min(start, limit - length))
+    return start, min(limit, start + length)
+
+
+def _adjust_mask(mask_np, bbox, target_size, mode):
+    """Chỉnh hộp (bbox) của một mask [H, W] về đúng tỷ lệ target_size = (rộng, cao).
+    Kích thước hộp mới tính bằng số nguyên nên không bị lệch 1px do số thực. Ngoài hộp luôn là 0."""
+    height, width = mask_np.shape
+    xmin, ymin, xmax, ymax = (int(v) for v in bbox)
+    cur_w, cur_h = xmax - xmin + 1, ymax - ymin + 1
+    target_w, target_h = target_size
+    target_is_wider = target_w * cur_h > cur_w * target_h
+    output = np.zeros_like(mask_np)
+
+    if mode in ("stretch", "pad"):
+        # Nới một chiều: target rộng hơn thì nới ngang, ngược lại nới dọc
+        new_w, new_h = cur_w, cur_h
+        if target_is_wider:
+            new_w = max(1, cur_h * target_w // target_h)
+        else:
+            new_h = max(1, cur_w * target_h // target_w)
+
+        # Hộp mới nới đối xứng quanh hộp cũ. Chạm mép ảnh thì trượt vào trong để vẫn đủ kích thước.
+        x0, x1 = _fit_window(xmin - (new_w - cur_w) // 2, new_w, width)
+        y0, y1 = _fit_window(ymin - (new_h - cur_h) // 2, new_h, height)
+
+        if mode == "stretch":
+            # Kéo dãn nội dung (nearest) cho vừa hộp mới. Hộp lớn hơn cả ảnh thì chỉ hiện phần giữa.
+            off_x = (new_w - (x1 - x0)) // 2
+            off_y = (new_h - (y1 - y0)) // 2
+            cols = (np.arange(x1 - x0) + off_x) * cur_w // new_w
+            rows = (np.arange(y1 - y0) + off_y) * cur_h // new_h
+            output[y0:y1, x0:x1] = mask_np[ymin:ymax + 1, xmin:xmax + 1][np.ix_(rows, cols)]
+        else:
+            # Pad: phần đệm thuộc vùng mask (1.0), nội dung gốc giữ nguyên vị trí cũ
+            output[y0:y1, x0:x1] = 1.0
+            output[ymin:ymax + 1, xmin:xmax + 1] = mask_np[ymin:ymax + 1, xmin:xmax + 1]
+
+    elif mode == "crop":
+        # Cắt bớt một chiều quanh tâm; phần giữ lại không bị dịch chỗ
+        new_w, new_h = cur_w, cur_h
+        if target_is_wider:
+            new_h = max(1, cur_w * target_h // target_w)
+        else:
+            new_w = max(1, cur_h * target_w // target_h)
+        x0 = xmin + (cur_w - new_w) // 2
+        y0 = ymin + (cur_h - new_h) // 2
+        output[y0:y0 + new_h, x0:x0 + new_w] = mask_np[y0:y0 + new_h, x0:x0 + new_w]
+
+    else:
+        raise ValueError(f"NH Mask Aspect Ratio Match: unknown mode '{mode}'")
+
+    return output
+
 
 class NH_MaskAspectRatioMatch:
     @classmethod
@@ -35,88 +92,37 @@ class NH_MaskAspectRatioMatch:
     RETURN_TYPES = ("MASK",)
     FUNCTION = "match_aspect_ratio"
     CATEGORY = "NH-Nodes/Mask"
+    DESCRIPTION = (
+        "Resizes the bounding box of mask_to_adjust to the aspect ratio of target_ratio_mask, around the same centre. "
+        "stretch: scale the content to the new box. "
+        "pad: keep the content and add mask pixels (1.0) around it until the box has the ratio. "
+        "crop: keep the middle part of the content. "
+        "A box that would leave the image slides back inside it. Every mask of the batch is processed; "
+        "a shorter target batch repeats."
+    )
 
     def match_aspect_ratio(self, target_ratio_mask, mask_to_adjust, mode):
-        mask_a = target_ratio_mask[0]
-        mask_b = mask_to_adjust[0]
-
-        _ , ratio_a = get_bounding_box_and_ratio(mask_a)
-        bbox_b, ratio_b = get_bounding_box_and_ratio(mask_b)
-
-        if bbox_b is None:
+        # Chấp nhận mask [H, W] hoặc [B, H, W]; xử lý từng mask trong batch
+        targets = target_ratio_mask.reshape(-1, *target_ratio_mask.shape[-2:])
+        masks = mask_to_adjust.reshape(-1, *mask_to_adjust.shape[-2:])
+        if targets.shape[0] == 0 or masks.shape[0] == 0:
             return (mask_to_adjust,)
 
-        xmin, ymin, xmax, ymax = bbox_b
-        current_width = xmax - xmin + 1
-        current_height = ymax - ymin + 1
-        center_x = (xmin + xmax) // 2
-        center_y = (ymin + ymax) // 2
+        adjusted = []
+        for index in range(masks.shape[0]):
+            # Batch của mask A ngắn hơn thì lặp lại vòng tròn
+            bbox_a, _ = get_bounding_box_and_ratio(targets[index % targets.shape[0]])
+            bbox_b, _ = get_bounding_box_and_ratio(masks[index])
+            if bbox_b is None:
+                adjusted.append(masks[index]) # Mask B rỗng: giữ nguyên
+                continue
 
-        mask_b_np = mask_b.cpu().numpy()
-        output_mask_np = np.zeros_like(mask_b_np)
+            # Mask A rỗng thì coi như tỷ lệ 1:1
+            target_size = (1, 1) if bbox_a is None else (bbox_a[2] - bbox_a[0] + 1, bbox_a[3] - bbox_a[1] + 1)
+            output_np = _adjust_mask(masks[index].cpu().numpy(), bbox_b, target_size, mode)
+            adjusted.append(torch.from_numpy(output_np).to(masks.device))
 
-        # Cắt nội dung thực sự của Mask B
-        cropped_content_b = mask_b_np[ymin:ymax+1, xmin:xmax+1]
-
-        # ==========================================================
-        # LOGIC CHO TỪNG CHẾ ĐỘ
-        # ==========================================================
-
-        if mode == "stretch":
-            new_height, new_width = current_height, current_width
-            if ratio_a > ratio_b: # Target rộng hơn
-                new_width = int(current_height * ratio_a)
-            else: # Target cao hơn
-                new_height = int(current_width / ratio_a)
-            
-            # Kéo dãn nội dung đã cắt
-            stretched_content = cv2.resize(cropped_content_b, (new_width, new_height), interpolation=cv2.INTER_NEAREST)
-            
-            # Dán vào canvas mới tại vị trí trung tâm
-            paste_x = center_x - new_width // 2
-            paste_y = center_y - new_height // 2
-            
-            # Giới hạn tọa độ để không bị tràn
-            p_x_start, p_y_start = max(0, paste_x), max(0, paste_y)
-            p_x_end, p_y_end = min(mask_b_np.shape[1], paste_x + new_width), min(mask_b_np.shape[0], paste_y + new_height)
-            
-            s_x_start, s_y_start = p_x_start - paste_x, p_y_start - paste_y
-            s_x_end, s_y_end = s_x_start + (p_x_end - p_x_start), s_y_start + (p_y_end - p_y_start)
-            
-            output_mask_np[p_y_start:p_y_end, p_x_start:p_x_end] = stretched_content[s_y_start:s_y_end, s_x_start:s_x_end]
-
-        elif mode == "pad":
-            new_height, new_width = current_height, current_width
-            if ratio_a > ratio_b: # Target rộng hơn -> Thêm đệm ngang
-                new_width = int(current_height * ratio_a)
-            else: # Target cao hơn -> Thêm đệm dọc
-                new_height = int(current_width / ratio_a)
-
-            # Dán nội dung gốc vào trung tâm của hộp mới lớn hơn
-            paste_x = center_x - current_width // 2
-            paste_y = center_y - current_height // 2
-            output_mask_np[paste_y:paste_y + current_height, paste_x:paste_x + current_width] = cropped_content_b
-        
-        elif mode == "crop":
-            new_height, new_width = current_height, current_width
-            if ratio_a > ratio_b: # Target rộng hơn -> Cắt bớt chiều dọc
-                new_height = int(current_width / ratio_a)
-            else: # Target cao hơn -> Cắt bớt chiều ngang
-                new_width = int(current_height * ratio_a)
-
-            # Cắt bớt nội dung
-            crop_y = (current_height - new_height) // 2
-            crop_x = (current_width - new_width) // 2
-            cropped_content = cropped_content_b[crop_y:crop_y + new_height, crop_x:crop_x + new_width]
-
-            # Dán nội dung đã cắt vào vị trí trung tâm
-            paste_x = center_x - new_width // 2
-            paste_y = center_y - new_height // 2
-            output_mask_np[paste_y:paste_y + new_height, paste_x:paste_x + new_width] = cropped_content
-
-        # Chuyển lại sang định dạng tensor
-        output_mask = torch.from_numpy(output_mask_np).unsqueeze(0)
-        return (output_mask,)
+        return (torch.stack(adjusted),)
 
 
 # Ánh xạ để ComfyUI nhận diện class
