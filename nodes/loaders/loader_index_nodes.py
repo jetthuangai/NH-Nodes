@@ -17,6 +17,12 @@ def _block():
     return ExecutionBlocker(None)
 
 
+def _clip_type_choices():
+    # Follow the installed ComfyUI's CLIPType enum so new families appear without code changes.
+    import comfy.sd
+    return [member.name.lower() for member in comfy.sd.CLIPType]
+
+
 def _selected_name(kwargs, prefix, count, index):
     try:
         index = int(index)
@@ -305,7 +311,7 @@ class NH_ClipIndex:
         return {
             "required": {
                 "select_mode": (["index", "boolean"], {"default": "index"}),
-                "type": (["stable_diffusion", "stable_cascade", "sd3", "stable_audio", "mochi", "ltxv", "pixart", "hunyuan_video"], ),
+                "type": (_clip_type_choices(), ),
                 "index": ("INT", {"default": 1, "min": 1, "max": _MAX_INDEXED_LOADERS}),
                 "clip_count": ("INT", {"default": 5, "min": 1, "max": _MAX_INDEXED_LOADERS}),
             },
@@ -339,7 +345,8 @@ class NH_ClipIndex:
         import folder_paths
         import comfy.sd
         clip_path = folder_paths.get_full_path_or_raise("clip", clip_name)
-        clip = comfy.sd.load_clip(ckpt_paths=[clip_path], embedding_directory=folder_paths.get_folder_paths("embeddings"), clip_type=comfy.sd.CLIP_ALIASES[type])
+        clip_type = getattr(comfy.sd.CLIPType, type.upper(), comfy.sd.CLIPType.STABLE_DIFFUSION)
+        clip = comfy.sd.load_clip(ckpt_paths=[clip_path], embedding_directory=folder_paths.get_folder_paths("embeddings"), clip_type=clip_type)
         return (clip, clip_name, final_index)
 
 
