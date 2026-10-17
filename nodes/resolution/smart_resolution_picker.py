@@ -518,10 +518,17 @@ class NH_SmartResolutionPicker:
         if batch_size != requested_batch:
             extra_warnings.append(f"batch size clamped: {requested_batch} -> {batch_size}")
 
+        # Latent shape must match the model's VAE (FLUX.2: 128ch at /16). The sampler
+        # only repeats channels of an empty latent, it does not rescale H/W unless
+        # downscale_ratio_spacial says which ratio the latent was built with.
         channels = int(model_spec.get("latent_channels", 16))
-        latent_height = max(1, int(height) // 8)
-        latent_width = max(1, int(width) // 8)
-        latent = {"samples": torch.zeros((batch_size, channels, latent_height, latent_width), dtype=torch.float32)}
+        downscale = int(model_spec.get("latent_downscale", 8))
+        latent_height = max(1, int(height) // downscale)
+        latent_width = max(1, int(width) // downscale)
+        latent = {
+            "samples": torch.zeros((batch_size, channels, latent_height, latent_width), dtype=torch.float32),
+            "downscale_ratio_spacial": downscale,
+        }
         aspect_ratio = float(width) / max(float(height), 1.0)
         info = _build_info(model_spec, tier, ratio, width, height, entry_for_warning, extra_warnings)
 

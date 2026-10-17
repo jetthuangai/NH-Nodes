@@ -11,7 +11,8 @@ MODEL_SPECS = {
         "multiple_of": 16,
         "min_res": (64, 64),
         "max_res": (2048, 2048),
-        "latent_channels": 16,
+        "latent_channels": 128,
+        "latent_downscale": 16,
         "note": "",
     },
     "flux2_klein_9b": {
@@ -19,7 +20,8 @@ MODEL_SPECS = {
         "multiple_of": 16,
         "min_res": (64, 64),
         "max_res": (2048, 2048),
-        "latent_channels": 16,
+        "latent_channels": 128,
+        "latent_downscale": 16,
         "note": "",
     },
     "flux2_dev": {
@@ -27,7 +29,8 @@ MODEL_SPECS = {
         "multiple_of": 16,
         "min_res": (400, 400),
         "max_res": (2048, 2048),
-        "latent_channels": 16,
+        "latent_channels": 128,
+        "latent_downscale": 16,
         "note": "",
     },
     "qwen_image_edit": {

@@ -6,7 +6,7 @@ import cv2
 class NH_MaskResizeImage:
     """Resize ảnh theo kích thước target, đảm bảo vùng mask không bị mất.
 
-    - Crop: scale lên để fill target, sau đó crop bớt, giữ mask ở trung tâm.
+    - Crop: scale để mask vừa khít target, crop phần ảnh thừa (pad nếu ảnh nhỏ hơn target).
     - Pad: scale vừa đủ để mask nằm trong target, pad phần thừa bằng màu tùy chọn.
     """
 
@@ -66,12 +66,9 @@ class NH_MaskResizeImage:
         scale_for_mask_w = tw / mw
         scale_for_mask_h = th / mh
 
-        if mode == "pad":
-            # Scale nhỏ nhất để toàn bộ mask vừa trong target
-            scale = min(scale_for_mask_w, scale_for_mask_h)
-        else:
-            # Crop: scale lớn nhất để mask vẫn vừa, sau đó crop phần thừa
-            scale = max(scale_for_mask_w, scale_for_mask_h)
+        # Cả hai mode: scale lớn nhất mà toàn bộ mask vẫn nằm trong target.
+        # (Dùng max ở đây sẽ làm mask tràn target ở một chiều và bị crop mất.)
+        scale = min(scale_for_mask_w, scale_for_mask_h)
 
         # Kích thước ảnh sau khi scale
         new_sw = max(1, round(sw * scale))
@@ -82,16 +79,21 @@ class NH_MaskResizeImage:
         mask_scaled = cv2.resize(mask_np, (new_sw, new_sh), interpolation=cv2.INTER_NEAREST)
 
         # Vị trí mask center sau khi scale
-        mask_cx = round((mx1 + mx2) / 2.0 * scale)
-        mask_cy = round((my1 + my2) / 2.0 * scale)
+        # Pixel mask chiếm [mx1, mx2 + 1) -> tâm là (mx1 + mx2 + 1) / 2
+        mask_cx = round((mx1 + mx2 + 1) / 2.0 * scale)
+        mask_cy = round((my1 + my2 + 1) / 2.0 * scale)
 
         if mode == "crop":
-            return self._crop_around_center(img_scaled, mask_scaled, tw, th, mask_cx, mask_cy)
+            return self._crop_around_center(img_scaled, mask_scaled, tw, th, mask_cx, mask_cy, pad_color)
         else:
             return self._pad_around_center(img_scaled, mask_scaled, tw, th, mask_cx, mask_cy, pad_color)
 
-    def _crop_around_center(self, img, mask, tw, th, cx, cy):
+    def _crop_around_center(self, img, mask, tw, th, cx, cy, pad_color):
         h, w = img.shape[:2]
+
+        # Ảnh scaled nhỏ hơn target: không thể crop mà giữ đủ mask -> pad bằng màu user chọn
+        if w < tw or h < th:
+            return self._pad_around_center(img, mask, tw, th, cx, cy, pad_color)
 
         # Tính vùng crop, giữ mask center ở giữa target
         x1 = cx - tw // 2
@@ -100,14 +102,8 @@ class NH_MaskResizeImage:
         # Clamp để không vượt ra ngoài ảnh
         x1 = max(0, min(x1, w - tw))
         y1 = max(0, min(y1, h - th))
-
-        # Đảm bảo đủ kích thước (trường hợp ảnh scaled nhỏ hơn target)
         x2 = x1 + tw
         y2 = y1 + th
-
-        if x2 > w or y2 > h:
-            # Fallback: pad nếu thiếu
-            return self._pad_around_center(img, mask, tw, th, cx, cy, (0, 0, 0))
 
         return img[y1:y2, x1:x2], mask[y1:y2, x1:x2]
 

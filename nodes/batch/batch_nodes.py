@@ -136,7 +136,8 @@ class NH_Counter:
                 "step": ("INT", {"default": 1, "min": 1}),
                 "max_value": ("INT", {"default": 9, "min": 0}),
                 "reset": ("BOOLEAN", {"default": False}),
-            }
+            },
+            "hidden": {"unique_id": "UNIQUE_ID"},
         }
 
     RETURN_TYPES = ("INT", "BOOLEAN", "FLOAT", "INT")
@@ -144,8 +145,15 @@ class NH_Counter:
     FUNCTION = "count"
     CATEGORY = "NH-Nodes/Batch"
 
-    def count(self, start, step, max_value, reset):
-        node_id = id(self)
+    @classmethod
+    def IS_CHANGED(cls, **kwargs):
+        # Inputs never change between queues, so without this ComfyUI serves the
+        # cached output and the counter never advances.
+        return float("nan")
+
+    def count(self, start, step, max_value, reset, unique_id=None):
+        # Key by graph node id: stable across runs and shared by nothing else.
+        node_id = unique_id if unique_id is not None else id(self)
 
         if reset or node_id not in NH_Counter._states:
             NH_Counter._states[node_id] = start
