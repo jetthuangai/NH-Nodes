@@ -1,74 +1,15 @@
 """Phase 2: Math & Random — NH_MathEval, NH_RandomChoice"""
 
-import ast
-import operator
-import math
 import random
 
+from ...core import safe_eval
 
-# --- Safe eval engine ---
-_SAFE_OPS = {
-    ast.Add: operator.add,
-    ast.Sub: operator.sub,
-    ast.Mult: operator.mul,
-    ast.Div: operator.truediv,
-    ast.FloorDiv: operator.floordiv,
-    ast.Mod: operator.mod,
-    ast.Pow: operator.pow,
-    ast.USub: operator.neg,
-}
-
-_SAFE_FUNCS = {
-    "min": min, "max": max, "abs": abs,
-    "round": round,
-    "sqrt": math.sqrt, "floor": math.floor, "ceil": math.ceil,
-    "clamp": lambda v, lo, hi: max(lo, min(hi, v)),
-}
-
-
-def _safe_eval(node, variables):
-    """De quy eval AST node, chi cho phep operators va functions an toan."""
-    if isinstance(node, ast.Constant):
-        return node.value
-    elif isinstance(node, ast.Name):
-        if node.id in variables:
-            return variables[node.id]
-        if node.id in _SAFE_FUNCS:
-            return _SAFE_FUNCS[node.id]
-        raise ValueError(f"Unknown variable: {node.id}")
-    elif isinstance(node, ast.BinOp):
-        left = _safe_eval(node.left, variables)
-        right = _safe_eval(node.right, variables)
-        op = _SAFE_OPS.get(type(node.op))
-        if op is None:
-            raise ValueError(f"Unsupported operator: {type(node.op).__name__}")
-        if isinstance(node.op, ast.Div) and right == 0:
-            print("[NH-Nodes] Warning: Division by zero, returning 0")
-            return 0.0
-        if isinstance(node.op, ast.Pow):
-            # Gioi han power de tranh treo
-            if abs(right) > 100:
-                print("[NH-Nodes] Warning: Power too large, clamped to 100")
-                right = 100 if right > 0 else -100
-        return op(left, right)
-    elif isinstance(node, ast.UnaryOp):
-        operand = _safe_eval(node.operand, variables)
-        op = _SAFE_OPS.get(type(node.op))
-        if op is None:
-            raise ValueError(f"Unsupported unary op: {type(node.op).__name__}")
-        return op(operand)
-    elif isinstance(node, ast.Call):
-        func_name = node.func.id if isinstance(node.func, ast.Name) else None
-        if func_name not in _SAFE_FUNCS:
-            raise ValueError(f"Unknown function: {func_name}")
-        args = [_safe_eval(arg, variables) for arg in node.args]
-        return _SAFE_FUNCS[func_name](*args)
-    else:
-        raise ValueError(f"Unsupported expression type: {type(node).__name__}")
+# Random Choice co 6 input: input_0 .. input_5
+_CHOICE_SLOTS = 6
 
 
 class NH_MathEval:
-    """Tinh toan bieu thuc toan hoc an toan bang AST parsing."""
+    """Tinh toan bieu thuc toan hoc an toan bang AST parsing (core/safe_eval.py)."""
 
     @classmethod
     def INPUT_TYPES(cls):
@@ -94,15 +35,18 @@ class NH_MathEval:
     CATEGORY = "NH-Nodes/Logic"
 
     def evaluate(self, expression, a=0.0, b=0.0, c=0.0, d=0.0, round_to=-1):
-        variables = {"a": a, "b": b, "c": c, "d": d}
+        # Bieu thuc sai hoac ket qua khong huu han -> ValueError (ComfyUI hien loi, khong tra 0 im lang).
+        # x / 0, x // 0, x % 0 -> 0 kem canh bao.
         try:
-            tree = ast.parse(expression, mode='eval')
-            result = _safe_eval(tree.body, variables)
-        except Exception as e:
-            print(f"[NH-Nodes] MathEval error: {e}")
-            result = 0.0
-
-        result = float(result)
+            result = safe_eval.evaluate(
+                expression,
+                {"a": a, "b": b, "c": c, "d": d},
+                safe_eval.MATH_FUNCTIONS,
+                zero_division="zero",
+                on_warning=lambda message: print(f"[NH-Nodes] MathEval warning: {message}"),
+            )
+        except safe_eval.ExpressionError as exc:
+            raise ValueError(f"Math Eval: {exc} (expression: {expression!r})") from exc
         if round_to >= 0:
             result = round(result, round_to)
 
@@ -133,7 +77,7 @@ class NH_RandomChoice:
 
     def choose(self, seed, weights, **kwargs):
         connected = []
-        for i in range(6):
+        for i in range(_CHOICE_SLOTS):
             key = f"input_{i}"
             if key in kwargs and kwargs[key] is not None:
                 connected.append((i, kwargs[key]))
@@ -141,23 +85,22 @@ class NH_RandomChoice:
         if not connected:
             return (None, -1, "")
 
-        # Parse weights
-        w = []
-        for s in weights.split(","):
+        # Weight thu i thuoc input_i (khong phai input thu i dang noi), slot thieu weight = 1
+        slot_weights = []
+        for s in weights.split(",")[:_CHOICE_SLOTS]:
             try:
-                w.append(max(0.0, float(s.strip())))
+                slot_weights.append(max(0.0, float(s.strip())))
             except (ValueError, TypeError):
-                w.append(1.0)
-        while len(w) < len(connected):
-            w.append(1.0)
-        w = w[:len(connected)]
+                slot_weights.append(1.0)
+        slot_weights += [1.0] * (_CHOICE_SLOTS - len(slot_weights))
+        w = [slot_weights[i] for i, _ in connected]
 
         # Normalize
         total = sum(w) or 1.0
         probs = [x / total for x in w]
 
-        # Seed
-        rng = random.Random(seed if seed > 0 else None)
+        # Seed dung dung gia tri (0 cung tat dinh): ComfyUI cache output theo input
+        rng = random.Random(seed)
 
         # Weighted pick
         r = rng.random()

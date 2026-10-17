@@ -72,19 +72,34 @@ class NH_BatchMerge:
     CATEGORY = "NH-Nodes/Batch"
 
     def merge(self, batch_a, batch_b=None, batch_c=None, resize_mode="stretch"):
-        # Target size tu batch_a
-        target_h, target_w = batch_a.shape[1], batch_a.shape[2]
+        # Target size va so kenh tu batch_a
+        target_h, target_w, channels = batch_a.shape[1], batch_a.shape[2], batch_a.shape[3]
         batches = [batch_a]
 
         for batch in [batch_b, batch_c]:
             if batch is None:
                 continue
+            # Channels first, so pad bars of an RGB batch merged into RGBA get the same (transparent) alpha.
+            batch = self._match_channels(batch, channels)
             if batch.shape[1] != target_h or batch.shape[2] != target_w:
                 batch = self._resize_batch(batch, target_h, target_w, resize_mode)
             batches.append(batch)
 
         result = torch.cat(batches, dim=0)
         return (result, result.shape[0])
+
+    @staticmethod
+    def _match_channels(batch, channels):
+        """RGB <-> RGBA de torch.cat chay duoc: bo kenh alpha thua, thieu thi them alpha dac (1.0)."""
+        have = batch.shape[-1]
+        if have == channels:
+            return batch
+        if have not in (3, 4) or channels not in (3, 4):
+            raise ValueError(f"Batch Merge: cannot merge a {have}-channel batch with the {channels}-channel batch_a")
+        if have > channels:
+            return batch[..., :channels]
+        opaque = torch.ones((*batch.shape[:-1], 1), dtype=batch.dtype, device=batch.device)
+        return torch.cat([batch, opaque], dim=-1)
 
     @staticmethod
     def _resize_batch(batch, th, tw, mode):
@@ -99,7 +114,7 @@ class NH_BatchMerge:
             # Scale de fill, roi crop
             _, _, sh, sw = b.shape
             scale = max(th / sh, tw / sw)
-            new_h, new_w = round(sh * scale), round(sw * scale)
+            new_h, new_w = max(1, round(sh * scale)), max(1, round(sw * scale))
             b = F.interpolate(b, size=(new_h, new_w), mode='bilinear', align_corners=False)
             # Center crop
             y1 = (new_h - th) // 2
@@ -110,7 +125,7 @@ class NH_BatchMerge:
             # Scale de fit, roi pad
             _, _, sh, sw = b.shape
             scale = min(th / sh, tw / sw)
-            new_h, new_w = round(sh * scale), round(sw * scale)
+            new_h, new_w = max(1, round(sh * scale)), max(1, round(sw * scale))
             b = F.interpolate(b, size=(new_h, new_w), mode='bilinear', align_corners=False)
             # Center pad
             pad_top = (th - new_h) // 2

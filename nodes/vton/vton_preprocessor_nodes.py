@@ -65,15 +65,38 @@ class NH_VTonUltimateProcessor:
         }
         return LOADED_VTON_MODELS
 
-    def process(self, human_image, category, mask_feathering, cover_shoes, refine_hands, refine_hair, device, 
+    def process(self, human_image, category, mask_feathering, cover_shoes, refine_hands, refine_hair, device,
                 offset_top=0, offset_bottom=0, offset_left=0, offset_right=0):
+        # Import trước load_model: thiếu scikit-image thì báo lỗi ngay, không phải tải model xong mới lỗi.
         from ...core.utils_mask import get_mask_location
 
+        if human_image.shape[0] == 0:
+            raise ValueError("VTON Ultimate Processor: human_image is an empty batch")
         vton_model = self.load_model(device)
-        human_img_pil = tensor_to_pil(human_image)
+        # Mỗi ảnh trong batch chạy độc lập với cùng setting, rồi nối các output theo chiều batch.
+        results = [
+            self._process_image(
+                vton_model, get_mask_location, human_image[index], index, category, mask_feathering, cover_shoes,
+                refine_hands, refine_hair, offset_top, offset_bottom, offset_left, offset_right,
+            )
+            for index in range(human_image.shape[0])
+        ]
+        return tuple(torch.cat(outputs, dim=0) for outputs in zip(*results))
+
+    def _process_image(self, vton_model, get_mask_location, human_image, index, category, mask_feathering, cover_shoes,
+                       refine_hands, refine_hair, offset_top, offset_bottom, offset_left, offset_right):
+        """Xử lý đúng một ảnh [H,W,C]; `index` là vị trí trong batch (chỉ dùng cho thông báo lỗi)."""
+        # DWPose và parsing cần RGB 3 kênh: ảnh xám làm hỏng bước đảo BGR, RGBA đưa 4 kênh vào DWPose (alpha bị bỏ).
+        human_img_pil = tensor_to_pil(human_image).convert("RGB")
         human_img_resized = resize_image(human_img_pil)
 
         pose_img_np, _, _, candidate = vton_model['dwprocessor'](np.array(human_img_resized)[:,:,::-1])
+        # DWPose không trả mảng rỗng khi không thấy người: nó vẫn chạy pose trên cả ảnh và đánh dấu mọi keypoint là -1.
+        if len(candidate) == 0 or not np.any(candidate[0] != -1):
+            raise ValueError(
+                f"VTON Ultimate Processor: DWPose found no person in the image at batch index {index}. "
+                "Use a photo where the person is clearly visible."
+            )
         pose_image_pil = Image.fromarray(pose_img_np[:,:,::-1])
         parsing_map_pil, parsing_map_colored_pil = vton_model['parsing_model'](human_img_resized)
 

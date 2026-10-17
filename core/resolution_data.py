@@ -2,6 +2,10 @@
 
 Data is kept separate from node logic so new model families can be added
 without changing execution code.
+
+min_res / max_res are the clamp range for *custom* sizes. Curated presets may go
+beyond max_res (e.g. 4 MP tiers); their own reliability/warning fields say how
+safe they are, and the node reports that warning in its info output.
 """
 
 

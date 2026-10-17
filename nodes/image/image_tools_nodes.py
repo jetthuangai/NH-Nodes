@@ -1,8 +1,8 @@
+import functools
 import os
 import re
 import unicodedata
 import uuid
-import ast
 import hashlib
 from pathlib import Path
 
@@ -15,8 +15,12 @@ import comfy.utils
 import folder_paths
 import node_helpers
 
+from ...core.safe_eval import evaluate
+from ...core.utils import parse_hex_color, tensor_to_pil
+
 
 _RESAMPLING = getattr(Image, "Resampling", Image)
+_WINDOWS = os.name == "nt"
 _IMAGE_EXTENSIONS = {".png", ".jpg", ".jpeg", ".webp", ".avif", ".bmp", ".tif", ".tiff"}
 _FONT_EXTENSIONS = {".ttf", ".otf", ".ttc"}
 _MAX_LAYER_STACK_INPUTS = 64
@@ -64,15 +68,30 @@ _FONT_CHOICES = _font_choices()
 
 
 def _parse_hex_color(value, default):
+    """Parse a colour into an (r, g, b, a) tuple of 0-255 ints; ``default`` when the text is not a colour.
+
+    '#RGB', '#RRGGBB' and '#RRGGBBAA' go through core.utils.parse_hex_color (opaque unless AA is given). Other CSS
+    colours Pillow understands ('red', 'rgb(1, 2, 3)') keep working, as they did before.
+    """
+    text = str(value or "").strip()
+    color = parse_hex_color(text, ())
+    if color:
+        return color
     try:
-        return ImageColor.getrgb((value or "").strip())
-    except Exception:
-        return default
+        return ImageColor.getcolor(text, "RGBA")
+    except ValueError:
+        return tuple(default) + (255,) * (4 - len(default))
 
 
 def _tensor_to_pil(image_tensor):
     array = np.clip(255.0 * image_tensor.cpu().numpy(), 0, 255).astype(np.uint8)
     return Image.fromarray(array).convert("RGB")
+
+
+def _layer_to_pil(image_tensor):
+    """Like _tensor_to_pil, but a 4-channel image stays RGBA so its transparency is not lost."""
+    pil_image = tensor_to_pil(image_tensor)
+    return pil_image if pil_image.mode == "RGBA" else pil_image.convert("RGB")
 
 
 def _pil_to_tensor(image):
@@ -81,18 +100,59 @@ def _pil_to_tensor(image):
     return torch.from_numpy(array).unsqueeze(0).to(dtype=dtype)
 
 
+@functools.lru_cache(maxsize=64)
+def _cached_truetype(path, size):
+    """Open a TrueType font once per (path, size), as the Label node asks for many sizes. None if it cannot be opened."""
+    try:
+        return ImageFont.truetype(path, size)
+    except Exception:
+        return None
+
+
+@functools.lru_cache(maxsize=1)
+def _default_font():
+    return ImageFont.load_default()
+
+
 def _load_font(font_name, font_size):
     if font_name and font_name != "default":
         font_path = Path(os.environ.get("WINDIR", "C:\\Windows")) / "Fonts" / font_name
         if font_path.exists():
-            try:
-                return ImageFont.truetype(str(font_path), font_size)
-            except Exception:
-                pass
-    try:
-        return ImageFont.truetype("arial.ttf", font_size)
-    except Exception:
-        return ImageFont.load_default()
+            font = _cached_truetype(str(font_path), font_size)
+            if font is not None:
+                return font
+    font = _cached_truetype("arial.ttf", font_size)
+    return font if font is not None else _default_font()
+
+
+_MIN_FIT_FONT_SIZE = 8
+
+
+def _fit_font_size(font_size, fits):
+    """Largest size in [8, font_size] for which ``fits(size)`` is true; 8 when none does.
+
+    A label gets wider as the font grows, so a binary search lands on the same size as shrinking one point at a
+    time, after about log2(font_size) measurements instead of up to font_size. Hinting can make a text a pixel or
+    two narrower at a few isolated sizes; then the size returned still fits but may sit a point or two below what
+    the one-point-at-a-time loop would have found.
+    """
+    if font_size <= _MIN_FIT_FONT_SIZE or fits(font_size):
+        return font_size
+    low, high = _MIN_FIT_FONT_SIZE, font_size  # `low` fits (or is the floor), `high` does not
+    while high - low > 1:
+        middle = (low + high) // 2
+        if fits(middle):
+            low = middle
+        else:
+            high = middle
+    return low
+
+
+def _label_text_width(draw, text, font_name, font_size, stroke_width):
+    left, _top, right, _bottom = draw.multiline_textbbox(
+        (0, 0), text, font=_load_font(font_name, font_size), stroke_width=stroke_width
+    )
+    return right - left
 
 
 def _resize_image(image, size, method):
@@ -134,11 +194,16 @@ def _common_upscale_method(resize_method):
 
 
 def _pad_samples(samples, target_width, target_height, fill_rgb):
+    """Centre ``samples`` ([B, C, H, W]) on a canvas of the padding colour.
+
+    ``fill_rgb`` is (r, g, b) or (r, g, b, a) in 0-255. The fourth channel of RGBA images takes the alpha value, which
+    is opaque when the colour has none.
+    """
     batch, channels, resized_h, resized_w = samples.shape
     canvas = torch.empty((batch, channels, target_height, target_width), dtype=samples.dtype, device=samples.device)
-    fill_values = [channel / 255.0 for channel in fill_rgb]
+    fill_values = [channel / 255.0 for channel in fill_rgb[:3]] + [fill_rgb[3] / 255.0 if len(fill_rgb) > 3 else 1.0]
     for channel in range(channels):
-        canvas[:, channel, :, :] = fill_values[min(channel, len(fill_values) - 1)]
+        canvas[:, channel, :, :] = fill_values[min(channel, 3)]
 
     offset_x = max(0, (target_width - resized_w) // 2)
     offset_y = max(0, (target_height - resized_h) // 2)
@@ -161,6 +226,18 @@ def _resize_contain(image, target_size):
     width, height = image.size
     scale = min(target_width / max(width, 1), target_height / max(height, 1))
     return _resize_image(image, (max(1, round(width * scale)), max(1, round(height * scale))), "lanczos")
+
+
+def _paste_layer(canvas, layer, position):
+    """Paste ``layer`` onto ``canvas`` through its own alpha, so transparent areas leave the canvas untouched."""
+    if layer.mode != "RGBA":
+        canvas.paste(layer, position)  # opaque, whatever the canvas mode
+    elif canvas.mode == "RGBA":
+        # Both have alpha: a straight paste would blend the alpha channels as if they were colours.
+        box = (position[0], position[1], position[0] + layer.width, position[1] + layer.height)
+        canvas.paste(Image.alpha_composite(canvas.crop(box), layer), position)
+    else:
+        canvas.paste(layer, position, layer)
 
 
 def _fit_layer_image(image, target_size, resize_mode):
@@ -289,42 +366,12 @@ def _layout_slots(layout_mode, layout_preset, canvas_width, canvas_height, colum
 
 
 def _eval_position_expr(expression, variables):
-    operators = {
-        ast.Add: lambda left, right: left + right,
-        ast.Sub: lambda left, right: left - right,
-        ast.Mult: lambda left, right: left * right,
-        ast.Div: lambda left, right: left / right,
-        ast.FloorDiv: lambda left, right: left // right,
-        ast.Mod: lambda left, right: left % right,
-        ast.Pow: lambda left, right: left ** right,
-    }
-    unary_operators = {
-        ast.UAdd: lambda value: value,
-        ast.USub: lambda value: -value,
-    }
-
-    def visit(node):
-        if isinstance(node, ast.Expression):
-            return visit(node.body)
-        if isinstance(node, ast.Constant) and isinstance(node.value, (int, float)):
-            return node.value
-        if isinstance(node, ast.Num):
-            return node.n
-        if isinstance(node, ast.Name):
-            key = node.id.casefold()
-            if key not in variables:
-                raise ValueError(f"Unknown position variable: {node.id}")
-            return variables[key]
-        if isinstance(node, ast.BinOp) and type(node.op) in operators:
-            return operators[type(node.op)](visit(node.left), visit(node.right))
-        if isinstance(node, ast.UnaryOp) and type(node.op) in unary_operators:
-            return unary_operators[type(node.op)](visit(node.operand))
-        raise ValueError(f"Unsupported position expression: {expression}")
-
+    # Variable keys are already casefolded. core.safe_eval works in floating point, so 9**9**9 overflows into an
+    # error instead of building a huge integer and freezing the worker.
     try:
-        return visit(ast.parse(str(expression), mode="eval"))
-    except SyntaxError as exc:
-        raise ValueError(f"Invalid position expression: {expression}") from exc
+        return evaluate(expression, variables, zero_division="error", case_insensitive=True)
+    except ValueError as exc:  # core.safe_eval.ExpressionError is a ValueError
+        raise ValueError(f"Invalid position expression '{expression}': {exc}") from exc
 
 
 def _split_position_line(line):
@@ -377,16 +424,48 @@ def _save_dir_from_text(folder_path):
     return os.path.join(folder_paths.get_output_directory(), folder_path)
 
 
+def _contained_path(base_dir, relative, what):
+    """Absolute path of ``relative`` below ``base_dir``; ValueError (naming ``what``) if it would leave ``base_dir``.
+
+    Both slash styles count as separators on every OS, so a workflow written on Windows is judged the same elsewhere.
+    """
+    base_dir = os.path.abspath(base_dir)
+    path = os.path.abspath(os.path.join(base_dir, str(relative).replace("\\", "/")))
+    try:
+        inside = os.path.commonpath([base_dir, path]) == base_dir
+    except ValueError:  # another drive or a UNC share
+        inside = False
+    if not inside:
+        raise ValueError(f"{what} must stay inside the target folder: {relative!r}")
+    return path
+
+
 def _save_child_dir(save_dir, folder_name):
     folder_name = str(folder_name or "").strip()
     if not folder_name:
         return save_dir
+    return _contained_path(save_dir, folder_name, "new_folder_name")
 
-    base_dir = os.path.abspath(save_dir)
-    child_dir = os.path.abspath(os.path.join(base_dir, folder_name))
-    if os.path.commonpath([base_dir, child_dir]) != base_dir:
-        raise ValueError("new_folder_name must stay inside folder_path")
-    return child_dir
+
+def _split_filename_prefix(save_dir, prefix):
+    """('sub/dir/', 'name', directory) for a filename_prefix such as 'sub/dir/name'.
+
+    Subfolders are allowed, but the folder part must stay inside ``save_dir`` (no '..', no absolute path) and the
+    file name must be a plain name. Without a separator the name is not looked at by the folder check, and on
+    Windows a colon turns it into a path: os.path.join(save_dir, 'D:x0001.png') is a file on drive D:, 'C:x' is
+    relative to the current folder of drive C: (join drops the 'C:', so the reported name is wrong and the
+    numbering never finds the file again) and 'name:stream' writes an NTFS alternate data stream. A Windows file
+    name cannot contain a colon anyway, so such a prefix is refused whole, before anything is created.
+    """
+    if _WINDOWS and ":" in prefix:
+        raise ValueError(
+            "filename_prefix cannot contain ':' on Windows (it selects a drive or an NTFS stream, "
+            f"not a file name): {prefix!r}"
+        )
+    folder_part, name = re.match(r"(.*[\\/])?([^\\/]*)\Z", prefix, re.DOTALL).groups()
+    if not folder_part:
+        return "", name, save_dir
+    return folder_part, name, _contained_path(save_dir, folder_part, "filename_prefix")
 
 
 def _resolve_load_dir(folder_path, image="", upload_probe=""):
@@ -738,16 +817,19 @@ class NH_SaveImagePath:
         save_dir = _save_dir_from_text(folder_path)
         if create_new_folder:
             save_dir = _save_child_dir(save_dir, new_folder_name)
-        os.makedirs(save_dir, exist_ok=True)
 
+        # A prefix may name subfolders ("renders/img"); they live below save_dir and are where files are counted.
         prefix = (filename_prefix or "NH").strip() or "NH"
-        numbered_pattern = re.compile(rf"^{re.escape(prefix)}(\d+)\.(?:png|jpe?g|webp|avif)$", re.IGNORECASE)
-        legacy_numbered_pattern = re.compile(rf"^(?:{re.escape(prefix)})?(\d+)\.(?:png|jpe?g|webp|avif)$", re.IGNORECASE)
-        bare_pattern = re.compile(rf"^{re.escape(prefix)}\.(?:png|jpe?g|webp|avif)$", re.IGNORECASE)
+        prefix_folder, prefix_name, target_dir = _split_filename_prefix(save_dir, prefix)
+        os.makedirs(target_dir, exist_ok=True)
+
+        numbered_pattern = re.compile(rf"^{re.escape(prefix_name)}(\d+)\.(?:png|jpe?g|webp|avif)$", re.IGNORECASE)
+        legacy_numbered_pattern = re.compile(rf"^(?:{re.escape(prefix_name)})?(\d+)\.(?:png|jpe?g|webp|avif)$", re.IGNORECASE)
+        bare_pattern = re.compile(rf"^{re.escape(prefix_name)}\.(?:png|jpe?g|webp|avif)$", re.IGNORECASE)
 
         used_numbers = set()
         bare_exists = False
-        for name in os.listdir(save_dir):
+        for name in os.listdir(target_dir):
             if bare_pattern.match(name):
                 bare_exists = True
                 continue
@@ -765,22 +847,22 @@ class NH_SaveImagePath:
             if number_suffix:
                 while next_number in used_numbers:
                     next_number += 1
-                filename = f"{prefix}{next_number:04d}.{file_format}"
+                filename = f"{prefix_name}{next_number:04d}.{file_format}"
                 used_numbers.add(next_number)
                 next_number += 1
             elif not bare_exists and not used_numbers:
-                filename = f"{prefix}.{file_format}"
+                filename = f"{prefix_name}.{file_format}"
                 bare_exists = True
             else:
                 while next_number in used_numbers:
                     next_number += 1
-                filename = f"{prefix}{next_number}.{file_format}"
+                filename = f"{prefix_name}{next_number}.{file_format}"
                 used_numbers.add(next_number)
                 next_number += 1
 
             pil_image = _tensor_to_pil(image)
-            _save_pil_image(pil_image, os.path.join(save_dir, filename), file_format, int(dpi))
-            saved_files.append(filename)
+            _save_pil_image(pil_image, os.path.join(target_dir, filename), file_format, int(dpi))
+            saved_files.append(prefix_folder + filename)
 
             if preview_image:
                 preview_filename = f"NH_preview_{uuid.uuid4().hex}_{batch_index}.png"
@@ -1048,16 +1130,18 @@ class NH_LayerLayoutComposite:
         if right <= left or bottom <= top:
             return
         crop_box = (left - int(x), top - int(y), right - int(x), bottom - int(y))
-        canvas.paste(layer.crop(crop_box), (left, top))
+        _paste_layer(canvas, layer.crop(crop_box), (left, top))
 
     def _create_canvas(self, canvas_width, canvas_height, background_color, background_fit, background_image=None):
-        fill_rgb = _parse_hex_color(background_color, (255, 255, 255))
-        canvas = Image.new("RGB", (canvas_width, canvas_height), fill_rgb)
+        fill = _parse_hex_color(background_color, (255, 255, 255))
+        # An opaque colour gives the RGB canvas (and RGB output) this node always had; a colour with transparency
+        # ('#RRGGBBAA' with AA below FF) gives an RGBA canvas so that the transparency survives.
+        canvas = Image.new("RGBA" if fill[3] < 255 else "RGB", (canvas_width, canvas_height), fill)
 
         if background_image is None:
             return canvas
 
-        background = _tensor_to_pil(background_image[0])
+        background = _layer_to_pil(background_image[0])
         fitted, offset_x, offset_y = _fit_layer_image(background, (canvas_width, canvas_height), background_fit)
         self._paste_clipped(canvas, fitted, offset_x, offset_y)
         return canvas
@@ -1105,7 +1189,7 @@ class NH_LayerLayoutComposite:
 
         for image_index in range(used_count):
             x, y, width, height = slots[image_index]
-            layer = _tensor_to_pil(images[image_index])
+            layer = _layer_to_pil(images[image_index])
             fitted, offset_x, offset_y = _fit_layer_image(layer, (int(width), int(height)), resize_mode)
             paste_x = int(x) + offset_x
             paste_y = int(y) + offset_y
@@ -1157,11 +1241,12 @@ class NH_LayerStackComposite:
             return False
 
         crop_box = (left - x, top - y, right - x, bottom - y)
-        canvas.paste(layer.crop(crop_box), (left, top))
+        _paste_layer(canvas, layer.crop(crop_box), (left, top))
         return True
 
     def composite(self, background_image, layer_count, positions, **kwargs):
-        background = _tensor_to_pil(background_image[0])
+        # The output has the channels of the background: RGB stays RGB, an RGBA background gives RGBA.
+        background = _layer_to_pil(background_image[0])
         canvas = background.copy()
         requested_count = max(0, min(int(layer_count), _MAX_LAYER_STACK_INPUTS))
         layer_images = {}
@@ -1171,7 +1256,7 @@ class NH_LayerStackComposite:
             if layer is None:
                 layer_sizes.append((0, 0))
                 continue
-            layer_image = _tensor_to_pil(layer[0])
+            layer_image = _layer_to_pil(layer[0])
             layer_images[index] = layer_image
             layer_sizes.append((layer_image.width, layer_image.height))
 
@@ -1416,17 +1501,17 @@ class NH_ImageLabel:
                     band_top = height
 
             draw = ImageDraw.Draw(canvas)
-            font = _load_font(font_name, font_size)
-            bbox = draw.multiline_textbbox((0, 0), label_text, font=font, stroke_width=outline_width)
             current_size = font_size
 
             if fit_text:
                 max_width = max(1, width - (padding_x * 2))
-                while (bbox[2] - bbox[0]) > max_width and current_size > 8:
-                    current_size -= 1
-                    font = _load_font(font_name, current_size)
-                    bbox = draw.multiline_textbbox((0, 0), label_text, font=font, stroke_width=outline_width)
+                current_size = _fit_font_size(
+                    font_size,
+                    lambda size: _label_text_width(draw, label_text, font_name, size, outline_width) <= max_width,
+                )
 
+            font = _load_font(font_name, current_size)
+            bbox = draw.multiline_textbbox((0, 0), label_text, font=font, stroke_width=outline_width)
             text_width = bbox[2] - bbox[0]
             text_height = bbox[3] - bbox[1]
             if align == "left":

@@ -1,6 +1,9 @@
 # Kiểu dữ liệu tùy chỉnh cho đường ống đa năng
 NH_UNIVERSAL_PIPE = ("NH_UNIVERSAL_PIPE",)
 
+# Số ô input của Pack (input_0 .. input_9) cũng là độ dài của package
+_PIPE_SLOTS = 10
+
 class NH_PackUniversal:
     @classmethod
     def INPUT_TYPES(cls):
@@ -19,9 +22,9 @@ class NH_PackUniversal:
     CATEGORY = "NH-Nodes/Utils/Pipe"
 
     def pack(self, **kwargs):
-        # Đóng gói tất cả các giá trị đầu vào thành một list
-        # kwargs sẽ là một dictionary chứa tất cả các input đã được kết nối
-        pipe = list(kwargs.values())
+        # Đóng gói theo số ô: package[i] là input_i, ô chưa nối là None.
+        # (list(kwargs.values()) chỉ giữ ô đã nối nên index bị lệch khi bỏ trống input_0.)
+        pipe = [kwargs.get(f"input_{i}") for i in range(_PIPE_SLOTS)]
         return (pipe,)
 
 class NH_UnpackUniversal:
@@ -29,14 +32,14 @@ class NH_UnpackUniversal:
     def INPUT_TYPES(cls):
         return {
             "required": {
-                "index": ("INT", {"default": 0, "min": 0, "max": 9}),
+                "index": ("INT", {"default": 0, "min": 0, "max": _PIPE_SLOTS - 1}),
             },
             "optional": {
                 "package": NH_UNIVERSAL_PIPE,
                 "pipe": NH_UNIVERSAL_PIPE,
             },
         }
-    
+
     # Đầu ra là kiểu dữ liệu bất kỳ
     RETURN_TYPES = ("*",)
     RETURN_NAMES = ("item",)
@@ -48,8 +51,8 @@ class NH_UnpackUniversal:
         if pipe_data is None:
             return (None,)
 
-        # Kiểm tra xem index có hợp lệ không
-        if index < len(pipe_data):
+        # index = số ô input của Pack; ngoài phạm vi (kể cả âm) thì trả None
+        if 0 <= index < len(pipe_data):
             return (pipe_data[index],)
         else:
             # Trả về None nếu index nằm ngoài phạm vi

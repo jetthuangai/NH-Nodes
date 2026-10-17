@@ -1,7 +1,5 @@
 """Phase 1: Logic Core — compare, branching, and gating nodes."""
 
-import re
-
 from comfy_execution.graph_utils import ExecutionBlocker
 
 
@@ -28,6 +26,11 @@ class NH_Compare:
     RETURN_NAMES = ("result", "a_passthrough", "b_passthrough")
     FUNCTION = "compare"
     CATEGORY = "NH-Nodes/Logic"
+    DESCRIPTION = (
+        'Compare a with b. "in" is plain membership: when b is a list, tuple, set or dict, a must be one of '
+        "its items or keys; otherwise str(a) must be a substring of str(b), case-sensitive "
+        '(13 is in "a13b" but not in "1024x768 3").'
+    )
 
     def compare(self, a, b, op, type_cast="auto"):
         if a is None or b is None:
@@ -73,29 +76,19 @@ class NH_Compare:
 
     @staticmethod
     def _contains(a, b):
+        """`a in b` as plain membership / substring, nothing fuzzier:
+
+        - b is a dict: a is one of its keys.
+        - b is a list, tuple or set: a equals one of its items.
+        - anything else: str(a) is a substring of str(b), case-sensitive, so 13 in "a13b" is True
+          and 13 in "1024x768 3" is False.
+        Values also match by their text (7 matches "7"), because widgets hand over strings.
+        """
         if isinstance(b, dict):
             return a in b or str(a) in [str(x) for x in b.keys()]
         if isinstance(b, (list, tuple, set)):
             return a in b or str(a) in [str(x) for x in b]
-        needle = str(a)
-        haystack = str(b)
-        if needle in haystack:
-            return True
-
-        if not NH_Compare._supports_subsequence(a, needle):
-            return False
-
-        idx = 0
-        for char in haystack:
-            if idx < len(needle) and char == needle[idx]:
-                idx += 1
-        return idx == len(needle)
-
-    @staticmethod
-    def _supports_subsequence(a, needle):
-        if isinstance(a, (int, float)):
-            return True
-        return bool(re.fullmatch(r"[+-]?\d+(?:\.\d+)?", needle.strip()))
+        return str(a) in str(b)
 
 
 class NH_LogicGate:

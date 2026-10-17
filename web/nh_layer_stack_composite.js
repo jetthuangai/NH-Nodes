@@ -39,6 +39,46 @@ function addMissingLayerInputs(node, count) {
     }
 }
 
+// graph.links is a Map in current frontends (a Proxy that still allows links[id]) and a plain object keyed by
+// link id in older ones.
+function findLink(graph, linkId) {
+    if (linkId == null || !graph) {
+        return null;
+    }
+    if (typeof graph.getLink === "function") {
+        return graph.getLink(linkId) ?? null;
+    }
+    const links = graph.links;
+    if (links instanceof Map) {
+        return links.get(linkId) ?? null;
+    }
+    return links?.[linkId] ?? null;
+}
+
+// The link attached to the input at `index`. Current frontends derive it from the index (input.link is only a
+// deprecated view of that), older ones keep the link id on the input.
+function getInputLink(node, index) {
+    if (!node.graph) {
+        return null; // removed from the graph before the timer fired: nothing can be linked to it
+    }
+    if (typeof node.getInputLink === "function") {
+        return node.getInputLink(index) ?? null;
+    }
+    return findLink(node.graph, node.inputs[index]?.link);
+}
+
+// A link remembers the index of the input it ends on (target_slot). Move every link onto its input's new index.
+function retargetLinks(moves, slotCount) {
+    // Park the links on free slots first: current frontends refuse to move a link onto a slot that another link
+    // still holds, which is what happens when two linked inputs change places.
+    moves.forEach(({ link }, offset) => {
+        link.target_slot = slotCount + offset;
+    });
+    moves.forEach(({ link, newIndex }) => {
+        link.target_slot = newIndex;
+    });
+}
+
 function sortLayerInputs(node) {
     const inputs = node.inputs || [];
     const background = inputs.filter((input) => input.name === "background_image");
@@ -48,7 +88,25 @@ function sortLayerInputs(node) {
     const others = inputs.filter(
         (input) => input.name !== "background_image" && !/^layer_\d+$/.test(input.name)
     );
-    node.inputs = [...background, ...layers, ...others];
+    const sorted = [...background, ...layers, ...others];
+    if (sorted.every((input, index) => input === inputs[index])) {
+        return;
+    }
+
+    // Read the links before reordering: current frontends find an input's link through its index.
+    const moves = [];
+    sorted.forEach((input, newIndex) => {
+        const oldIndex = inputs.indexOf(input);
+        const link = oldIndex === newIndex ? null : getInputLink(node, oldIndex);
+        if (link) {
+            moves.push({ link, newIndex });
+        }
+    });
+
+    node.inputs = sorted;
+    retargetLinks(moves, sorted.length);
+    node.setDirtyCanvas?.(true, true);
+    (node.graph ?? app.graph)?.setDirtyCanvas?.(true, true);
 }
 
 function updateLayerInputs(node) {

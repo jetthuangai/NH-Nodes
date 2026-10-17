@@ -19,6 +19,7 @@ from ...core.resolution_data import (
     PRESET_LABELS_BY_MODEL,
     PRESET_LOOKUP_BY_MODEL,
 )
+from ...core.utils import parse_hex_color
 
 
 TARGET_RESOLUTION_LEVELS = [f"{mp} MP" for mp in range(1, 13)]
@@ -46,6 +47,9 @@ _PIL_RESAMPLE_METHODS = {
     "box": _RESAMPLING.BOX,
     "hamming": _RESAMPLING.HAMMING,
 }
+# Lanczos has negative lobes, so it overshoots beside hard edges. Box and Hamming are plain weighted averages (their
+# weights are all positive), so they stay inside [0, 1] and need no clipping between the width and the height pass.
+_RINGING_METHODS = {"lanczos"}
 
 
 def _clamp(value, lower, upper):
@@ -68,18 +72,6 @@ def _ratio_label(width, height):
     return f"{ratio_w}:{ratio_h}"
 
 
-def _parse_hex_color(value, default=(255, 255, 255)):
-    text = str(value or "").strip().lstrip("#")
-    try:
-        if len(text) == 3:
-            text = "".join(char * 2 for char in text)
-        if len(text) != 6:
-            raise ValueError
-        return tuple(int(text[index:index + 2], 16) for index in (0, 2, 4))
-    except Exception:
-        return default
-
-
 def _needs_warning(entry, extra_warnings):
     if extra_warnings:
         return True
@@ -89,14 +81,21 @@ def _needs_warning(entry, extra_warnings):
     return any(marker in text for marker in ("community", "extrapolation", "rủi ro", "risk"))
 
 
-def _build_info(model_spec, tier, ratio, width, height, entry=None, extra_warnings=None):
+def _build_info(model_spec, tier, ratio, width, height, entry=None, extra_warnings=None, warnings=None):
+    """Info text of the resolution nodes. ``warnings`` become 'Warning:' lines.
+
+    Presets carry their own reliability warning; max_res only bounds custom sizes (see resolution_data).
+    """
     extra_warnings = extra_warnings or []
+    warnings = list(warnings or [])
     mp = (int(width) * int(height)) / 1_000_000
-    prefix = "⚠️ " if _needs_warning(entry, extra_warnings) else ""
+    prefix = "⚠️ " if warnings or _needs_warning(entry, extra_warnings) else ""
     info = f"{prefix}{model_spec['name']} | {tier} | {ratio} | {int(width)}×{int(height)} | {mp:.2f}MP"
     warning = entry.get("warning") if entry else ""
     if warning:
         info += f"\nWarning: {warning}"
+    for message in warnings:
+        info += f"\nWarning: {message}"
     note = model_spec.get("note")
     if note:
         info += f"\nNote: {note}"
@@ -335,25 +334,57 @@ def _build_resize_data(source_width, source_height, target_width, target_height,
     return data
 
 
+def _resize_planes_pil(planes, size, resample, premultiplied):
+    """Resize [C, H, W] float planes with one Pillow call and clip the result to [0, 1].
+
+    Pillow's 8-bit path clips after each of its two passes (width, then height); on float planes it clips nothing.
+    Lanczos overshoots beside hard edges, so the caller resizes one direction per call to clip in between: otherwise
+    the second pass amplifies the overshoot of the first (15-33/255 off on text and line art). Premultiplied colour
+    cannot be brighter than its alpha, so it is clipped to [0, alpha].
+    """
+    resized = np.empty((planes.shape[0], size[1], size[0]), dtype=np.float32)
+    for index in (3, 0, 1, 2) if premultiplied else range(planes.shape[0]):  # alpha first, it bounds the colour
+        upper = resized[3] if premultiplied and index != 3 else 1.0
+        np.clip(np.asarray(Image.fromarray(planes[index]).resize(size, resample)), 0.0, upper, out=resized[index])
+    return resized
+
+
 def _resize_bchw_pil(samples, height, width, resize_method):
+    """Resize [B, C, H, W] with Pillow's Lanczos/box/Hamming filters, in float.
+
+    Every channel goes through a 32-bit float ("F") image, so the result keeps its precision instead of being rounded
+    to 8 bits. Four-channel images are resized with premultiplied alpha, as Pillow does for RGBA, so colour does not
+    bleed in from transparent pixels. Lanczos resizes the width and the height in two passes, as Pillow does inside one
+    resize, but clips each pass to [0, 1] (colour to [0, alpha] when premultiplied), like Pillow's 8-bit path does.
+    """
     original_dtype = samples.dtype
     original_device = samples.device
     resample = _PIL_RESAMPLE_METHODS[resize_method]
+    size = (int(width), int(height))
     resized_items = []
 
     for sample in samples:
-        array = sample.movedim(0, -1).detach().cpu().numpy()
-        array = np.clip(array * 255.0, 0, 255).astype(np.uint8)
-        if array.shape[-1] == 1:
-            pil_image = Image.fromarray(array[:, :, 0], mode="L")
-        else:
-            pil_image = Image.fromarray(array)
-
-        pil_image = pil_image.resize((int(width), int(height)), resample)
-        resized_array = np.array(pil_image).astype(np.float32) / 255.0
-        if resized_array.ndim == 2:
-            resized_array = resized_array[:, :, None]
-        resized_items.append(torch.from_numpy(resized_array).movedim(-1, 0))
+        # [C, H, W] float32 in 0-1 (NaN and out-of-range values are cleaned up first, as the uint8 round trip did).
+        # Done in torch, which is several times faster than numpy on large images.
+        cleaned = torch.nan_to_num(sample.detach().cpu().float(), nan=0.0, posinf=1.0, neginf=0.0).clamp_(0.0, 1.0)
+        if (cleaned.shape[2], cleaned.shape[1]) == size:
+            # Nothing to resample; skipping the premultiply round trip keeps the colour under transparent pixels.
+            resized_items.append(cleaned)
+            continue
+        planes = cleaned.contiguous().numpy()
+        premultiply = planes.shape[0] == 4
+        if premultiply:
+            planes = np.concatenate((planes[:3] * planes[3:], planes[3:]))
+        # Lanczos: the width first, then the height (Pillow's own order), clipped after each. The others: one call.
+        passes = ((size[0], planes.shape[1]), size) if resize_method in _RINGING_METHODS else (size,)
+        for pass_size in passes:
+            if pass_size != (planes.shape[2], planes.shape[1]):
+                planes = _resize_planes_pil(planes, pass_size, resample, premultiply)
+        if premultiply:
+            alpha = planes[3:]
+            colour = np.divide(planes[:3], alpha, out=np.zeros_like(planes[:3]), where=alpha > 1e-6)
+            planes = np.concatenate((colour, alpha))
+        resized_items.append(torch.from_numpy(planes))
 
     return torch.stack(resized_items, dim=0).to(device=original_device, dtype=original_dtype)
 
@@ -401,14 +432,15 @@ def _resize_image_batch_with_data(images, target_width, target_height, resize_mo
         cropped = resized[:, :, top:top + int(target_height), left:left + int(target_width)]
         return cropped.movedim(1, -1), resize_data
 
-    fill_rgb = _parse_hex_color(pad_color_hex, (255, 255, 255))
+    fill_rgba = parse_hex_color(pad_color_hex, (255, 255, 255, 255))
     canvas = torch.empty(
         (batch, channels, int(target_height), int(target_width)),
         dtype=images.dtype,
         device=images.device,
     )
     for channel in range(channels):
-        canvas[:, channel, :, :] = fill_rgb[min(channel, 2)] / 255.0
+        # r, g, b, then alpha for the fourth channel of RGBA images (opaque unless the colour is #RRGGBBAA).
+        canvas[:, channel, :, :] = fill_rgba[min(channel, 3)] / 255.0
 
     left = int(resize_data["content_left"])
     top = int(resize_data["content_top"])
@@ -450,6 +482,76 @@ def _has_padding(resize_data):
     return any(int(resize_data.get(key, 0)) > 0 for key in ("pad_left", "pad_top", "pad_right", "pad_bottom"))
 
 
+def _has_crop(resize_data):
+    return any(int(resize_data.get(key, 0)) > 0 for key in ("crop_left", "crop_top", "crop_right", "crop_bottom"))
+
+
+def _cropped_footprint(resize_data):
+    """Where the picture of a ``cover_crop`` result sits in the source frame.
+
+    Returns ``(source_width, source_height, left, top, right, bottom)`` in source pixels, or None when ``resize_data``
+    does not say. The resize scaled the source uniformly by resized/source and the crop kept ``target`` pixels from
+    offset ``crop_left``/``crop_top`` of that, so the kept window maps back by source/resized. A source pixel belongs
+    to it when its centre is inside the window, the rule NH Restore Image Geometry uses for its mask.
+    """
+    try:
+        source_width, source_height, resized_width, resized_height, target_width, target_height, crop_left, crop_top = (
+            int(resize_data[key])
+            for key in (
+                "source_width", "source_height", "resized_width", "resized_height",
+                "target_width", "target_height", "crop_left", "crop_top",
+            )
+        )
+    except (KeyError, TypeError, ValueError):
+        return None
+    if min(source_width, source_height, resized_width, resized_height, target_width, target_height) <= 0:
+        return None
+
+    def span(crop, target, resized, source):
+        start = _clamp(math.ceil(crop * source / resized - 0.5), 0, source - 1)
+        end = _clamp(math.ceil((crop + target) * source / resized - 0.5), start + 1, source)
+        return start, end
+
+    left, right = span(crop_left, target_width, resized_width, source_width)
+    top, bottom = span(crop_top, target_height, resized_height, source_height)
+    return source_width, source_height, left, top, right, bottom
+
+
+def _scale_into_source_frame(image, footprint, resize_method):
+    """Scale [B, H, W, C] into ``footprint`` and fill the rest of the source frame with the nearest edge pixels."""
+    source_width, source_height, left, top, right, bottom = footprint
+    scaled = _resize_image_batch(image, right - left, bottom - top, "stretch", resize_method, "#000000")
+    padding = (left, source_width - right, top, source_height - bottom)
+    return F.pad(scaled.movedim(-1, 1), padding, mode="replicate").movedim(1, -1)
+
+
+def _cropped_resize_info(resize_data, image_width, image_height, footprint=None):
+    """Explain what happened to a ``cover_crop`` result; ``footprint`` is None when it was returned unchanged."""
+    source_width = int(resize_data.get("source_width", image_width))
+    source_height = int(resize_data.get("source_height", image_height))
+    target_width = int(resize_data.get("target_width", image_width))
+    target_height = int(resize_data.get("target_height", image_height))
+    crop_text = " ".join(f"{side[0].upper()}{int(resize_data.get(f'crop_{side}', 0))}" for side in ("left", "top", "right", "bottom"))
+    details = (
+        f"source {source_width}×{source_height}; resize target {target_width}×{target_height}; "
+        f"input {image_width}×{image_height}; crop {crop_text}"
+    )
+    if footprint is None:
+        return (
+            "cover_crop resize detected: the image was cropped, so there is no padding to remove and the cropped "
+            "borders cannot be recovered; returned unchanged. output_size=original_size scales it back into the "
+            "source frame (it needs complete resize_data), and NH Restore Image Geometry composites it onto the "
+            f"original image; {details}"
+        )
+    _, _, left, top, right, bottom = footprint
+    return (
+        "cover_crop resize detected: the cropped borders cannot be recovered. The image was scaled back uniformly "
+        f"into the source frame (x {left}-{right}, y {top}-{bottom}); the borders that were cut off repeat its nearest "
+        "edge pixels. NH Restore Image Geometry composites onto the original image instead, which keeps its real "
+        f"borders; {details}; output {source_width}×{source_height}"
+    )
+
+
 class NH_SmartResolutionPicker:
     @classmethod
     def INPUT_TYPES(cls):
@@ -486,13 +588,21 @@ class NH_SmartResolutionPicker:
         swap_orientation=False,
         batch_size=1,
     ):
+        # VALIDATE_INPUTS accepts any value, so a saved workflow can carry a model or preset label that no longer
+        # exists. The default is used for it, and the info says so.
+        warnings = []
         if model_family not in MODEL_ID_BY_LABEL:
+            warnings.append(f"unknown model_family '{model_family}', using {DEFAULT_MODEL_LABEL}")
             model_family = DEFAULT_MODEL_LABEL
 
         preset_lookup = PRESET_LOOKUP_BY_MODEL.get(model_family, {})
         model_presets = PRESET_LABELS_BY_MODEL.get(model_family, [])
         default_preset = DEFAULT_PRESET if model_family == DEFAULT_MODEL_LABEL else model_presets[0]
-        entry = preset_lookup.get(preset) or preset_lookup[default_preset]
+        entry = preset_lookup.get(preset)
+        if entry is None:
+            entry = preset_lookup[default_preset]
+            if not use_custom:  # a custom size does not use the preset's size
+                warnings.append(f"preset '{preset}' not found for {model_family}, using '{default_preset}'")
         model_spec = MODEL_SPECS[entry["model_id"]]
         extra_warnings = []
 
@@ -530,7 +640,7 @@ class NH_SmartResolutionPicker:
             "downscale_ratio_spacial": downscale,
         }
         aspect_ratio = float(width) / max(float(height), 1.0)
-        info = _build_info(model_spec, tier, ratio, width, height, entry_for_warning, extra_warnings)
+        info = _build_info(model_spec, tier, ratio, width, height, entry_for_warning, extra_warnings, warnings)
 
         return (int(width), int(height), latent, info, aspect_ratio)
 
@@ -753,6 +863,17 @@ class NH_RemoveResizePadding:
                 image_height,
                 f"No resize_data metadata found; passed through {image_width}×{image_height}.",
             )
+
+        if resize_data.get("resize_mode") == "cover_crop" and _has_crop(resize_data):
+            # A cover_crop resize has no padding, and the part it cut off is gone. Stretching what is left to the
+            # source size would distort it (about 2.6% for 1500x1000 -> 1216x832), so for the original size the image
+            # is scaled back by the same uniform factor, put where it came from, and the lost borders repeat its edges.
+            footprint = _cropped_footprint(resize_data) if output_size == "original_size" else None
+            if footprint is None:
+                return (image, image_width, image_height, _cropped_resize_info(resize_data, image_width, image_height))
+            restored = _scale_into_source_frame(image, footprint, resize_method)
+            info = _cropped_resize_info(resize_data, image_width, image_height, footprint)
+            return (restored, footprint[0], footprint[1], info)
 
         left, top, right, bottom = _scaled_content_bounds(resize_data, image_width, image_height)
         cropped = image[:, top:bottom, left:right, :]

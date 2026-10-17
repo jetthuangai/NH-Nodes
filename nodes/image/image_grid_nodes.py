@@ -2,8 +2,72 @@ import numpy as np
 import torch
 from PIL import Image, ImageColor
 
+try:
+    import psutil
+except ImportError:  # ComfyUI installs psutil; without it the memory guard below is simply skipped
+    psutil = None
+
 
 _RESAMPLING = getattr(Image, "Resampling", Image)
+
+# Size guard for the output canvas. It is about RAM, not about Pillow's decompression-bomb limit
+# (Image.MAX_IMAGE_PIXELS): that limit is process-wide, other packs raise or disable it, and it only applies to
+# Image.open, never to an IMAGE that stays in memory.
+#
+# Peak RAM per canvas pixel, reached inside _pil_to_tensor (measured 28.1-28.2 B/px on Windows, Pillow 11, NumPy 2):
+#   4 B   the PIL canvas (Pillow stores an RGB image as 4 bytes per pixel)
+#  12 B   the float32 array from astype(np.float32)
+#  12 B   the float32 result of "/ 255.0" (NumPy only reuses that temporary on Linux)
+# By then the fitted cells and the uint8 array from np.array() are freed, and torch.from_numpy() shares the float32
+# result, so the IMAGE tensor adds nothing (its 12 B/px are what stays alive after the node returns). The input
+# images were converted before the check, so psutil's "available" already leaves their memory out.
+_PEAK_BYTES_PER_PIXEL = 4 + 12 + 12
+# Share of the available RAM the node may plan to use; the rest is left to the OS and the other programs.
+_USABLE_MEMORY_FRACTION = 0.85
+# Image.new raises a bare MemoryError for an image wider than INT_MAX // 4 - 1 px, whatever the memory; the node's
+# own limits never get near it. The same ceiling is applied to the height to keep one rule.
+_PIL_MAX_SIDE = (2**31 - 1) // 4 - 1
+
+
+def _estimate_canvas_bytes(canvas_width, canvas_height):
+    """Peak RAM in bytes the node needs to turn a canvas of this size into an IMAGE tensor."""
+    return _PEAK_BYTES_PER_PIXEL * canvas_width * canvas_height
+
+
+def _available_memory_bytes():
+    """Free physical RAM in bytes, or None when it cannot be read (the guard is advisory, so it then stays quiet)."""
+    if psutil is None:
+        return None
+    try:
+        return int(psutil.virtual_memory().available)
+    except Exception:  # whatever the platform backend raises must not stop a canvas that may well fit
+        return None
+
+
+def _format_size(nbytes):
+    return f"{nbytes / 2**30:.1f} GiB" if nbytes >= 2**30 else f"{nbytes / 2**20:.0f} MiB"
+
+
+def _check_canvas_size(canvas_width, canvas_height, columns, rows, cell_width, cell_height):
+    """Raise ValueError, before anything is allocated, for a canvas the node cannot build in the free memory."""
+    layout = f"{canvas_width}x{canvas_height} px canvas ({columns}x{rows} cells of {cell_width}x{cell_height} px)"
+    hint = "Lower columns/rows, the cell size or the gaps."
+
+    if max(canvas_width, canvas_height) > _PIL_MAX_SIDE:
+        raise ValueError(
+            f"Image Grid Composite: the {layout} is too large: Pillow cannot create an image wider or taller "
+            f"than {_PIL_MAX_SIDE:,} px. {hint}"
+        )
+
+    available = _available_memory_bytes()
+    if available is None:
+        return
+    needed = _estimate_canvas_bytes(canvas_width, canvas_height)
+    if needed > available * _USABLE_MEMORY_FRACTION:
+        raise ValueError(
+            f"Image Grid Composite: the {layout} is too large for the free memory: it needs about "
+            f"{_format_size(needed)} of RAM and {_format_size(available)} is available. {hint}"
+        )
 
 
 def _parse_hex_color(value, default):
@@ -157,6 +221,7 @@ class NH_ImageGridComposite:
 
         canvas_width = (columns * cell_width) + ((columns - 1) * gap_x)
         canvas_height = (rows * cell_height) + ((rows - 1) * gap_y)
+        _check_canvas_size(canvas_width, canvas_height, columns, rows, cell_width, cell_height)
         fill_rgb = _parse_hex_color(background_color_hex, (0, 0, 0))
         canvas = Image.new("RGB", (canvas_width, canvas_height), fill_rgb)
 
@@ -173,8 +238,8 @@ class NH_ImageGridComposite:
             x = column * (cell_width + gap_x)
             y = row * (cell_height + gap_y)
             source = source_images[image_index]
-            fitted = _fit_image_to_cell(source, cell_width, cell_height, resize_mode, fill_rgb)
-            canvas.paste(fitted, (x, y))
+            # No local name for the fitted cell: it must be freed here, not kept until the tensor conversion.
+            canvas.paste(_fit_image_to_cell(source, cell_width, cell_height, resize_mode, fill_rgb), (x, y))
             info_lines.append(
                 f"{image_index}: x={x}, y={y}, w={cell_width}, h={cell_height}, source={source.width}x{source.height}"
             )

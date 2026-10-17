@@ -70,8 +70,8 @@ class NH_TextSplitLines:
         if count == 0:
             return ([""], "", 0, "(empty)", True, True)
 
-        # Reorder by mode
-        rng = random.Random(seed if seed > 0 else None)
+        # Reorder by mode. The seed is used as given (0 too): ComfyUI caches the output per input.
+        rng = random.Random(seed)
 
         if mode == "shuffle":
             lines = lines[:]
@@ -132,7 +132,8 @@ class NH_TextRandomLine:
         if total == 0:
             return ("", -1, 0)
 
-        rng = random.Random(seed if seed > 0 else None)
+        # The seed is used as given (0 too): ComfyUI caches the output per input.
+        rng = random.Random(seed)
         idx = rng.randint(0, total - 1)
 
         return (lines[idx], idx, total)
