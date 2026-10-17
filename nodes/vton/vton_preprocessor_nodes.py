@@ -1,3 +1,5 @@
+# VTON Ultimate Processor (NH). Built on ComfyUI-Vton-Mask's mask generator and FitDiT
+# preprocessing: CC BY-NC-SA 4.0 (non-commercial). See THIRD_PARTY_NOTICES.md.
 import torch
 import numpy as np
 from PIL import Image, ImageFilter
@@ -46,7 +48,10 @@ class NH_VTonUltimateProcessor:
 
     def load_model(self, device):
         global LOADED_VTON_MODELS
-        if LOADED_VTON_MODELS is not None and LOADED_VTON_MODELS.get("device") == device: return LOADED_VTON_MODELS
+        if LOADED_VTON_MODELS is not None and LOADED_VTON_MODELS.get("device") == device:
+            return LOADED_VTON_MODELS
+        from .preprocess.ort_session import ensure_onnxruntime
+        ensure_onnxruntime()
         from .preprocess.dwpose import DWposeDetector
         from .preprocess.humanparsing.run_parsing import Parsing
         if not os.path.exists(MODELS_DIR):
@@ -89,7 +94,8 @@ class NH_VTonUltimateProcessor:
         final_mask_pil = final_mask_pil.resize(human_img_pil.size, Image.NEAREST)
         
         mask_np = np.array(final_mask_pil).astype(np.float32) / 255.0
-        if mask_np.ndim == 3: mask_np = mask_np[:,:,0]
+        if mask_np.ndim == 3:
+            mask_np = mask_np[:,:,0]
 
         # --- CÁC LOGIC TINH CHỈNH ---
         
@@ -123,8 +129,10 @@ class NH_VTonUltimateProcessor:
         hair_mask_np = np.isin(parsing_map_full_np, [2]).astype(np.float32)
         arm_mask_np = np.isin(parsing_map_full_np, [3, 14, 15]).astype(np.float32)
 
-        if refine_hands: mask_np = np.clip(mask_np - arm_mask_np, 0, 1)
-        if refine_hair: mask_np = np.clip(mask_np - hair_mask_np, 0, 1)
+        if refine_hands:
+            mask_np = np.clip(mask_np - arm_mask_np, 0, 1)
+        if refine_hair:
+            mask_np = np.clip(mask_np - hair_mask_np, 0, 1)
 
         if cover_shoes:
             hip_pts = keypoints_original[[8, 11], :]

@@ -1,0 +1,62 @@
+name: Tests
+
+on:
+  pull_request:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+  # publish.yml runs this workflow first and only publishes when it passes.
+  workflow_call:
+
+jobs:
+  lint:
+    name: Ruff
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: python -m pip install ruff==0.13.1
+      - run: ruff check .
+
+  test:
+    name: Pytest (ComfyUI ${{ matrix.comfyui }}, CPU)
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    strategy:
+      matrix:
+        comfyui: ["v0.41.0"]
+    steps:
+      # The tests import ComfyUI modules, so the pack must sit in ComfyUI/custom_nodes/NH-Nodes.
+      - name: Check out ComfyUI
+        uses: actions/checkout@v4
+        with:
+          repository: Comfy-Org/ComfyUI
+          ref: ${{ matrix.comfyui }}
+          path: ComfyUI
+      - name: Check out NH-Nodes
+        uses: actions/checkout@v4
+        with:
+          path: ComfyUI/custom_nodes/NH-Nodes
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: |
+            ComfyUI/requirements.txt
+            ComfyUI/custom_nodes/NH-Nodes/requirements.txt
+      - name: Install CPU torch
+        run: python -m pip install torch torchvision --index-url https://download.pytorch.org/whl/cpu
+      - name: Install ComfyUI and pack requirements
+        working-directory: ComfyUI
+        run: |
+          # Frontend, templates and docs wheels are large and unused by the tests.
+          grep -v -E '^comfyui-(frontend-package|workflow-templates|embedded-docs)' requirements.txt > ci-requirements.txt
+          # onnxruntime is optional for users (GPU builds conflict); the CPU wheel is safe on CI
+          # and lets the tests check that the pack never imports it at start-up.
+          python -m pip install -r ci-requirements.txt -r custom_nodes/NH-Nodes/requirements.txt pytest onnxruntime
+      - name: Run tests
+        working-directory: ComfyUI
+        run: python -m pytest custom_nodes/NH-Nodes/tests -q -p no:cacheprovider

@@ -313,11 +313,14 @@ Pillow
 scipy
 opencv-python
 scikit-image>=0.18.0
-onnxruntime>=1.8.0
 transformers>=4.20.0
 tqdm>=4.62.0
 huggingface_hub>=0.16.0
 ```
+
+`VTON Ultimate Processor (NH)` also needs ONNX Runtime, which is not installed
+automatically (the CPU wheel would overwrite an existing GPU build). Install one:
+`python -m pip install onnxruntime-gpu` (NVIDIA) or `python -m pip install onnxruntime` (CPU).
 
 Most image/text/logic nodes use common ComfyUI dependencies. VTON and Vision
 nodes download model assets on first use (`transformers` SegFormer weights for
@@ -341,7 +344,11 @@ Vision: ~190 MB fashion, ~340 MB face).
 
 ## License
 
-[MIT](LICENSE). Free for personal and commercial use.
+NH-Nodes' own code is [MIT](LICENSE). `VTON Ultimate Processor (NH)` and
+`Portrait Segment (NH)` depend on third-party code or models that are licensed for
+**non-commercial use only**, and the model behind `Garment Segment (NH)` declares no
+license. See [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md) before using these
+three nodes commercially.
 
 If NH-Nodes helps your workflow, consider starring the repository:
 [github.com/jetthuangai/NH-Nodes](https://github.com/jetthuangai/NH-Nodes)

@@ -1,4 +1,3 @@
-import torch
 import numpy as np
 
 # File này chứa logic cho node Mask Properties (phiên bản gốc).

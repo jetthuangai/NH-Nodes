@@ -17,3 +17,9 @@ Thumbs.db
 
 # Ban nen tam, khong thuoc ve kho
 *.zip
+
+# Local tooling and agent workspaces
+.claude/
+plans/
+.ruff_cache/
+.pytest_cache/

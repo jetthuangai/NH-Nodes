@@ -1,5 +1,6 @@
 #!/usr/bin/env python
 # -*- encoding: utf-8 -*-
+# Modified by NH-Nodes: removed an unused pdb import. Upstream MIT license: licenses/Self-Correction-Human-Parsing-MIT.txt
 
 """
 @Author  :   Peike Li
