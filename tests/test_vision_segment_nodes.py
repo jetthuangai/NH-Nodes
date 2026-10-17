@@ -69,6 +69,41 @@ def test_garment_build_mask_respects_attach_parts_flag():
     assert vs.NH_GarmentSegment.build_mask(labels, "footwear").sum() == 0
 
 
+def test_all_garments_includes_clothing_groups_and_excludes_unassigned_accessories():
+    labels = np.arange(47).reshape(1, 47)
+    mask = vs.NH_GarmentSegment.build_mask(labels, "all_garments", False)
+    expected_ids = set(range(1, 14)) | {15, 16, 17, 20, 21, 22, 23, 24, 26, 28, 29, 30, 31, 32, 34, 35}
+    assert set(np.flatnonzero(mask)) == expected_ids
+
+
+def test_all_garments_combines_shirt_and_pants_in_mask_and_cutout():
+    labels = np.zeros((8, 8), np.int64)
+    labels[1:3, 2:6] = 1  # shirt
+    labels[4:7, 2:6] = 7  # pants
+    mask = vs.NH_GarmentSegment.build_mask(labels, "all_garments", False)
+    assert np.array_equal(mask, (labels != 0).astype(np.uint8))
+    image = np.full((8, 8, 3), 0.5, np.float32)
+    mask_t, rgba, mask_image = vs.pack_outputs(image, mask)
+    assert torch.equal(mask_t[0], torch.from_numpy(mask))
+    assert torch.equal(rgba[0, :, :, 3], mask_t[0])
+    assert torch.equal(mask_image[0, :, :, 0], mask_t[0])
+
+
+@pytest.mark.parametrize("attach_parts", [False, True])
+def test_all_garments_attaches_parts_to_upper_and_lower_only_when_enabled(attach_parts):
+    labels = np.zeros((24, 30), np.int64)
+    labels[2:6, 2:6] = 1  # shirt
+    labels[12:16, 2:6] = 7  # pants
+    labels[6:8, 2:4] = 33  # pocket touching shirt
+    labels[16:18, 2:4] = 36  # zipper touching pants
+    labels[10:12, 24:26] = 38  # detached decoration
+    mask = vs.NH_GarmentSegment.build_mask(labels, "all_garments", attach_parts)
+    assert mask[2:6, 2:6].all() and mask[12:16, 2:6].all()
+    assert bool(mask[6:8, 2:4].all()) == attach_parts
+    assert bool(mask[16:18, 2:4].all()) == attach_parts
+    assert mask[10:12, 24:26].sum() == 0
+
+
 def test_portrait_build_mask_face_is_solid_and_regions_union():
     labels = np.zeros((10, 10), np.int64)
     labels[2:8, 2:8] = 1  # skin
@@ -149,6 +184,9 @@ def test_nodes_end_to_end_with_stub_backend(monkeypatch):
     assert mask.shape == (2, 8, 8) and rgba.shape == (2, 8, 8, 4) and mask_img.shape == (2, 8, 8, 3)
     assert mask[0, 4:, :].all() and mask[0, :4, :].sum() == 0
 
+    mask, rgba, mask_img = vs.NH_GarmentSegment().segment(image, "all_garments", True, 0, 0, False, "cpu")
+    assert mask.all() and rgba[:, :, :, 3].all() and mask_img.all()
+
     mask, _, _ = vs.NH_PortraitSegment().segment(image, 0, 0, False, "cpu", nose=True, face=False)
     assert mask.shape == (2, 8, 8)
     assert mask[0, :4, :].all() and mask[0, 4:, :].sum() == 0  # label 2 is nose in the face model
@@ -156,7 +194,8 @@ def test_nodes_end_to_end_with_stub_backend(monkeypatch):
 
 def test_input_types_expose_expected_widgets():
     garment = vs.NH_GarmentSegment.INPUT_TYPES()["required"]
-    assert garment["part"][0] == ["upper_garment", "lower_garment", "footwear", "headwear"]
+    assert garment["part"][0] == ["upper_garment", "lower_garment", "footwear", "headwear", "all_garments"]
+    assert garment["part"][1]["default"] == "upper_garment"
     portrait = vs.NH_PortraitSegment.INPUT_TYPES()["required"]
     for region in ("face", "neck", "hair", "eyes", "lips", "nose", "eyebrows", "ears"):
         assert portrait[region][1]["default"] is True

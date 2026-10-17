@@ -138,6 +138,9 @@ Load Image -> Portrait Segment (NH) [hair + face] -> mask / cutout_rgba / mask_i
 SegFormer-based masks at input resolution. `cutout_rgba` is the input image
 with the mask as alpha (RGB is left untouched outside the mask); `mask_image`
 is the mask as an RGB preview. Dresses and jumpsuits belong to `upper_garment`. Both nodes share `mask_expand`, `mask_blur`, and `fill_holes`.
+Choose `part=all_garments` to combine upper/lower garments, footwear and headwear
+in one mask, for example a shirt and pants together. `attach_parts` still controls
+whether touching pockets, zippers and other garment decorations are included.
 Models are auto-downloaded to `models/NH-Nodes/` on first use (existing
 `models/face_parsing` or `models/RMBG/segformer_fashion` copies are reused).
 
@@ -187,7 +190,7 @@ Models are auto-downloaded to `models/NH-Nodes/` on first use (existing
 
 | Node | Purpose |
 |---|---|
-| `Garment Segment (NH)` | Mask one of `upper_garment` (tops, jackets, coats, dresses, ties, scarves, collars, sleeves), `lower_garment` (pants, shorts, skirts, belts, tights; no shoes), `footwear`, or `headwear`. Attached parts (pockets, zippers, bows...) merge only when touching the selected garment. |
+| `Garment Segment (NH)` | Mask `upper_garment` (tops, jackets, coats, dresses, ties, scarves, collars, sleeves), `lower_garment` (pants, shorts, skirts, belts, tights; no shoes), `footwear`, `headwear`, or combine all four with `all_garments`. Attached parts (pockets, zippers, bows...) merge only when touching the selected garments. |
 | `Portrait Segment (NH)` | Checklist mask of face, neck, hair, eyes, lips, nose, eyebrows, ears (+ optional mouth interior). `face` is the solid face region including features. |
 
 ### Mask Tools

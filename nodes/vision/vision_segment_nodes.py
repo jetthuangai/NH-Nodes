@@ -36,7 +36,7 @@ GARMENT_GROUPS = {
 # selected group only when their connected component touches that group.
 GARMENT_ATTACHED_PARTS = {33, 36, 37, 38, 39, 40, 41, 42, 43, 44, 45, 46}
 # Deliberately unassigned: 14 glasses, 18 glove, 19 watch, 25 bag/wallet, 27 umbrella.
-GARMENT_PART_CHOICES = list(GARMENT_GROUPS.keys())
+GARMENT_PART_CHOICES = list(GARMENT_GROUPS.keys()) + ["all_garments"]
 
 # ---------------------------------------------------------------------------
 # CelebAMask-HQ (19 classes) ids used by jonathandinu/face-parsing
@@ -161,13 +161,14 @@ def _refine_inputs(fill_holes_default):
 # Nodes
 # ---------------------------------------------------------------------------
 class NH_GarmentSegment:
-    """Segment upper/lower garment, footwear or headwear from a person image."""
+    """Segment a garment group or all garment groups from a person image."""
 
     @classmethod
     def INPUT_TYPES(cls):
         required = {
             "image": ("IMAGE",),
-            "part": (GARMENT_PART_CHOICES, {"default": "upper_garment"}),
+            "part": (GARMENT_PART_CHOICES, {"default": "upper_garment",
+                                            "tooltip": "all_garments combines upper/lower garments, footwear and headwear."}),
             "attach_parts": ("BOOLEAN", {"default": True,
                                          "tooltip": "Merge pockets, zippers, bows, ruffles... that touch the selected garment."}),
         }
@@ -178,17 +179,18 @@ class NH_GarmentSegment:
     RETURN_NAMES = ("mask", "cutout_rgba", "mask_image")
     FUNCTION = "segment"
     CATEGORY = "NH-Nodes/Vision"
-    SEARCH_ALIASES = ["garment segment", "clothes mask", "upper garment", "lower garment", "footwear", "headwear"]
+    SEARCH_ALIASES = ["garment segment", "clothes mask", "upper garment", "lower garment", "footwear", "headwear", "all garments"]
 
     @staticmethod
     def build_mask(labels, part, attach_parts=True):
-        mask = labels_to_mask(labels, GARMENT_GROUPS[part])
+        class_ids = set().union(*GARMENT_GROUPS.values()) if part == "all_garments" else GARMENT_GROUPS[part]
+        mask = labels_to_mask(labels, class_ids)
         if attach_parts:
             mask = absorb_touching_parts(mask, labels_to_mask(labels, GARMENT_ATTACHED_PARTS))
         return mask
 
     def segment(self, image, part, attach_parts, mask_expand, mask_blur, fill_holes, device):
-        if part not in GARMENT_GROUPS:
+        if part not in GARMENT_PART_CHOICES:
             part = GARMENT_PART_CHOICES[0]
         return _run_batch(
             image, "segformer_fashion", device,
