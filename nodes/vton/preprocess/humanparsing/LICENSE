@@ -1,0 +1,33 @@
+Human parsing preprocessing (this directory)
+============================================
+
+The code in this directory is third-party code redistributed by NH-Nodes.
+It is NOT covered by the MIT license in the repository root.
+
+Provenance
+  - OOTDiffusion, preprocess/humanparsing (https://github.com/levihsu/OOTDiffusion)
+    License: Creative Commons Attribution-NonCommercial-ShareAlike 4.0 International
+    (CC BY-NC-SA 4.0).
+  - Reused through FitDiT (https://github.com/BoyuanJiang/FitDiT, CC BY-NC-SA 4.0)
+    and ComfyUI-Vton-Mask (https://github.com/karthikg-09/ComfyUI-Vton-Mask), which
+    states that it follows FitDiT's licensing terms.
+  - Parts originate from Self-Correction-Human-Parsing by Peike Li
+    (https://github.com/GoGoDuck912/Self-Correction-Human-Parsing, MIT) and from
+    HRNet utilities (Copyright (c) Microsoft, MIT). Their MIT license texts are in
+    licenses/ at the repository root.
+
+License for this directory
+  CC BY-NC-SA 4.0 — https://creativecommons.org/licenses/by-nc-sa/4.0/legalcode
+  You may use and adapt it for NON-COMMERCIAL purposes only, with attribution,
+  and adaptations must be shared under the same license.
+
+Changes made by NH-Nodes
+  - run_parsing.py: ONNX Runtime sessions are created through ../ort_session.py
+    (CUDA request keeps a CPU fallback; clear message when onnxruntime is missing).
+  - parsing_api.py: removed the pdb import and sys.path bootstrap.
+  - datasets/simple_extractor_dataset.py: removed an unused pdb import.
+  Each modified file carries a "Modified by NH-Nodes" header line.
+
+The parsing models (parsing_atr.onnx, parsing_lip.onnx) are downloaded at runtime
+and are trained on the ATR and LIP datasets, which are distributed for research use.
+See THIRD_PARTY_NOTICES.md in the repository root.

@@ -1,20 +1,18 @@
-import cv2
+# Modified by NH-Nodes: sessions come from ..ort_session (CPU fallback + install hint).
 import numpy as np
 import os
 
-import onnxruntime as ort
+from ..ort_session import create_session
 from .onnxdet import inference_detector
 from .onnxpose import inference_pose
 
 class Wholebody:
     def __init__(self, model_root, device):
-        providers = ['CPUExecutionProvider'
-                 ] if device == 'cpu' else ['CUDAExecutionProvider']
         onnx_det = os.path.join(model_root, 'dwpose/yolox_l.onnx')
         onnx_pose = os.path.join(model_root, 'dwpose/dw-ll_ucoco_384.onnx')
 
-        self.session_det = ort.InferenceSession(path_or_bytes=onnx_det, providers=providers)
-        self.session_pose = ort.InferenceSession(path_or_bytes=onnx_pose, providers=providers)
+        self.session_det = create_session(onnx_det, device)
+        self.session_pose = create_session(onnx_pose, device)
     
     def __call__(self, oriImg):
         det_result = inference_detector(self.session_det, oriImg)

@@ -1,4 +1,3 @@
-import re
 
 class NH_UniversalSliderBuilder:
     @classmethod

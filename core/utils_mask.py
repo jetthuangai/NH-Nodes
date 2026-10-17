@@ -1,3 +1,7 @@
+# Garment mask construction for VTON Ultimate Processor (NH).
+# Third-party code: FitDiT src/utils_mask.py (https://github.com/BoyuanJiang/FitDiT),
+# received via ComfyUI-Vton-Mask. License: CC BY-NC-SA 4.0 (non-commercial), not the
+# pack's MIT license. NH-Nodes changes: lint cleanups and bug fixes. See THIRD_PARTY_NOTICES.md.
 import numpy as np
 import cv2
 from PIL import Image, ImageDraw
@@ -17,7 +21,6 @@ def remove_small(binary_mask, min_area=10000):
 
 
 def get_img_agnostic_upper_rectangle(im_parse, pose_data, offset_top, offset_bottom, offset_left, offset_right):
-    foot = pose_data[18:24]
 
     faces = pose_data[24:92]
 
@@ -35,13 +38,11 @@ def get_img_agnostic_upper_rectangle(im_parse, pose_data, offset_top, offset_bot
                     )
     parse_head = ((parse_array == 3).astype(np.float32) +
                     (parse_array == 1).astype(np.float32) + (parse_array == 11).astype(np.float32))
-    parse_fixed = (parse_array == 16).astype(np.float32)
 
 
     agnostic = Image.new(mode='L',size=(parse_array.shape[1], parse_array.shape[0]), color=0)
     img_black = Image.new(mode='L',size=(im_parse.shape[1], im_parse.shape[0]),color=0)
 
-    gray_img = Image.new('L', size=(im_parse.shape[1], im_parse.shape[0]), color=128)
     agnostic_draw = ImageDraw.Draw(agnostic)
 
     parse_upper = np.uint8(parse_upper*255)
@@ -65,7 +66,7 @@ def get_img_agnostic_upper_rectangle(im_parse, pose_data, offset_top, offset_bot
                 max_y = max(max_y, y + h)
                 cloth_exist = True
         _x1, _y1, _x2, _y2 = min_x, min_y, max_x, max_y
-    except:
+    except Exception:
         cloth_exist = False
 
     x1 = [body[i, 0] for i in [2, 3, 4] if body[i, 0] != 0]+\
@@ -132,17 +133,10 @@ def get_img_agnostic_lower_rectangle(im_parse, pose_data, offset_top, offset_bot
     foot1 = pose_data[18:21] # right
     foot2 = pose_data[21:24] # left
 
-    faces = pose_data[24:92]
 
-    hands1 = pose_data[92:113]
-    hands2 = pose_data[113:]
     body = pose_data[:18]
     parse_array = np.array(im_parse)
 
-    parse_upper = ((parse_array == 4).astype(np.float32) +
-                   (parse_array == 14).astype(np.float32) +
-                   (parse_array == 15).astype(np.float32)
-                    )
     parse_lower = ((parse_array == 5).astype(np.float32) +
                     (parse_array == 6).astype(np.float32) +
                     (parse_array == 8).astype(np.float32))
@@ -150,14 +144,12 @@ def get_img_agnostic_lower_rectangle(im_parse, pose_data, offset_top, offset_bot
     parse_lower = remove_small(parse_lower, min_area=1000*(parse_lower.shape[0]*parse_lower.shape[1]/1024/768))
     parse_head = ((parse_array == 3).astype(np.float32) +
                     (parse_array == 1).astype(np.float32) + (parse_array == 11).astype(np.float32))
-    parse_shoes = ((parse_array == 9).astype(np.float32) + (parse_array == 10).astype(np.float32))
     parse_fixed = (parse_array == 16).astype(np.float32)
 
 
     agnostic = Image.new(mode='L',size=(parse_array.shape[1], parse_array.shape[0]), color=0)
     img_black = Image.new(mode='L',size=(im_parse.shape[1], im_parse.shape[0]),color=0)
 
-    gray_img = Image.new('L', size=(im_parse.shape[1], im_parse.shape[0]), color=128)
     agnostic_draw = ImageDraw.Draw(agnostic)
 
     
@@ -170,7 +162,7 @@ def get_img_agnostic_lower_rectangle(im_parse, pose_data, offset_top, offset_bot
         _x1, _y1, _w, _h = cv2.boundingRect(largest_contour)
         _x2, _y2 = _w+_x1, _h+_y1
         cloth_exist = True
-    except:
+    except Exception:
         cloth_exist = False
 
     if not cloth_exist:
@@ -185,7 +177,7 @@ def get_img_agnostic_lower_rectangle(im_parse, pose_data, offset_top, offset_bot
             _x1, _y1, _w, _h = cv2.boundingRect(largest_contour)
             _x2, _y2 = _w+_x1, _h+_y1
             all_cloth_exist = True
-        except:
+        except Exception:
             all_cloth_exist = False
 
     x1 = [body[i, 0] for i in [8, 9, 10] if body[i, 0] != 0]+[foot2[i, 0] for i in [0, 1, 2] if foot2[i, 0] != 0]+\
@@ -257,7 +249,6 @@ def get_img_agnostic_dresses_rectangle(im_parse, pose_data, offset_top, offset_b
     agnostic = Image.new(mode='L',size=(parse_array.shape[1], parse_array.shape[0]), color=0)
     img_black = Image.new(mode='L',size=(im_parse.shape[1], im_parse.shape[0]),color=0)
 
-    gray_img = Image.new('L', size=(im_parse.shape[1], im_parse.shape[0]), color=128)
     agnostic_draw = ImageDraw.Draw(agnostic)
 
     parse_upper_all = np.uint8(parse_upper_all*255)
@@ -272,7 +263,7 @@ def get_img_agnostic_dresses_rectangle(im_parse, pose_data, offset_top, offset_b
         _x2 = _x1+_w
         _y2 = _y1+_h
         cloth_exist = True
-    except:
+    except Exception:
         cloth_exist = False
 
     x1 = [body[i, 0] for i in [2, 3, 4] if body[i, 0] != 0]+\

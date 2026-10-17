@@ -1,7 +1,7 @@
 [project]
 name = "nh-nodes"
 description = "ComfyUI custom nodes for image workflows, tiling, masks, smart resize, logic routing, prompt and text tools, batch automation, garment/portrait segmentation, and VTON preprocessing."
-version = "1.4.2"
+version = "1.4.3"
 license = { file = "LICENSE" }
 dependencies = [
     "numpy",
@@ -9,7 +9,6 @@ dependencies = [
     "scipy",
     "opencv-python",
     "scikit-image>=0.18.0",
-    "onnxruntime>=1.8.0",
     "transformers>=4.20.0",
     "tqdm>=4.62.0",
     "huggingface_hub>=0.16.0",
@@ -22,3 +21,11 @@ Repository = "https://github.com/jetthuangai/NH-Nodes"
 PublisherId = "nhathoangfoto"
 DisplayName = "NH-Nodes"
 Icon = ""
+
+[tool.ruff]
+target-version = "py310"
+# Vendored third-party code is kept as close to upstream as possible.
+extend-exclude = ["nodes/vton/preprocess/dwpose", "nodes/vton/preprocess/humanparsing"]
+
+[tool.ruff.lint]
+select = ["E4", "E7", "E9", "F"]

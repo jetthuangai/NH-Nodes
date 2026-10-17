@@ -1,3 +1,4 @@
+# Modified by NH-Nodes: limb colours use colorsys instead of matplotlib (drops a heavy dependency).
 import math
 import numpy as np
 import colorsys
