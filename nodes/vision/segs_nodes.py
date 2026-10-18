@@ -8,9 +8,10 @@ from ...core.segs import (
     SORT_ORDERS,
     merge_segs,
     count_segments,
-    expression_labels,
     expression_masks,
+    expression_terms,
     instance_masks,
+    label_matches,
     matching,
     parse_expression,
     parse_label_list,
@@ -124,19 +125,24 @@ class NH_SegsCompose:
         segs = merge_segs(segs, segs_2, segs_3, check_prints=check_same_photo)
         tree = parse_expression(expression)
 
-        def found(pattern):
-            return any(matching(frame.segments, pattern) for frame in segs)
+        def found(pattern, written=None):
+            return any(matching(frame.segments, pattern, written) for frame in segs)
 
-        unmatched = [pattern for pattern in expression_labels(tree) if not found(pattern)]
+        def carried(pattern):  # a label an instance carries, not a node's word for some of its parts
+            return any(label_matches(seg.label, pattern) for frame in segs for seg in frame.segments)
+
+        terms = [(english, written if status == "translated" else None)
+                 for written, english, status in expression_terms(tree) if status != "keyword"]
+        unmatched = list(dict.fromkeys(english for english, written in terms if not found(english, written)))
         for pattern in unmatched:
             words = pattern.split()
-            if len(words) > 1 and all(found(word) for word in words):
+            if len(words) > 1 and all(carried(word) for word in words):
                 # words in a row make one label; with each of them found, an operator was left out
                 raise ValueError(f"[NH-Nodes] Segs Compose: no instance is labelled '{pattern}', but "
                                  f"{' and '.join(repr(word) for word in words)} are. Join them with + or a comma: "
                                  f"{' + '.join(words)}")
             parts = pattern.split("-")
-            if len(parts) > 1 and all(part and found(part) for part in parts):
+            if len(parts) > 1 and all(part and carried(part) for part in parts):
                 # "person-hair" is one label; with person and hair both found, a subtraction was meant
                 raise ValueError(f"[NH-Nodes] Segs Compose: no instance is labelled '{pattern}', but "
                                  f"{' and '.join(repr(part) for part in parts)} are. To subtract, put spaces around "

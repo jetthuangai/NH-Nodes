@@ -208,8 +208,8 @@ def _grown(region, sides, aspect, image_size):
 COARSE_TRUST = 0.5  # the first look's confidence counts this much against a crop's: a crop sees people sharper
 SURE = 0.9  # a parser's confidence counted as sure, for the floor of people_labels
 # Least overlap (IoU) of the first look's people with those of a look at the mirrored picture, when no face is found:
-# people seen without a face come back in the mirror (0.83 to 0.99 on 32 photos), what a parser invents on a facade
-# does not (0.02 to 0.03, under every everyday edit of the picture).
+# people seen without a face come back in the mirror (0.83 to 0.99 on 32 photos; edited copies and small people pasted
+# on a plain ground go down to 0.64), what a parser invents on a facade does not (0.02 to 0.03 in 50 variants).
 MIRROR_AGREEMENT = 0.6
 # A region shorter than this (px) is not parsed again: blown up to a parser's input (4 to 8 times) so little is mostly
 # made up (a speck of a held helmet came back as salt-and-pepper labels); the first look's labels stay there.

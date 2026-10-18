@@ -502,6 +502,9 @@ def test_parser_segs_carry_their_model_and_answer_to_its_words(monkeypatch):
     assert lower.tolist() == [[False, False, False, True], [True, True, False, False]]
     face = vs.parts_frame(np.array([[1, 4, 13, 17]]), vs.PORTRAIT_SEGS, (1, 4), "face_parsing")
     assert segs_core.evaluate(segs_core.parse_expression("face"), face).numpy().tolist() == [[True, True, False, False]]
+    for formula in ("face skin", "da mặt"):  # Portrait's skin part
+        assert segs_core.evaluate(segs_core.parse_expression(formula), face).numpy().tolist() == [
+            [True, False, False, False]]
 
 
 def test_image_batches_of_any_float_type_are_read():
