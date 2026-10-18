@@ -4,9 +4,10 @@
 
 # NH-Nodes guide
 
-NH-Nodes adds **75 nodes** to ComfyUI for photo and production work: loading and saving image sets, tiling and compositing,
-resolution management for current models, mask tools, garment and portrait segmentation, SAM 3 masks for anything you
-can name from a short formula, VTON masks, logic routing, prompt and text tools, batch helpers and indexed model loaders.
+NH-Nodes adds **76 nodes** to ComfyUI for photo and production work: loading and saving image sets, tiling and compositing,
+resolution management for current models, mask tools, garment, portrait and body-part segmentation (the skin, hair and
+clothes of people by name), SAM 3 masks for anything you can name from a short formula, VTON masks, logic routing, prompt
+and text tools, batch helpers and indexed model loaders.
 
 This guide explains every node — what it is for, each input and output, and how it behaves in the details that matter.
 Installation and a quick start are on the [project page](../../README.md#installation).
@@ -40,7 +41,7 @@ Every node section starts with a card drawn from the node's real definition:
 | Image — mask-based retouch | [image-retouch](image-retouch.md) | NH Mask-Aware Resize · NH Agnostic Image Generator · NH Simple Face Paste |
 | Resolution | [resolution](resolution.md) | NH Smart Resolution Picker · NH Smart Ratio Image Resize · NH Ratio Preset Image Resize · NH Remove Resize Padding · NH Restore Image Geometry |
 | Mask | [mask](mask.md) | Mask Morphology · Mask Properties · NH Create Box Mask · NH Mask Aspect Ratio Match |
-| Vision | [vision](vision.md) | Garment Segment · Portrait Segment · SAM3 Segment · Segs Select · Segs Compose · Segs To Masks · Segs To Impact SEGS · Segs Preview |
+| Vision | [vision](vision.md) | Garment Segment · Portrait Segment · Body Segment · SAM3 Segment · Segs Select · Segs Compose · Segs To Masks · Segs To Impact SEGS · Segs Preview |
 | VTON | [vton](vton.md) | VTON Ultimate Processor |
 | Logic | [logic](logic.md) | Compare · Logic Gate · If/Else · Switch N · Any Switch · Any Branch Switch · Gate Switch · Value Match Index · Math Eval · Random Choice |
 | Text | [text](text.md) | Prompt Template · Prompt Scheduler · String Operations · Prompt Join · Text Split · Regex Extract · Text Index · Text Concatenate · Text Split Lines · Text Random Line |
@@ -63,11 +64,14 @@ Every node section starts with a card drawn from the node's real definition:
 - **Resize data.** The resolution nodes return a `resize_data` record of how an image was cropped or padded, so a result
   can be put back into the original frame with [NH Restore Image Geometry](resolution.md#nh-restore-image-geometry).
 - **Instances.** SAM3 Segment returns every thing it finds as its own instance, with a label, a score and a mask, in an
-  `NH_SEGS` value. The Segs nodes pick instances, combine them with a formula and turn them into masks; see
-  [Instances: the NH_SEGS type](vision.md#instances-the-nh_segs-type).
+  `NH_SEGS` value. Garment Segment, Portrait Segment and Body Segment return the parts they find (hair, top, lips…) in
+  the same type. The Segs nodes pick instances, combine them with a formula and turn them into masks, and Segs Compose
+  mixes the instances of several of these nodes; see [Instances: the NH_SEGS type](vision.md#instances-the-nh_segs-type).
 - **Licences.** All nodes are MIT except the parts listed in [THIRD_PARTY_NOTICES](../../THIRD_PARTY_NOTICES.md):
-  VTON Ultimate Processor and Portrait Segment are for **non-commercial** use, and Garment Segment's model declares no
-  licence. SAM3 Segment uses Meta's SAM 3 under the SAM License, which has no non-commercial clause but bars military,
+  VTON Ultimate Processor and Portrait Segment are for **non-commercial** use, and so is Garment Segment, where NVIDIA's
+  licence defines that as research or evaluation only. Body Segment uses Meta's Sapiens2 under the Sapiens2 License, which
+  has no non-commercial clause but prohibits surveillance, biometric processing, identifying people, deepfakes and other
+  uses. SAM3 Segment uses Meta's SAM 3 under the SAM License, which has no non-commercial clause but bars military,
   nuclear, espionage, and gun or illegal-weapon uses; you install the package and download the checkpoint yourself.
 
 ## More
@@ -75,4 +79,4 @@ Every node section starts with a card drawn from the node's real definition:
 - [Changelog](../CHANGELOG.md) — what changed in each release, including behaviour changes.
 - [Logic gate diagram](../logic_gate_diagram.html) — a visual truth-table sheet for the Logic Gate node (download and open
   it in a browser).
-- [Third-party notices](../../THIRD_PARTY_NOTICES.md) — licences of bundled code, downloaded models and SAM 3.
+- [Third-party notices](../../THIRD_PARTY_NOTICES.md) — licences of bundled code, downloaded models, Sapiens2 and SAM 3.

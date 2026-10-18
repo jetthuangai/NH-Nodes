@@ -12,7 +12,7 @@ Three nodes that work with a mask. One resizes an image to an exact size and kee
 | [NH Agnostic Image Generator](#nh-agnostic-image-generator) | Erase the masked area with grey, noise or blur |
 | [NH Simple Face Paste](#nh-simple-face-paste) | Paste the masked face of one image onto the masked area of another |
 
-A `MASK` is white (`1`) where the node should work and black (`0`) elsewhere. Get one from a segmentation node such as [SAM3 Segment (NH)](./vision.md#sam3-segment-nh) (any object you can name, or a formula such as `person - bag` or `background`), [Garment Segment (NH)](./vision.md#garment-segment-nh) or [Portrait Segment (NH)](./vision.md#portrait-segment-nh), or from any mask tool in ComfyUI.
+A `MASK` is white (`1`) where the node should work and black (`0`) elsewhere. Get one from a segmentation node such as [SAM3 Segment (NH)](./vision.md#sam3-segment-nh) (any object you can name, or a formula such as `person - bag` or `background`), [Garment Segment (NH)](./vision.md#garment-segment-nh), [Portrait Segment (NH)](./vision.md#portrait-segment-nh) or [Body Segment (NH)](./vision.md#body-segment-nh) (the skin, hair or clothes of people, by name), or from any mask tool in ComfyUI.
 
 ---
 

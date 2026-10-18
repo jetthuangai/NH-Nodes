@@ -2,25 +2,26 @@
 
 # Vision (phân đoạn ảnh)
 
-Tám node cắt từng phần trên ảnh chụp. Hai node dùng các model SegFormer hiểu về con người: trang phục với Garment Segment, và khuôn mặt, tóc, cổ với Portrait Segment. Mỗi node trả về một mask có cùng kích thước với ảnh đầu vào, một ảnh cắt nền có độ trong suốt và một ảnh xem trước mask. Sáu node còn lại dùng SAM 3, model phân đoạn của Meta: bạn gõ thứ mình muốn vào SAM3 Segment (người, ly rượu, cửa sổ, bầu trời, hoặc một công thức như `person - bag` hay `background`) và nó trả về mask, đồng thời hiển thị ngay trên node. Nó cũng giữ lại mọi instance (từng đối tượng riêng lẻ) tìm được, và năm node Segs giúp chọn, ghép, xem trước và chuyển đổi chúng. Bạn tìm thấy chúng trong **NH-Nodes → Vision**.
+Chín node cắt từng phần trên ảnh chụp. Ba node trong số đó phân tích người bằng các model hiểu về con người: trang phục với Garment Segment, khuôn mặt, tóc, cổ với Portrait Segment, còn Body Segment cho bạn gõ tên các bộ phận muốn lấy, như da, tóc, môi, răng, tay, chân và quần áo của mọi người trong ảnh. Mỗi node trả về một mask có cùng kích thước với ảnh đầu vào, một ảnh cắt nền có độ trong suốt, một ảnh xem trước mask và các bộ phận nó tìm được dưới dạng instance. Sáu node còn lại dùng SAM 3, model phân đoạn của Meta: bạn gõ thứ mình muốn vào SAM3 Segment (người, ly rượu, cửa sổ, bầu trời, hoặc một công thức như `person - bag` hay `background`) và nó trả về mask, đồng thời hiển thị ngay trên node. Nó cũng giữ lại mọi instance (từng đối tượng riêng lẻ) tìm được, và năm node Segs giúp chọn, ghép, xem trước và chuyển đổi chúng, kể cả cùng với các bộ phận mà ba node phân tích người tìm được. Bạn tìm thấy chúng trong **NH-Nodes → Vision**.
 
 **Trên trang này**
 
-- [Nên dùng node nào?](#nên-dùng-node-nào) — các node SegFormer hay SAM 3
-- **Các node SegFormer: trang phục và chân dung**
+- [Nên dùng node nào?](#nên-dùng-node-nào) — các node phân tích người hay SAM 3
+- **Các node phân tích người: trang phục, chân dung và bộ phận cơ thể**
   - [Trước khi bắt đầu](#trước-khi-bắt-đầu) — model, bộ nhận diện khuôn mặt, lần chạy đầu tiên, giấy phép, bộ nhớ
-  - [Cách các node SegFormer nhìn một bức ảnh](#cách-các-node-segformer-nhìn-một-bức-ảnh) — vì sao khuôn mặt và người nhỏ được xem cận cảnh
-  - [Tinh chỉnh mask](#tinh-chỉnh-mask) — các tùy chọn dùng chung của hai node
-  - [Garment Segment (NH)](#garment-segment-nh) — mask trang phục thân trên, thân dưới, giày dép hoặc mũ nón
+  - [Cách các node SegFormer nhìn một bức ảnh](#cách-các-node-segformer-nhìn-một-bức-ảnh) — vì sao khuôn mặt và người nhỏ được xem cận cảnh, kể cả với Body Segment
+  - [Tinh chỉnh mask](#tinh-chỉnh-mask) — các tùy chọn dùng chung của cả ba node
+  - [Garment Segment (NH)](#garment-segment-nh) — mask trang phục thân trên, thân dưới, giày dép, mũ nón, hoặc riêng một chiếc đầm, túi, khăn…; hai model để chọn
   - [Portrait Segment (NH)](#portrait-segment-nh) — mask khuôn mặt, tóc, cổ và các bộ phận trên mặt
+  - [Body Segment (NH)](#body-segment-nh) — gõ tên bộ phận muốn lấy: da, tóc, môi, răng, tay, chân, quần áo
 - **Các node SAM 3: bất cứ thứ gì bạn gọi tên được**
   - [Trước khi bắt đầu với SAM 3](#trước-khi-bắt-đầu-với-sam-3) — GPU, gói cài đặt, checkpoint, bộ nhớ, giấy phép
   - [Cách hai lượt phân tích hoạt động](#cách-hai-lượt-phân-tích-hoạt-động) — `balanced` làm được gì trên ảnh 4K đến 8K, và giới hạn ở đâu
-  - [Các instance: kiểu NH_SEGS](#các-instance-kiểu-nh_segs) — thứ được chuyển qua lại giữa các node
-  - [Viết công thức](#viết-công-thức) — những gì `concepts` và `expression` nhận: danh sách, `-`, `&`, `~`, `background`, từ tiếng Việt
+  - [Các instance: kiểu NH_SEGS](#các-instance-kiểu-nh_segs) — thứ được chuyển qua lại giữa các node, và node nào tạo ra nó
+  - [Viết công thức](#viết-công-thức) — những gì `concepts`, `expression` và `regions` nhận: danh sách, `-`, `&`, `~`, `background`, từ tiếng Việt
   - [SAM3 Segment (NH)](#sam3-segment-nh) — gõ thứ bạn muốn, nhận mask của nó và xem ngay trên node
   - [Segs Select (NH)](#segs-select-nh) — giữ instance theo nhãn, điểm, kích thước và vị trí
-  - [Segs Compose (NH)](#segs-compose-nh) — dựng mask từ nhãn bằng `|`, `-`, `&` và `~`
+  - [Segs Compose (NH)](#segs-compose-nh) — dựng mask từ nhãn bằng `|`, `-`, `&` và `~`, kể cả từ nhiều node cùng lúc
   - [Segs To Masks (NH)](#segs-to-masks-nh) — mỗi instance một mask, cùng mask hợp và danh sách nhãn
   - [Segs To Impact SEGS (NH)](#segs-to-impact-segs-nh) — đưa các instance cho detailer của Impact Pack
   - [Segs Preview (NH)](#segs-preview-nh) — vẽ các instance lên ảnh của chúng
@@ -31,57 +32,62 @@ Tám node cắt từng phần trên ảnh chụp. Hai node dùng các model SegF
 
 | Bạn muốn | Dùng | Cần gì |
 |---|---|---|
-| Trang phục của một người hoặc cả nhóm: áo, quần, giày, mũ | [Garment Segment](#garment-segment-nh) | Một model SegFormer và một bộ nhận diện khuôn mặt nhỏ, đều tự tải ở lần chạy đầu. Chạy được trên CPU hoặc GPU. |
-| Khuôn mặt, tóc, cổ và các bộ phận trên mặt của một ảnh chân dung, ảnh nửa người hoặc mọi khuôn mặt trong ảnh nhóm | [Portrait Segment](#portrait-segment-nh) | Giống như trên. |
+| Trang phục của một người hoặc cả nhóm: áo, đầm, quần, giày, mũ, túi, khăn | [Garment Segment](#garment-segment-nh) | Một model SegFormer (256 MB) và một bộ nhận diện khuôn mặt nhỏ, đều tự tải ở lần chạy đầu. Chạy được trên CPU hoặc GPU. |
+| Khuôn mặt, tóc, cổ và các bộ phận trên mặt của một ảnh chân dung, ảnh nửa người hoặc mọi khuôn mặt trong ảnh nhóm | [Portrait Segment](#portrait-segment-nh) | Giống như trên, với model 340 MB. |
+| Da, tóc, môi, răng, tay, chân hoặc quần áo của những người trong ảnh, gọi bằng tên bộ phận (`skin`, `hair, face`, `clothes - shoes`, hay `da`, `tóc, môi`) | [Body Segment](#body-segment-nh) | Một model Sapiens2 (1.6 GB) và cùng bộ nhận diện khuôn mặt, đều tự tải ở lần chạy đầu, cùng PyTorch 2.4 trở lên. Nên chạy trên GPU: CPU rất chậm. |
 | Bất cứ thứ gì bạn gọi tên được (người, đồ vật, bầu trời, tường, cửa sổ) dưới dạng mask từ một công thức ngắn (`person - bag`, `background`), hoặc từng instance riêng, kể cả trên ảnh 4K đến 8K | [SAM3 Segment](#sam3-segment-nh) và các node Segs | GPU NVIDIA, gói `sam3` của Meta và một checkpoint mà bạn tự cài và tự tải. Xem [Trước khi bắt đầu với SAM 3](#trước-khi-bắt-đầu-với-sam-3). |
 
-Bạn cũng có thể yêu cầu SAM3 Segment tìm `dress` hay `hair`. Các node SegFormer vẫn là lựa chọn dễ hơn cho các bộ phận trang phục và khuôn mặt cố định của chúng: chúng tự thiết lập và cũng chạy được không cần GPU.
+Bạn cũng có thể yêu cầu SAM3 Segment tìm `dress` hay `hair`. Các node phân tích người vẫn là lựa chọn dễ hơn cho những bộ phận cố định của chúng: chúng tự thiết lập, xử lý mọi người trong ảnh cùng một lúc, còn Garment Segment và Portrait Segment cũng chạy được không cần GPU.
+
+**Chọn giữa các node phân tích người.** Garment Segment phân biệt được từng loại trang phục (áo với đầm, chân váy với quần) và còn tìm được túi, mũ, khăn, kính và trang sức. Body Segment gọi tên cơ thể: da, tóc, môi, răng, tay, chân và quần áo nói chung. Portrait Segment là node biết đến mắt, lông mày, mũi và tai. [Segs Compose](#segs-compose-nh) trộn những gì chúng tìm được, ví dụ `face - eyes - eyebrows` (khuôn mặt của cả Body Segment lẫn Portrait Segment, bỏ mắt và lông mày của Portrait Segment).
 
 ## Trước khi bắt đầu
 
-Phần này nói về Garment Segment và Portrait Segment. SAM3 Segment và các node Segs có phần riêng: [Trước khi bắt đầu với SAM 3](#trước-khi-bắt-đầu-với-sam-3).
+Phần này nói về ba node phân tích người: Garment Segment, Portrait Segment và Body Segment. SAM3 Segment và các node Segs có phần riêng: [Trước khi bắt đầu với SAM 3](#trước-khi-bắt-đầu-với-sam-3).
 
-| | Garment Segment (NH) | Portrait Segment (NH) |
-|---|---|---|
-| Model | SegFormer huấn luyện cho các lớp trang phục của Fashionpedia | SegFormer tinh chỉnh (fine-tune) trên CelebAMask-HQ cho các bộ phận khuôn mặt |
-| Kho Hugging Face | `1038lab/segformer_fashion` | `jonathandinu/face-parsing` |
-| Dung lượng tải | khoảng 190 MB | khoảng 340 MB |
-| Giấy phép | Người đăng tải không khai báo | Chỉ dành cho nghiên cứu và giáo dục phi thương mại |
+| Node và model | Kho Hugging Face | Dung lượng tải | Giấy phép |
+|---|---|---|---|
+| Garment Segment (NH), `model` `fashn` (mặc định): FASHN Human Parser, một SegFormer-B4 tinh chỉnh từ `nvidia/mit-b4`, với 18 lớp cho thời trang | `fashn-ai/fashn-human-parser` | khoảng 256 MB | NVIDIA Source Code License for SegFormer: chỉ để nghiên cứu hoặc đánh giá |
+| Garment Segment (NH), `model` `fashionpedia`: SegFormer huấn luyện cho các lớp trang phục của Fashionpedia, model của 1.8.0 trở về trước | `1038lab/segformer_fashion` | khoảng 190 MB | Người đăng tải không khai báo, nhưng model được tinh chỉnh từ `nvidia/mit-b3`: hãy coi như `fashn` |
+| Portrait Segment (NH): SegFormer tinh chỉnh (fine-tune) trên CelebAMask-HQ cho các bộ phận khuôn mặt | `jonathandinu/face-parsing` | khoảng 340 MB | Chỉ dành cho nghiên cứu và giáo dục phi thương mại |
+| Body Segment (NH): Sapiens2 (Meta, 2026), với 28 lớp bộ phận cơ thể và trang phục, cộng với nền | `facebook/sapiens2-seg-0.4b`, `-0.8b` hoặc `-1b` | 1.6 GB (`0.4b`), 3.3 GB (`0.8b`) hoặc 5.9 GB (`1b`) | Sapiens2 License (Meta): miễn phí bản quyền, không có điều khoản cấm thương mại, nhưng có hạn chế về mục đích sử dụng |
 
-**Lần chạy đầu tiên.** Khi chạy lần đầu, mỗi node tải model của nó từ Hugging Face, cùng với bộ nhận diện khuôn mặt mô tả bên dưới. Mỗi lần tải được cố định (pinned) vào một phiên bản xác định của kho, nên thay đổi về sau ở nguồn không thể làm đổi thứ bạn nhận được. Các tệp được lưu vào `ComfyUI/models/NH-Nodes/`, mỗi model một thư mục con. Nếu đã có sẵn một bản đầy đủ thì node dùng luôn bản đó: trong `models/RMBG/segformer_fashion` với model trang phục, trong `models/face_parsing` hoặc `models/RMBG/segformer_face` với model khuôn mặt, hoặc trong bất kỳ thư mục nào bạn thêm bằng khóa `nh_nodes` trong `extra_model_paths.yaml` (xem ví dụ ở mục [Installation](../../README.md#installation)). Nếu quá trình tải bị gián đoạn, hãy chạy lại node: các tệp đã tải xong được giữ lại.
+**Lần chạy đầu tiên.** Khi chạy lần đầu, mỗi node tải model của nó từ Hugging Face, cùng với bộ nhận diện khuôn mặt mô tả bên dưới: với Garment Segment là model chọn trong `model`, với Body Segment là cỡ chọn trong `model_size`. Mỗi lần tải được cố định (pinned) vào một phiên bản xác định của kho, nên thay đổi về sau ở nguồn không thể làm đổi thứ bạn nhận được. Các tệp được lưu vào `ComfyUI/models/NH-Nodes/`, mỗi model một thư mục con (`fashn_human_parser`, `segformer_fashion`, `face_parsing`, `sapiens2-seg-<size>`). Nếu đã có sẵn một bản đầy đủ thì node dùng luôn bản đó: trong `models/RMBG/segformer_fashion` với model Fashionpedia, trong `models/face_parsing` hoặc `models/RMBG/segformer_face` với model khuôn mặt, hoặc trong bất kỳ thư mục nào bạn thêm bằng khóa `nh_nodes` trong `extra_model_paths.yaml` (xem ví dụ ở mục [Installation](../../README.md#installation)). Nếu quá trình tải bị gián đoạn, hãy chạy lại node: các tệp đã tải xong được giữ lại. Máy đang offline sẽ báo lỗi ở lần chạy đầu của một model cho đến khi model đó được tải về.
 
-**Bộ nhận diện khuôn mặt.** Cả hai node còn dùng YuNet, một bộ nhận diện khuôn mặt nhỏ (khoảng 230 KB, giấy phép MIT, từ OpenCV Zoo), để tìm xem người đang ở đâu trước khi phân tích một bức ảnh. Nó được tải một lần, cố định vào một phiên bản xác định của `opencv/face_detection_yunet`, vào `ComfyUI/models/NH-Nodes/yunet/`. Nó chạy trên CPU bằng OpenCV mà NH-Nodes vốn đã cần, nên không tốn VRAM. Nếu đã có sẵn một bản trong thư mục con `yunet` của bất kỳ thư mục `nh_nodes` nào (`models/NH-Nodes/`, hoặc thư mục bạn thêm trong `extra_model_paths.yaml`) thì node dùng luôn bản đó; muốn chạy offline, hãy tự đặt `face_detection_yunet_2023mar.onnx` vào đó. Nếu không nạp được bộ nhận diện (offline ở lần chạy đầu, hoặc OpenCV quá cũ không chạy được nó), node in một cảnh báo trong console và phân tích cả bức ảnh, không có các ảnh cận cảnh nói ở [Cách các node SegFormer nhìn một bức ảnh](#cách-các-node-segformer-nhìn-một-bức-ảnh). Hãy khởi động lại ComfyUI để thử lại.
+**Bộ nhận diện khuôn mặt.** Cả ba node còn dùng YuNet, một bộ nhận diện khuôn mặt nhỏ (khoảng 230 KB, giấy phép MIT, từ OpenCV Zoo), để tìm xem người đang ở đâu trước khi phân tích một bức ảnh. Nó được tải một lần, cố định vào một phiên bản xác định của `opencv/face_detection_yunet`, vào `ComfyUI/models/NH-Nodes/yunet/`. Nó chạy trên CPU bằng OpenCV mà NH-Nodes vốn đã cần, nên không tốn VRAM. Nếu đã có sẵn một bản trong thư mục con `yunet` của bất kỳ thư mục `nh_nodes` nào (`models/NH-Nodes/`, hoặc thư mục bạn thêm trong `extra_model_paths.yaml`) thì node dùng luôn bản đó; muốn chạy offline, hãy tự đặt `face_detection_yunet_2023mar.onnx` vào đó. Nếu không nạp được bộ nhận diện (offline ở lần chạy đầu, hoặc OpenCV quá cũ không chạy được nó), node in một cảnh báo trong console và chạy tiếp mà không có nó. Khi đó Portrait Segment phân tích cả bức ảnh, không có các ảnh cận cảnh nói ở [Cách các node SegFormer nhìn một bức ảnh](#cách-các-node-segformer-nhìn-một-bức-ảnh). Garment Segment và Body Segment vẫn xem cận cảnh những người mà lượt nhìn đầu tiên trên cả bức ảnh tìm thấy, nhưng có thể bỏ sót người mà lượt nhìn đầu không thấy. Hãy khởi động lại ComfyUI để thử lại.
 
-**Bộ nhớ.** Model được đọc từ đĩa một lần và giữ trong bộ nhớ hệ thống. Nó chỉ chuyển sang GPU trong lúc node chạy, rồi trở về bộ nhớ hệ thống, nên không chiếm VRAM giữa các lần chạy. Trước khi chuyển sang GPU, node nhờ ComfyUI gỡ bớt các model của chính nó nếu VRAM đang eo hẹp.
+**Bộ nhớ.** Model được đọc từ đĩa một lần và giữ trong bộ nhớ hệ thống. Nó chỉ chuyển sang GPU trong lúc node chạy, rồi trở về bộ nhớ hệ thống, nên không chiếm VRAM giữa các lần chạy. Trước khi chuyển sang GPU, node nhờ ComfyUI gỡ bớt các model của chính nó nếu VRAM đang eo hẹp. Body Segment chỉ giữ một cỡ Sapiens2 trong bộ nhớ mỗi lần: khi bạn chọn cỡ khác, cỡ cũ bị bỏ đi.
 
-> **Lưu ý:** Nếu node báo nhãn không như mong đợi (unexpected labels), nghĩa là có một checkpoint khác nằm trong một thư mục mà node tìm. Hãy xóa bản đó, model đúng sẽ được tải về.
+> **Lưu ý:** Nếu node báo nhãn không như mong đợi (unexpected labels), nghĩa là có một checkpoint khác nằm trong một thư mục mà node tìm. Hãy xóa bản đó, model đúng sẽ được tải về. Body Segment cũng báo tương tự khi một tệp không phải checkpoint Sapiens2 của cỡ bạn chọn.
 
-> **Giấy phép:** Model đứng sau Portrait Segment chỉ được dùng cho nghiên cứu và giáo dục phi thương mại. Model đứng sau Garment Segment không khai báo giấy phép, nên điều khoản của nó chưa rõ. Mã nguồn của NH-Nodes thuộc giấy phép MIT. Bộ nhận diện khuôn mặt YuNet theo giấy phép MIT và không thay đổi điều nào ở trên. Hãy đọc [THIRD_PARTY_NOTICES.md](../../THIRD_PARTY_NOTICES.md) trước khi dùng một trong hai node cho mục đích thương mại.
+> **Giấy phép:** Các model này đi kèm điều khoản giới hạn cách bạn được dùng chúng. Model đứng sau Portrait Segment chỉ được dùng cho nghiên cứu và giáo dục phi thương mại. Cả hai model của Garment Segment đều xây trên SegFormer của NVIDIA. FASHN Human Parser theo NVIDIA Source Code License for SegFormer; mục 3.3 của giấy phép này nói rằng "the Work" (phần mềm và các sản phẩm phái sinh của nó) "only may be used or intended for use non-commercially" (chỉ được dùng, hoặc chỉ được dự định dùng, một cách phi thương mại) và định nghĩa điều đó là "for research or evaluation purposes only" (chỉ cho mục đích nghiên cứu hoặc đánh giá): hẹp hơn nhiều so với "mọi việc dùng mà không thu tiền", đó là nghiên cứu hoặc đánh giá và không gì khác. Model Fashionpedia không khai báo giấy phép, nhưng được tinh chỉnh từ `nvidia/mit-b3`, nên nhiều khả năng cùng giấy phép đó cũng áp dụng. Sapiens2, đứng sau Body Segment, theo Sapiens2 License của Meta: miễn phí bản quyền, không có điều khoản cấm thương mại, nhưng cấm theo dõi (surveillance), xử lý sinh trắc học, nhận dạng người, deepfake và một số mục đích khác, đồng thời yêu cầu bạn tuân thủ luật về quyền riêng tư, dữ liệu sinh trắc học và kiểm soát thương mại. Mã nguồn của NH-Nodes thuộc giấy phép MIT. Bộ nhận diện khuôn mặt YuNet theo giấy phép MIT và không thay đổi điều nào ở trên. Hãy đọc [THIRD_PARTY_NOTICES.md](../../THIRD_PARTY_NOTICES.md) trước khi dùng bất kỳ node nào trong số này cho công việc có thu phí.
 
 ## Cách các node SegFormer nhìn một bức ảnh
 
-Cả hai model đều nhìn một bức ảnh 512 × 512. Trên ảnh 6000 px, một khuôn mặt rộng 600 px chỉ còn rộng khoảng 50 px trong mắt model, nên các node không đưa cho model cả bức ảnh nguyên khối.
+Các model đứng sau những node này nhìn một bức ảnh nhỏ có kích thước cố định (rộng × cao): 512 × 512 với model khuôn mặt và model Fashionpedia, 384 × 576 với FASHN, 768 × 1024 với Sapiens2. Trên ảnh 6000 px, một khuôn mặt rộng 600 px chỉ còn rộng khoảng 50 px trong mắt model 512 px, nên các node không đưa cho model cả bức ảnh nguyên khối.
 
-1. **Cả bức ảnh trước.** Ảnh có một cạnh dài hơn gấp đôi cỡ 512 px của model được thu nhỏ bằng cách lấy trung bình theo diện tích (area averaging), nhanh hơn phép resize riêng của model và giữ chi tiết nhỏ sạch sẽ, rồi mới được phân tích. Kết quả đầu tiên này được giữ lại ở mọi chỗ chưa có gì tốt hơn, nên những gì các bước sau bỏ sót vẫn giữ ít nhất kết quả này.
-2. **Tìm người.** Bộ nhận diện khuôn mặt tìm khuôn mặt trên hai kích cỡ của bức ảnh. Garment Segment còn lấy thêm những người mà lượt phân tích đầu đã tìm thấy.
-3. **Ảnh cận cảnh tinh chỉnh kết quả.** Mỗi khuôn mặt (Portrait Segment) hoặc mỗi nhóm người (Garment Segment) được phân tích lại trên một vùng cắt mà model thấy ở đủ 512 px. Nhãn của vùng cắt được đưa vào kết quả đầu, nhưng không đưa dọc các cạnh cắt của vùng, nơi model thấy vật bị cắt cụt, nên không có cạnh thẳng nào lộ ra trong tóc hay quần áo. Mức độ tin vào một vùng cắt khác nhau tùy node, như các mục Garment Segment và Portrait Segment mô tả.
+1. **Cả bức ảnh trước.** Ảnh lớn được thu nhỏ bằng cách lấy trung bình theo diện tích (area averaging), nhanh hơn phép resize riêng của model và giữ chi tiết nhỏ sạch sẽ, rồi mới được phân tích. Kết quả đầu tiên này được giữ lại ở mọi chỗ chưa có gì tốt hơn, nên những gì các bước sau bỏ sót vẫn giữ ít nhất kết quả này.
+2. **Tìm người.** Bộ nhận diện khuôn mặt tìm khuôn mặt trên hai kích cỡ của bức ảnh. Garment Segment và Body Segment còn lấy thêm những người mà lượt phân tích đầu đã tìm thấy.
+3. **Ảnh cận cảnh tinh chỉnh kết quả.** Mỗi khuôn mặt (Portrait Segment) hoặc mỗi nhóm người (Garment Segment, Body Segment) được phân tích lại trên một vùng cắt mà model thấy ở đủ độ phân giải của nó. Nhãn của vùng cắt được đưa vào kết quả đầu, nhưng không đưa dọc các cạnh cắt của vùng, nơi model thấy vật bị cắt cụt, nên không có cạnh thẳng nào lộ ra trong tóc hay quần áo. Mức độ tin vào một vùng cắt khác nhau tùy node, như các mục của từng node mô tả. Vùng cắt thấp hơn 128 px thì không được phân tích lại: nó sẽ bị phóng lên 4 đến 8 lần để vừa với đầu vào của model, nên phần lớn những gì model trả về là bịa ra, và nó hiện ra thành các đốm nhãn li ti rải rác (ví dụ một vật nhỏ cầm trên tay). Nhãn của lượt nhìn đầu được giữ nguyên ở đó.
 
-Với ảnh dài hơn 4096 px, toàn bộ việc trên được làm trên một bản sao dài 4096 px rồi bản đồ nhãn được phóng lên đúng kích thước ảnh ở cuối: model chỉ nhìn 512 px mỗi lần nên nhãn của nó không chứa chi tiết mịn hơn, còn ghép các vùng cắt ở đủ kích thước 8K sẽ mất nhiều giây.
+Với ảnh dài hơn 4096 px, toàn bộ việc trên được làm trên một bản sao dài 4096 px rồi bản đồ nhãn được phóng lên đúng kích thước ảnh ở cuối: các model chỉ nhìn 384 đến 1024 px mỗi lần nên nhãn của chúng không chứa chi tiết mịn hơn, còn ghép các vùng cắt ở đủ kích thước 8K sẽ mất nhiều giây.
 
-Mỗi node dùng điều này thế nào được nêu trong mục riêng của nó: [Garment Segment](#garment-segment-nh) và [Portrait Segment](#portrait-segment-nh).
+Body Segment chạy Sapiens2 chứ không phải SegFormer, và làm đúng ba bước trên với các vùng cắt có hình dạng 3:4 riêng của nó. Nó thấy mỗi vùng cắt ở 768 × 1024, nên mỗi người có khoảng 1024 px dành cho model dù ảnh lớn cỡ nào. Nó thêm một bước kiểm tra ngay từ đầu: khi không tìm thấy khuôn mặt nào, node coi như bức ảnh không có ai nếu Sapiens2 không chắc về phần lớn những gì nó gán là người, hoặc nếu một lượt nhìn vào bức ảnh lật gương không tìm thấy cùng những người đó (xem [Body Segment](#body-segment-nh)).
+
+Mỗi node dùng điều này thế nào được nêu trong mục riêng của nó: [Garment Segment](#garment-segment-nh), [Portrait Segment](#portrait-segment-nh) và [Body Segment](#body-segment-nh).
 
 ## Tinh chỉnh mask
 
-Garment Segment và Portrait Segment biến bản đồ nhãn của model thành mask, rồi tinh chỉnh theo thứ tự: `fill_holes`, `mask_expand`, `mask_blur`. Mask luôn có kích thước bằng ảnh đầu vào.
+Garment Segment, Portrait Segment và Body Segment biến bản đồ nhãn của model thành mask, rồi tinh chỉnh theo thứ tự: `fill_holes`, `mask_expand`, `mask_blur`. Mask luôn có kích thước bằng ảnh đầu vào.
 
-| Tùy chọn | Khoảng | Garment Segment | Portrait Segment | Tác dụng |
-|---|---|---|---|---|
-| `fill_holes` | bật / tắt | tắt | bật | Lấp các lỗ nằm trọn trong mask. Với trang phục, mặc định là tắt vì nếu bật, cánh tay vắt ngang thân (nằm lọt giữa vùng trang phục) sẽ bị lấp vào mask. |
-| `mask_expand` | -64 đến 64 | `0` | `0` | Mở rộng (số dương) hoặc thu hẹp (số âm) mask đúng bấy nhiêu pixel. |
-| `mask_blur` | 0 đến 64 | `0` | `0` | Làm mềm (feather) cạnh khoảng bấy nhiêu pixel. |
-| `device` | `cuda`, `cpu` | `cuda` | `cuda` | Nơi model chạy. Không có CUDA thì node chuyển sang CPU và in một ghi chú một lần trong console. |
+| Tùy chọn | Khoảng | Garment Segment | Portrait Segment | Body Segment | Tác dụng |
+|---|---|---|---|---|---|
+| `fill_holes` | bật / tắt | tắt | bật | tắt | Lấp các lỗ nằm trọn trong mask. Với trang phục, mặc định là tắt vì nếu bật, cánh tay vắt ngang thân (nằm lọt giữa vùng trang phục) sẽ bị lấp vào mask. Với chân dung thì bật, vì khuôn mặt vẫn đặc ở nơi kính, hoa tai hay tóc cắt vào nó. |
+| `mask_expand` | -64 đến 64 | `0` | `0` | `0` | Mở rộng (số dương) hoặc thu hẹp (số âm) mask đúng bấy nhiêu pixel. |
+| `mask_blur` | 0 đến 64 | `0` | `0` | `0` | Làm mềm (feather) cạnh khoảng bấy nhiêu pixel. |
+| `device` | `cuda`, `cpu` | `cuda` | `cuda` | `cuda` | Nơi model chạy. Không có CUDA thì node chuyển sang CPU và in một ghi chú một lần trong console. |
 
-Ba đầu ra dưới đây dùng chung cho cả hai node:
+Ba đầu ra dưới đây dùng chung cho cả ba node. Mỗi node còn trả về `segs` (các bộ phận nó tìm được dưới dạng instance, mô tả trong mục riêng của nó), và Body Segment thêm một `report`.
 
 | Đầu ra | Kiểu | Mô tả |
 |---|---|---|
@@ -97,45 +103,61 @@ Batch (lô ảnh) đều dùng được: từng ảnh được phân đoạn l�
 
 <p align="center"><img src="../assets/nodes/NH_GarmentSegment.svg" alt="Garment Segment (NH) node" width="360"></p>
 
-Tạo mask cho một nhóm trang phục, hoặc tất cả các nhóm cùng lúc, trên những người trong ảnh.
+Tạo mask cho một nhóm trang phục, một món riêng (đầm, túi, khăn…), hoặc tất cả các nhóm cùng lúc, trên những người trong ảnh. Hai model làm việc này: `fashn` (mặc định) và `fashionpedia`.
 
-**Dùng khi** bạn muốn có mask sạch của áo, quần, giày hoặc mũ để inpaint, đổi màu hoặc dùng trong workflow thử đồ.
+**Dùng khi** bạn muốn có mask sạch của áo, đầm, quần, giày, mũ hoặc túi để inpaint, đổi màu hoặc dùng trong workflow thử đồ.
 
 | Đầu vào | Kiểu | Mặc định | Mô tả |
 |---|---|---|---|
 | `image` | IMAGE | — | Ảnh chụp một người hoặc một nhóm người. |
-| `part` | COMBO | `upper_garment` | `upper_garment`, `lower_garment`, `footwear`, `headwear` hoặc `all_garments`. Xem bảng bên dưới. |
-| `attach_parts` | BOOLEAN | `true` | Gộp túi, khóa kéo, nơ, bèo nhún và các chi tiết tương tự chạm vào trang phục đã chọn. |
+| `part` | COMBO | `upper_garment` | Một nhóm: `upper_garment`, `lower_garment`, `footwear`, `headwear` hoặc `all_garments`; hoặc một món riêng: `dress`, `bag`, `belt`, `scarf`, `glasses` hoặc `jewelry`. Xem bảng bên dưới. |
+| `attach_parts` | BOOLEAN | `true` | Chỉ với `fashionpedia`: gộp túi, khóa kéo, nơ, bèo nhún và các chi tiết tương tự chạm vào trang phục đã chọn. Không có tác dụng với `fashn`, vì model này tính chúng là một phần của món đồ. |
 | `mask_expand` | INT | `0` | Khoảng -64 đến 64. Mở rộng (+) hoặc thu hẹp (-) mask N pixel. |
 | `mask_blur` | INT | `0` | Khoảng 0 đến 64. Làm mềm cạnh mask N pixel. |
-| `fill_holes` | BOOLEAN | `false` | Lấp các lỗ khép kín. |
+| `fill_holes` | BOOLEAN | `false` | Lấp các lỗ khép kín. Mặc định tắt: nếu bật, cánh tay vắt ngang thân sẽ bị lấp vào mask. |
 | `device` | COMBO | `cuda` | `cuda` hoặc `cpu`. |
+| `model` | COMBO | `fashn` | Tùy chọn (optional), để các workflow lưu từ trước khi có nó vẫn nạp được: chúng chạy `fashn`. `fashn` hoặc `fashionpedia`. Xem bảng bên dưới. |
 
 | Đầu ra | Kiểu | Mô tả |
 |---|---|---|
 | `mask` | MASK | Mask của phần đã chọn. |
 | `cutout_rgba` | IMAGE | Ảnh đầu vào với mask làm kênh alpha. |
 | `mask_image` | IMAGE | Mask dưới dạng ảnh xem trước RGB màu xám. |
+| `segs` | NH_SEGS | Mỗi bộ phận model tìm được là một instance, bất kể `part` là gì, dùng cho [Segs Compose](#segs-compose-nh) và các node Segs khác. Với `fashn`: face, hair, top, dress, skirt, pants, belt, bag, hat, scarf, glasses, arms, hands, legs, feet, torso, jewelry. Với `fashionpedia`: tên các lớp của nó (shirt, top, sweater, …, sleeve, pocket, …). Một instance phủ bộ phận của nó trên mọi người trong ảnh. |
+
+**Chọn `model` nào**
+
+| `model` | Là gì | Giỏi ở | Yếu ở |
+|---|---|---|---|
+| `fashn` (mặc định) | FASHN Human Parser, một SegFormer-B4 cho thời trang với 18 lớp, 256 MB | Áo, đầm, chân váy, quần, túi, mũ, khăn, kính và trang sức, với đường viền sạch. | Không có lớp giày, tất hay băng đô. Món đồ nhạt màu, gần với màu da. |
+| `fashionpedia` | `1038lab/segformer_fashion`, model của 1.8.0 trở về trước, 190 MB | Giày, tất, băng đô và các chi tiết nhỏ (tay áo, cổ áo, túi áo). | Nguyên cả món đồ: bỏ sót một số chiếc đầm và áo. Không có lớp trang sức. |
 
 **Mỗi `part` gồm những gì**
 
-| `part` | Bao gồm |
-|---|---|
-| `upper_garment` | Áo sơ mi và áo kiểu, áo thun và áo nỉ, áo len, cardigan, áo khoác, áo gile, áo khoác dài (coat), đầm, jumpsuit, áo choàng (cape), cà vạt, khăn quàng, mũ trùm áo, cổ áo, ve áo, cầu vai, tay áo và đường viền cổ. |
-| `lower_garment` | Quần dài, quần short, váy, thắt lưng, khóa thắt lưng, bó chân (leg warmer), quần tất và tất dài. Không gồm giày. |
-| `footwear` | Giày và tất. |
-| `headwear` | Mũ, băng đô, khăn đội đầu và phụ kiện tóc. |
-| `all_garments` | Cả bốn nhóm trong cùng một mask. |
+| `part` | Với `fashn` | Với `fashionpedia` |
+|---|---|---|
+| `upper_garment` | Áo, đầm và khăn quàng. | Áo sơ mi và áo kiểu, áo thun và áo nỉ, áo len, cardigan, áo khoác, áo gile, áo khoác dài (coat), đầm, jumpsuit, áo choàng (cape), cà vạt, khăn quàng, mũ trùm áo, cổ áo, ve áo, cầu vai, tay áo và đường viền cổ. |
+| `lower_garment` | Chân váy, quần dài và thắt lưng. | Quần dài, quần short, váy, thắt lưng, khóa thắt lưng, bó chân (leg warmer), quần tất và tất dài. Không gồm giày. |
+| `footwear` | Lớp "feet" của FASHN: bàn chân cùng thứ nó đang mang, nên chân trần cũng được lấy. | Giày và tất. |
+| `headwear` | Mũ. Không có lớp băng đô. | Mũ, băng đô, khăn đội đầu và phụ kiện tóc. |
+| `all_garments` | Bốn nhóm trên trong cùng một mask, gồm cả chân trần. | Bốn nhóm trên trong cùng một mask. |
+| `dress` | Đầm. | Đầm và jumpsuit. |
+| `bag` | Túi. | Túi xách và ví. |
+| `belt` | Thắt lưng. | Thắt lưng và khóa thắt lưng. |
+| `scarf` | Khăn quàng. | Khăn quàng. |
+| `glasses` | Kính. | Kính. |
+| `jewelry` | Trang sức. | Mask rỗng: model không có lớp trang sức, và console cho biết điều đó. Hãy chọn `fashn`. |
 
 **Cách hoạt động**
 
-- **Đầm và jumpsuit** thuộc `upper_garment`. Không có tùy chọn đầm riêng. Muốn mask áo và quần cùng lúc, hoặc đầm và giày, hãy chọn `all_garments`.
-- **Chi tiết đi kèm (attached parts)** gồm túi (pocket), khóa kéo, họa tiết đính (appliqué), hạt cườm, nơ, hoa, tua rua, ruy băng, đinh tán, bèo nhún, kim sa (sequin) và tua (tassel). Khi bật `attach_parts`, một chi tiết chỉ được thêm vào khi nó chạm vào trang phục đã chọn (trong vòng vài pixel). Túi trên áo khoác sẽ nhập vào mask `upper_garment`, còn chiếc nơ trên một chiếc túi xách thì không.
-- **Không bao giờ được chọn:** kính, găng tay, đồng hồ, túi xách, ví và ô không thuộc `part` nào.
-- **Ảnh cận cảnh của người.** Node phân tích cả bức ảnh trước và giữ kết quả đó. Sau đó nó tìm những người (trong lượt phân tích ấy và bằng bộ nhận diện khuôn mặt) và cắt các vùng vuông, đúng hình dạng đầu vào của model, quanh từng nhóm người: một hàng các vùng cắt chồng lên nhau cho nhóm rộng, một vùng cho một người hoặc một nhóm gọn. Mỗi vùng được phân tích ở đủ 512 px của model, và vùng được nới rộng khi người bị tràn qua một cạnh của nó. Việc này giúp những người nhỏ trong một bức ảnh lớn. Xem [Cách các node SegFormer nhìn một bức ảnh](#cách-các-node-segformer-nhìn-một-bức-ảnh).
+- **Đầm và jumpsuit** thuộc `upper_garment`, cùng với các loại áo. `dress` chỉ lấy riêng các chiếc đầm. Muốn mask áo và quần cùng lúc, hoặc đầm và giày, hãy chọn `all_garments`.
+- **Giày dép với `fashn`** là lớp "feet" của FASHN, không phải giày: bàn chân cùng thứ nó đang mang. Chân trần cũng nằm trong `footwear` và cả trong `all_garments`.
+- **Chi tiết đi kèm (attached parts)** (chỉ `fashionpedia`) gồm túi (pocket), khóa kéo, họa tiết đính (appliqué), hạt cườm, nơ, hoa, tua rua, ruy băng, đinh tán, bèo nhún, kim sa (sequin) và tua (tassel). Khi bật `attach_parts`, một chi tiết chỉ được thêm vào khi nó chạm vào trang phục đã chọn (trong vòng vài pixel). Túi trên áo khoác sẽ nhập vào mask `upper_garment`, còn chiếc nơ trên một chiếc túi xách thì không. `fashn` không có các lớp này: nó tính túi áo, khóa kéo và miếng vá là một phần của món đồ.
+- **Không lấy được qua `part`:** với `fashn` là khuôn mặt, tóc, cánh tay, bàn tay, chân và thân; với `fashionpedia` là găng tay, đồng hồ và ô. Chúng nằm trong `segs`.
+- **Ảnh cận cảnh của người.** Node phân tích cả bức ảnh trước và giữ kết quả đó. Sau đó nó tìm những người (trong lượt phân tích ấy và bằng bộ nhận diện khuôn mặt) và cắt các vùng có đúng hình dạng đầu vào của model (vuông với `fashionpedia`, 2:3 với `fashn`) quanh từng nhóm người: một hàng các vùng cắt chồng lên nhau cho nhóm rộng, một vùng cho một người hoặc một nhóm gọn. Mỗi vùng được phân tích ở đủ độ phân giải của model, và vùng được nới rộng khi người bị tràn qua một cạnh của nó. Việc này giúp những người nhỏ trong một bức ảnh lớn. Xem [Cách các node SegFormer nhìn một bức ảnh](#cách-các-node-segformer-nhìn-một-bức-ảnh).
 - **Vùng cắt chỉ tinh chỉnh.** Nhãn của nó chỉ thay kết quả đầu ở những chỗ model chắc hơn, cách xa cạnh cắt của vùng, và chỉ với các phần nằm trên những người đã tìm thấy. Không có gì bị bịa ra trên một phông trống, và không có cạnh thẳng nào của vùng cắt xẻ qua một món trang phục.
 
-<p align="center"><img src="../assets/examples/garment-segment.jpg" alt="Mask của Garment Segment phủ lên một ảnh mẫu" width="720"><br><em>Garment Segment trên một ảnh mẫu: các vùng tô màu là mask của những phần đã chọn.</em></p>
+<p align="center"><img src="../assets/examples/garment-segment.jpg" alt="Mask của Garment Segment phủ lên một ảnh mẫu" width="720"><br><em>Garment Segment trên một ảnh mẫu: các vùng tô màu là mask của phần đã chọn, từ model fashn (mặc định) và từ model fashionpedia (màu hổ phách: các chi tiết mà attach_parts đã gộp vào), cùng ảnh cắt nền làm từ mask của fashn.</em></p>
 
 **Ví dụ**
 
@@ -145,9 +167,9 @@ Load Image → Garment Segment (NH, upper_garment) → mask → Mask Morphology 
 
 Hãy mở rộng mask thêm vài pixel bằng [Mask Morphology (NH)](./mask.md#mask-morphology-nh) để trang phục được inpaint có thể phủ lên đường viền cũ.
 
-> **Lưu ý:** Model Fashionpedia bỏ sót một số áo, ví dụ chiếc áo cánh nằm dưới một chiếc mũ lớn. Một model trang phục tốt hơn đang được dự kiến.
+> **Lưu ý:** `fashn` có thể bỏ sót món đồ nhạt màu gần với màu da: một chiếc áo sát nách màu hồng nhạt chỉ được tìm thấy một phần. Lỗi nằm ở chính model, không phải ở các vùng cắt, và `top` hay `clothes` của Body Segment lấy được món đó tốt hơn. Nó cũng có thể gắn nhãn áo cho những thứ cầm sát người, ví dụ ly champagne. `fashionpedia` cũng bỏ sót một số áo, ví dụ chiếc áo cánh nằm dưới một chiếc mũ lớn.
 
-> **Giấy phép:** model trang phục không khai báo giấy phép. Xem [Trước khi bắt đầu](#trước-khi-bắt-đầu).
+> **Giấy phép:** cả hai model trang phục chỉ dùng cho nghiên cứu hoặc đánh giá. FASHN Human Parser theo NVIDIA Source Code License for SegFormer, còn model Fashionpedia, không khai báo giấy phép, được tinh chỉnh từ `mit-b3` của NVIDIA. Xem [Trước khi bắt đầu](#trước-khi-bắt-đầu).
 
 ---
 
@@ -181,12 +203,13 @@ Tạo mask cho khuôn mặt, tóc, cổ và các bộ phận trên mặt của m
 | `mask` | MASK | Mask gộp của mọi vùng đã bật, trên mọi khuôn mặt tìm thấy. |
 | `cutout_rgba` | IMAGE | Ảnh đầu vào với mask làm kênh alpha. |
 | `mask_image` | IMAGE | Mask dưới dạng ảnh xem trước RGB màu xám. |
+| `segs` | NH_SEGS | Mỗi bộ phận model tìm được là một instance, bất kể bạn đã bật vùng nào: skin, nose, glasses, eyes, eyebrows, ears, mouth (bên trong miệng), lips, hair, hat, earrings, necklace, neck, clothes. Một instance phủ bộ phận của nó trên mọi người trong ảnh. Dùng cho [Segs Compose](#segs-compose-nh) và các node Segs khác. |
 
 **Cách hoạt động**
 
 - Các vùng đã bật được gộp thành một mask. Không bật vùng nào thì mask rỗng.
 - `face` đã bao gồm mắt, lông mày, mũi, môi và bên trong miệng. Các tùy chọn đó chỉ làm kết quả thay đổi khi `face` tắt.
-- Mũ, hoa tai, dây chuyền và quần áo có trong model nhưng node không cung cấp.
+- Mũ, hoa tai, dây chuyền và quần áo có trong model nhưng node không có công tắc cho chúng. Chúng nằm trong `segs`, nơi [Segs Compose](#segs-compose-nh) dùng được.
 - **Cả bức ảnh trước.** Bức ảnh được phân tích dưới dạng một hình vuông có thêm viền (giữ nguyên tỉ lệ, phần còn lại được lấp bằng màu xám) thay vì bị nén vào hình vuông của model. Kết quả này được giữ lại ở mọi chỗ mà các vùng cắt bên dưới không chạm tới, nên một bức ảnh không tìm thấy khuôn mặt nào, hoặc không có bộ nhận diện, giữ nó làm kết quả. Khi đã tìm thấy khuôn mặt, các phần của mặt (da, mắt, lông mày, mũi, môi, tai) mà kết quả này cho thấy ở xa mọi khuôn mặt được bỏ đi vì là nhầm lẫn, chẳng hạn một vệt phản chiếu hay một hoa văn; tóc, cổ và quần áo của nó vẫn được giữ.
 - **Khuôn mặt.** Bộ nhận diện khuôn mặt tìm các khuôn mặt (tối đa 32, lấy những khuôn mặt lớn nhất). Khi không tìm thấy khuôn mặt nào, bức ảnh được thêm một lề xám và tìm thêm một lần nữa, cách này tìm được khuôn mặt bị khung hình cắt. Sau đó model phân tích (parser) kiểm tra từng khuôn mặt trên một vùng cắt sát: bàn tay hay một họa tiết mà bộ nhận diện tưởng là khuôn mặt bị loại và không làm thay đổi gì.
 - **Hai vùng cắt cho mỗi khuôn mặt.** Một vùng cắt rộng cho thấy trọn tóc và cổ. Một vùng cắt sát, đóng khung giống những bức ảnh model đã học, cho mắt, lông mày, mũi và môi. Vùng rộng tinh chỉnh phần nằm trong nó, cách xa các cạnh cắt của nó, còn vùng sát chỉ quyết định bên trong một hình elip quanh khuôn mặt, nên không có cạnh cắt thẳng nào lộ ra trong mái tóc dài. Nơi các vùng cắt của hai khuôn mặt chồng nhau, mỗi điểm ảnh thuộc về khuôn mặt gần hơn. Vì vậy trong ảnh nhóm, mask chứa các vùng đã bật của mọi người.
@@ -205,6 +228,171 @@ Tắt mọi vùng trừ `hair`. Với các giá trị mặc định, bạn có k
 > **Mẹo:** Model được tinh chỉnh trên CelebAMask-HQ, một bộ ảnh chụp cận mặt, nên node phân tích mỗi khuôn mặt tìm được trên một vùng cắt cận cảnh. Một khuôn mặt nhỏ trong ảnh lớn, một ảnh nửa người hay một ảnh nhóm không cần cắt (crop) trước. Khuôn mặt mà bộ nhận diện bỏ sót (rất nhỏ, bị che hoặc quay đi) giữ kết quả của lượt phân tích cả bức ảnh, thô hơn: hãy tự cắt quanh nó khi cần chi tiết mịn nhất.
 
 > **Giấy phép:** model face-parsing chỉ dành cho nghiên cứu và giáo dục phi thương mại. Xem [Trước khi bắt đầu](#trước-khi-bắt-đầu).
+
+---
+
+## Body Segment (NH)
+
+<p align="center"><img src="../assets/nodes/NH_BodySegment.svg" alt="Body Segment (NH) node" width="360"></p>
+
+Bạn gõ tên các bộ phận cơ thể muốn lấy (`skin`, `hair, face`, `clothes - shoes`, hoặc tiếng Việt `da`, `tóc, môi`) và nhận mask của chúng. Model là Sapiens2 (Meta, 2026). Nó gán cho từng điểm ảnh của mỗi người một trong 28 bộ phận, hoặc là nền: khuôn mặt và cổ, tóc, thân, cánh tay trên và dưới, bàn tay, đùi và cẳng chân, bàn chân, môi, răng, lưỡi, kính, áo và quần (trang phục thân trên và thân dưới), giày, tất và "apparel" (phụ kiện). Node đổi những từ bạn gõ thành một mask và hiển thị nó ngay trên node.
+
+**Dùng khi** bạn muốn có mask da, tóc, môi, răng, bàn tay hay quần áo của những người trong ảnh chỉ bằng một node, không phải tô vẽ gì: để retouch da, đổi màu tóc hay môi, bảo vệ bàn tay, hoặc thay trang phục. Garment Segment hợp hơn khi cần riêng một món đồ (đầm, túi, khăn), Portrait Segment hợp hơn khi cần mắt, lông mày, mũi và tai, còn SAM3 Segment dùng cho mọi thứ không phải người.
+
+| Đầu vào | Kiểu | Mặc định | Mô tả |
+|---|---|---|---|
+| `image` | IMAGE | — | Ảnh có người. Mọi ảnh trong batch được xử lý lần lượt. |
+| `regions` | STRING | `skin` | Các bộ phận bạn muốn, gọi bằng tên, viết dưới dạng công thức (xem [Viết công thức](#viết-công-thức)): `skin`, `hair, face`, `clothes - shoes`, `~person`, `background`. Dấu phẩy hoặc xuống dòng để liệt kê nhiều thứ. Các từ nằm trong các bảng bên dưới, bằng tiếng Anh và tiếng Việt. Hãy viết ít nhất một từ. |
+| `model_size` | COMBO | `0.4b` | `0.4b`, `0.8b` hoặc `1b`. Các cỡ lớn hơn chậm hơn và cần nhiều VRAM hơn. Xem "Cỡ model, bộ nhớ và tốc độ" bên dưới. |
+| `mask_expand` | INT | `0` | Khoảng -64 đến 64. Mở rộng (+) hoặc thu hẹp (-) mask N pixel. |
+| `mask_blur` | INT | `0` | Khoảng 0 đến 64. Làm mềm cạnh mask N pixel. |
+| `fill_holes` | BOOLEAN | `false` | Lấp các lỗ khép kín. |
+| `device` | COMBO | `cuda` | `cuda` hoặc `cpu`. CPU vẫn chạy được nhưng rất chậm. |
+| `show_preview` | BOOLEAN | `true` | Tùy chọn (optional). Hiển thị kết quả ngay trên node: mask sáng và phần còn lại bị làm tối, các bộ phận mà mask giữ lại có viền và gắn nhãn, và các dòng báo cáo bên dưới. Tối đa 1536 px ở cạnh dài, và chỉ 16 ảnh đầu của một batch. Tắt: không vẽ gì, và node vẫn chạy (xem "Cách hoạt động" bên dưới). |
+
+| Đầu ra | Kiểu | Mô tả |
+|---|---|---|
+| `mask` | MASK | Mask của công thức, một mask cho mỗi ảnh, có kích thước bằng ảnh. |
+| `cutout_rgba` | IMAGE | Ảnh đầu vào với mask làm kênh alpha. |
+| `mask_image` | IMAGE | Mask dưới dạng ảnh xem trước RGB màu xám. |
+| `segs` | NH_SEGS | Mỗi bộ phận tìm được là một instance, bất kể `regions` viết gì: hair, face, torso, arms, hands, legs, feet, lips, teeth, tongue, glasses, top, bottom, shoes, socks, accessories. Một instance phủ bộ phận của nó trên mọi người trong ảnh. Dùng cho [Segs Compose](#segs-compose-nh) và các node Segs khác. |
+| `report` | STRING | Mỗi từ trong `regions` một dòng, kèm tỉ lệ của nó trong bức ảnh ("under 0.1%" khi tỉ lệ rất nhỏ, "not in the picture" khi không có, "of the pictures" với một batch). Tiếp theo là các ghi chú khi một từ mang nghĩa khác trong Sapiens2 so với cách nói thường ngày. |
+
+**Các từ bạn có thể gõ**
+
+Từ bạn gõ là tiếng Anh, hoặc những từ tiếng Việt thông dụng trong danh sách dùng chung. Không phân biệt chữ hoa/thường, số ít và số nhiều là cùng một từ (`lower leg` hay `lower legs`, `accessory` hay `accessories`), và nhiều từ liền nhau là một nhãn (`upper arm` không cần ngoặc kép). Các bảng dưới đây theo `REGIONS` và `WHOLE_LIMBS` trong `nodes/vision/body_segment_nodes.py`, nơi có danh sách đầy đủ.
+
+| Viết | Bạn nhận được |
+|---|---|
+| `skin`, `body skin` | Da của khuôn mặt và cổ, thân, cánh tay, bàn tay, chân và bàn chân. Không gồm môi, răng, lưỡi hay tóc. |
+| `face`, `neck`, `face skin` | Khuôn mặt và cổ cùng nhau: một lớp duy nhất, kèm cả mắt, lông mày và râu. |
+| `head` | Khuôn mặt và tóc. |
+| `hair` | Tóc. |
+| `arm`, `arms`, `upper arm`, `upper arms`, `lower arm`, `lower arms`, `forearm`, `forearms` | Cánh tay, không gồm bàn tay. `upper arm` là phần phía trên khuỷu tay (bắp tay), `lower arm` và `forearm` là phần phía dưới (cẳng tay). |
+| `hand`, `hands` | Bàn tay. |
+| `leg`, `legs`, `thigh`, `thighs`, `upper legs`, `calf`, `calves`, `lower legs` | Chân, không gồm bàn chân. `thigh` và `upper legs` là phần phía trên đầu gối (đùi), `calf`, `calves` và `lower legs` là phần phía dưới (cẳng chân). |
+| `foot`, `feet` | Bàn chân. |
+| `torso`, `chest`, `belly` | Thân người: chỉ là một lớp, nên ba từ này cho cùng kết quả. |
+| `lips`, `lip`, `upper lip`, `lower lip` | Môi (cả hai, hoặc một bên). |
+| `teeth`, `tooth`, `upper teeth`, `lower teeth` | Răng (tất cả, hoặc một hàm). |
+| `tongue` | Lưỡi. |
+| `mouth` | Môi, răng và lưỡi cùng nhau. |
+| `glasses`, `eyeglasses`, `sunglasses` | Kính. |
+| `top`, `upper clothes`, `shirt`, `t-shirt`, `blouse`, `jacket`, `suit jacket`, `sweater`, `hoodie`, `coat`, `vest`, `bra`, `dress`, `wedding dress`, `ao dai` | Trang phục thân trên. Tất cả các từ này là cùng một lớp. |
+| `bottom`, `lower clothes`, `pants`, `trousers`, `jeans`, `shorts`, `skirt` | Trang phục thân dưới. Tất cả các từ này là cùng một lớp. |
+| `shoe`, `shoes`, `high heels`, `sandal`, `sandals`, `sneakers`, `boots` | Giày. |
+| `sock`, `socks` | Tất. |
+| `accessories`, `apparel` | Lớp phụ kiện duy nhất của model: mũ, túi và những thứ tương tự. |
+| `clothes`, `clothing`, `outfit` | Trang phục thân trên và thân dưới, giày, tất và phụ kiện. |
+| `person`, `body` | Mọi thứ model gán là người. |
+| `left hand`, `right hand`, `left arm`, `right arm`, `left leg`, `right leg`, `left foot`, `right foot`, `left shoe`, `right shoe` | Chỉ một bên. Xem bên dưới về bên nào. |
+
+| Tiếng Việt | Bạn nhận được |
+|---|---|
+| `da` | Da (`skin`). |
+| `tóc` | Tóc. |
+| `mặt`, `da mặt`, `cổ` | Khuôn mặt và cổ, một lớp duy nhất. |
+| `đầu` | Đầu: khuôn mặt và tóc. |
+| `môi`, `răng`, `lưỡi`, `miệng` | Môi, răng, lưỡi, và miệng (cả ba cùng nhau). |
+| `tay`, `đôi tay`, `hai tay` | Cả cánh tay kèm bàn tay, đúng như cách người Việt hiểu chữ "tay". |
+| `tay trái`, `tay phải` | Cả cánh tay trái hoặc phải kèm bàn tay của nó. |
+| `cánh tay` | Cánh tay, không kèm bàn tay. |
+| `bắp tay`, `cẳng tay` | Bắp tay (phần trên), cẳng tay (phần dưới). |
+| `bàn tay` | Bàn tay. |
+| `chân`, `đôi chân`, `hai chân` | Cả cái chân kèm bàn chân. |
+| `chân trái`, `chân phải` | Cả cái chân trái hoặc phải kèm bàn chân của nó. |
+| `đùi`, `bắp đùi` | Đùi. |
+| `bắp chân`, `cẳng chân` | Cẳng chân, phần phía dưới đầu gối. |
+| `bàn chân` | Bàn chân. |
+| `ngực`, `bụng` | Thân người. |
+| `áo`, `áo sơ mi`, `áo thun`, `áo khoác`, `áo len` | Trang phục thân trên. |
+| `váy`, `đầm`, `váy cưới`, `áo dài` | Một chiếc đầm, mà model gán là trang phục thân trên. |
+| `quần`, `quần jean`, `quần short` | Trang phục thân dưới. |
+| `chân váy` | Chân váy: trang phục thân dưới. |
+| `giày`, `giày cao gót`, `dép` | Giày. |
+| `tất`, `vớ` | Tất. |
+| `kính`, `kính mát` | Kính. |
+| `quần áo`, `trang phục` | Quần áo nói chung. |
+| `người`, `cơ thể` | Cả người. |
+| `nền` | Từ khóa `background`: mọi thứ nằm ngoài người. |
+
+Muốn chỉ lấy một bên, hãy viết `left hand`, `right foot`… bằng tiếng Anh, hoặc `tay trái`, `tay phải`, `chân trái` và `chân phải` bằng tiếng Việt. Màu sắc hay kích cỡ đứng sau một từ tiếng Việt (`áo đỏ`) không được hiểu ở đây: Body Segment gọi tên bộ phận, không tìm theo màu.
+
+**Các từ mang nghĩa gì**
+
+Sapiens2 có ít lớp hơn số từ người ta hay dùng, nên một số từ dùng chung một lớp. Báo cáo thêm ghi chú khi bạn dùng một trong những từ này. Các ghi chú về lớp face, về đầm và về chân váy chỉ xuất hiện khi bức ảnh có phần nào của vùng đó.
+
+- **Trái và phải** là bên của chính người trong ảnh: `left hand` nằm ở bên phải bức ảnh khi người đó nhìn thẳng vào ống kính.
+- **`face` là một lớp duy nhất**, gồm cả cổ, mắt, lông mày và râu, và `skin` bao gồm nó. Vì vậy `skin - face` cũng bỏ luôn cổ, `face - neck` rỗng, và mask da không có lỗ ở chỗ mắt. Muốn mask khuôn mặt không có mắt và lông mày, hãy dùng Portrait Segment, hoặc lấy `eyes` và `eyebrows` của nó trừ đi bằng Segs Compose (xem bên dưới).
+- **Đầm được tính là áo.** Sapiens2 chỉ có một lớp cho mọi thứ mặc ở phần thân trên: `dress - top` rỗng, và phần chân váy của một chiếc đầm được tính là `top`, không phải `bottom`. `skirt` chỉ tìm chiếc chân váy rời.
+- **`skin` không có môi, răng và lưỡi.** Chúng là các lớp riêng, nên `skin - lips` không đổi gì, còn `skin + lips` là da kèm cả môi.
+- **`clothes` gồm cả phụ kiện** (túi, mũ), giày và tất.
+- **`tay` và `chân` là cả chi**, gồm cả bàn tay và bàn chân. `arm` và `leg` là chi không kèm chúng, nên `tay - cánh tay` chỉ còn lại bàn tay.
+
+**Những từ bị từ chối**
+
+Nếu một từ không ứng với vùng nào mà Body Segment có, node dừng lại và báo lỗi, trước khi nạp model; lỗi cho biết nên viết gì thay thế:
+
+| Bạn viết | Nên viết |
+|---|---|
+| `eyes`, `eyebrows`, `nose`, `ears` (cũng như `mắt`, `mũi`, `tai`) | Chúng là một phần của `face` ở đây. Portrait Segment mask từng bộ phận một. |
+| `beard`, `mustache` (cũng như `râu`, `ria mép`) | Râu là một phần của `face` ở đây, và không parser nào của NH-Nodes có lớp râu. SAM3 Segment có thể thử `beard`. |
+| `hat`, `bag`, `scarf`, `belt`, `jewelry`, `necklace`, `watch`, `gloves`, `tie` (cũng như `mũ`, `túi`, `khăn`) | Sapiens2 chỉ có một lớp cho phụ kiện: `accessories`. Muốn lấy riêng một món, hãy dùng Garment Segment hoặc SAM3 Segment. |
+| `shoulders` | Chúng là một phần của `torso` và `upper arms`. |
+| `fingers` | Chúng là một phần của `hands`. |
+| `skin and hair`, `skin or hair`, `not skin` | `and`, `or` và `not` không phải toán tử ở đây: hãy viết `skin + hair` (hoặc `skin, hair`), `skin - hair` và `~skin`. |
+| Ký tự đại diện (`*`, `?`) | Không được phép: hãy viết tên vùng. |
+| Một từ tiếng Việt không có trong danh sách | Hãy viết bằng tiếng Anh, hoặc dùng `da`, `tóc`, `mặt`, `môi`, `răng`, `tay`, `chân`, `áo`, `quần`, `giày`. |
+| Ô trống | Hãy viết ít nhất một vùng, ví dụ `skin`. |
+
+**Cách hoạt động**
+
+- **Người, xem cận cảnh.** Node phân tích cả bức ảnh trước, tìm người (trong lượt phân tích đó và bằng bộ nhận diện khuôn mặt), rồi phân tích các vùng cắt có hình dạng 3:4 của model quanh từng người hoặc từng nhóm ở 1024 × 768, nên mỗi người có khoảng 1024 px dành cho model dù ảnh lớn cỡ nào. Như ở Garment Segment, vùng cắt chỉ tinh chỉnh kết quả đầu, và với ảnh dài hơn 4096 px, việc này được làm trên một bản sao 4096 px rồi phóng lên ở cuối. Xem [Cách các node SegFormer nhìn một bức ảnh](#cách-các-node-segformer-nhìn-một-bức-ảnh).
+- **Công thức.** Mỗi từ chọn một số lớp của model, và công thức kết hợp chúng như trong [Viết công thức](#viết-công-thức). `background` là mọi thứ nằm ngoài người, ở đây giống `~person`; `all` là mọi bộ phận tìm được, tức là người; `image` là cả bức ảnh và `none` là không có gì. Sau đó `fill_holes`, `mask_expand` và `mask_blur` tinh chỉnh kết quả, theo thứ tự này.
+- **Ảnh không có ai.** Khi không tìm thấy khuôn mặt nào, node kiểm tra xem có thật là có người hay không, bằng hai phép thử. Thứ nhất, lượt nhìn đầu của Sapiens2 phải chắc chắn về ít nhất một nửa những gì nó gán là người (một điểm ảnh được tính là chắc chắn từ độ tin cậy 0.9). Thứ hai, một lượt nhìn vào bức ảnh lật gương phải tìm thấy cùng những người đó: phần người của hai lượt nhìn phải chồng lên nhau ít nhất 0.6 (IoU). Người thật vẫn hiện ra trong ảnh lật gương; thứ model tự bịa ra trên một bức tường thì không. Nếu một phép thử không đạt, node coi như bức ảnh không có ai: `skin` rỗng, `background` là cả bức ảnh, và báo cáo cùng bản xem trước ghi "no person found (none Sapiens2 was sure of, and no face)", kèm số thứ tự các ảnh nếu là một batch. Phép thử thứ hai tốn thêm một lượt nhìn, và chỉ khi không tìm thấy khuôn mặt. Nếu không có các phép thử này, một mặt tiền tòa nhà hay một căn phòng có nhiều kệ sẽ hiện ra những "người" mờ nhạt trong tường và trên kệ, và những chỉnh sửa thường ngày trên ảnh mặt tiền (tăng chút độ phơi sáng, độ tương phản, độ bão hòa hay làm nét) có thể đẩy tỉ lệ ở phép thử đầu lên trên một nửa, đó là lý do phép thử thứ hai tồn tại. Người mà khuôn mặt được tìm thấy thì không bao giờ bị bỏ. Một món quần áo đứng một mình (ảnh sản phẩm bày phẳng, không có người mặc) bị tính là không có ai, nên hãy dùng Garment Segment cho trường hợp đó, và một hình người được cách điệu mạnh hoặc bị nhòe, không có khuôn mặt, cũng có thể bị bỏ.
+- **Các phép thử "không có ai" được đo thế nào.** Trên 49 ảnh không thấy mặt, 32 ảnh có người (chụp từ phía sau, thân người không có đầu, một ma-nơ-canh) được giữ và 17 ảnh không có ai (một mặt tiền, một quán cà phê, một con voi, ảnh sản phẩm bày phẳng, mặt nạ) bị làm rỗng. Người thật chồng lên ảnh lật gương của họ 0.83 đến 0.99, còn thứ model tự bịa ra trên một mặt tiền chỉ 0.02 đến 0.03. Trên 21 bản chỉnh sửa thường ngày của mỗi ảnh mặt tiền, quán cà phê và con voi, bản đồ luôn rỗng. Trên 21 bản chỉnh sửa của mỗi ảnh trong bốn ảnh có người nhưng không thấy mặt (một ma-nơ-canh, một ảnh sản phẩm không thấy đầu, một vũ công, một sản phẩm đang mặc trên người), bản đồ luôn được giữ.
+- **Báo cáo.** Mỗi từ một dòng, rồi các ghi chú nêu ở trên. Với một batch, tỉ lệ tính cho tất cả các ảnh gộp lại, còn bản xem trước dưới mỗi ảnh cho thấy tỉ lệ của riêng ảnh đó.
+- **Xem kết quả.** Khi `show_preview` bật, node tự vẽ bản xem trước: không cần node nào khác. Nó vẽ viền các bộ phận mà mask giữ lại: với `skin - hands`, nó vẽ viền các phần da chứ không vẽ bàn tay. Muốn xem các bộ phận ở kích thước đầy đủ của bức ảnh, hãy nối `segs` và đúng bức ảnh đó vào [Segs Preview](#segs-preview-nh).
+- **Tự chạy.** Body Segment là một node đầu ra (output node; chấm trên thẻ của nó màu cam): ComfyUI chạy nó kể cả khi không có gì nối vào các đầu ra của nó. Vì vậy một node bạn không còn cần vẫn tiếp tục chạy Sapiens2 mỗi khi đầu vào của nó thay đổi, và tắt `show_preview` không làm nó ngừng chạy. Hãy vô hiệu hóa nó (Mute) hoặc xóa nó.
+- **Kết hợp với các node khác.** `segs` chứa cùng các bộ phận dù bạn gõ gì trong `regions`. Hãy nối nó vào [Segs Compose](#segs-compose-nh), cùng với `segs` của SAM3 Segment, Garment Segment hay Portrait Segment chạy trên cùng bức ảnh: ví dụ Body Segment vào `segs`, Portrait Segment vào `segs_2` và `face - eyes - eyebrows` làm biểu thức.
+
+**Cỡ model, bộ nhớ và tốc độ**
+
+| `model_size` | Dung lượng tải | Ghi chú |
+|---|---|---|
+| `0.4b` (mặc định) | 1.6 GB | Nhanh. Khoảng 1.5 đến 2 GB VRAM ở mức cao nhất. |
+| `0.8b` | 3.3 GB | Model lớn hơn: chậm hơn và cần nhiều VRAM hơn. |
+| `1b` | 5.9 GB | Lớn nhất: còn chậm hơn nữa và cần nhiều VRAM hơn. |
+
+Trọng số được tải một lần từ Hugging Face (`facebook/sapiens2-seg-<size>`, cố định vào một phiên bản xác định), ngay lần đầu bạn chọn một cỡ, và lưu vào `ComfyUI/models/NH-Nodes/sapiens2-seg-<size>/`, tức thư mục model `nh_nodes`. Chúng ở lại bộ nhớ hệ thống, mỗi lần một cỡ, và chỉ chuyển sang GPU trong lúc node chạy. Node cần PyTorch 2.4 trở lên và dừng lại với một thông báo khi bản của bạn cũ hơn.
+
+**Đo trên một máy** (NVIDIA RTX 5090) với `0.4b`: khoảng 1 giây trên ảnh 1 đến 2K px và 4 đến 7 giây trên ảnh 8K. Chỉ `0.4b` được đo. Trên CPU node vẫn chạy được nhưng chậm: khoảng 8 giây cho mỗi vùng cắt với 8 luồng. Máy khác sẽ cho số khác.
+
+<p align="center"><img src="../assets/examples/body-segment.jpg" alt="Mask của Body Segment trên một ảnh mẫu: da, tóc và môi, quần áo, và phần nền" width="720"><br><em>Body Segment trên một ảnh mẫu, đúng như node hiển thị. Hàng trên: "skin", báo cáo nằm bên dưới bức ảnh. Hàng dưới: "tóc, môi" (từ tiếng Việt), "clothes" và "background"; phần sáng là đầu ra mask của mỗi công thức.</em></p>
+
+**Các công thức để bắt đầu**
+
+| `regions` | Bạn nhận được |
+|---|---|
+| `skin` | Da của khuôn mặt và cổ, thân, cánh tay, bàn tay, chân và bàn chân. |
+| `hair, face` | Tóc, và khuôn mặt cùng cổ. |
+| `tóc, môi` | Tóc và môi (từ tiếng Việt). |
+| `clothes - shoes` | Thứ người trong ảnh đang mặc, không gồm giày. |
+| `skin - hands` | Da nhưng bỏ bàn tay. |
+| `skin + lips` | Da kèm cả môi. |
+| `background` | Mọi thứ nằm ngoài người. |
+
+**Ví dụ**
+
+```text
+Load Image → Body Segment (NH, regions: skin) → mask → Mask Morphology (NH, thu hẹp) → retouch
+```
+
+Hãy thu hẹp mask vài pixel bằng [Mask Morphology (NH)](./mask.md#mask-morphology-nh) để phần chỉnh sửa nằm gọn trong da, tránh xa mép tóc và quần áo.
+
+> **Lưu ý:** Ảnh scan cũ, đã phai màu hoặc ngả nâu (sepia) là một giới hạn đã biết. Sapiens2 có thể coi cả phông nền là quần áo: một tấm ảnh nhóm đã scan cho ra 96% diện tích là "người". Hãy dùng Garment Segment (`fashn`) hoặc SAM3 Segment với `person` cho những ảnh như vậy.
+
+> **Giấy phép:** Sapiens2 theo Sapiens2 License của Meta. Giấy phép này miễn phí bản quyền và không có điều khoản cấm thương mại, nhưng cấm theo dõi (surveillance), xử lý sinh trắc học, nhận dạng hay nhận dạng lại người, deepfake, mạo danh và nội dung gây hiểu lầm, suy đoán dữ liệu nhạy cảm về con người khi không có quyền và sự đồng ý mà luật pháp yêu cầu, cùng một số mục đích khác. Nó yêu cầu bạn tuân thủ luật về quyền riêng tư, dữ liệu sinh trắc học và kiểm soát thương mại, và cho phép Meta kiểm tra việc bạn dùng, chấm dứt giấy phép và thay đổi điều khoản. Mã nguồn của NH-Nodes thuộc giấy phép MIT, có kèm mã model của Meta cùng văn bản giấy phép nhưng không có trọng số, vốn được tải từ các kho Hugging Face của Meta. Hãy đọc [THIRD_PARTY_NOTICES.md](../../THIRD_PARTY_NOTICES.md) trước khi dùng node.
 
 ---
 
@@ -260,21 +448,24 @@ SAM 3 nhìn một bức ảnh cỡ 1000 px. Trên ảnh 6000 px, đó chỉ bằ
 
 ## Các instance: kiểu NH_SEGS
 
-`NH_SEGS` là dữ liệu mà SAM3 Segment chuyển cho các node Segs. Với mỗi ảnh trong batch (lô ảnh), nó chứa một danh sách instance. Mỗi instance giữ **nhãn** (các từ tiếng Anh mà SAM 3 được yêu cầu tìm: `áo đỏ` được lưu thành `red top`), **điểm tin cậy**, một **khung** ôm sát và mask **chỉ trong phạm vi khung đó**. Mask kích thước đầy đủ chỉ được dựng khi một node xuất `MASK`, nên hàng chục instance trên ảnh 8K vẫn nhẹ.
+`NH_SEGS` là dữ liệu mà SAM3 Segment, Garment Segment, Portrait Segment và Body Segment chuyển cho các node Segs. Với mỗi ảnh trong batch (lô ảnh), nó chứa một danh sách instance. Mỗi instance giữ **nhãn** (ở SAM3 Segment là các từ tiếng Anh mà SAM 3 được yêu cầu tìm: `áo đỏ` được lưu thành `red top`; ở ba node kia là tên bộ phận), **điểm tin cậy** (ở ba node kia luôn là 1.0), một **khung** ôm sát và mask **chỉ trong phạm vi khung đó**. Mask kích thước đầy đủ chỉ được dựng khi một node xuất `MASK`, nên hàng chục instance trên ảnh 8K vẫn nhẹ.
 
-- Các instance xếp theo thứ tự các nhãn xuất hiện trong concepts của bạn, và theo điểm trong cùng một nhãn.
+- **Đối tượng và bộ phận.** SAM3 Segment trả về mỗi vật nó tìm thấy một instance: ba người là ba instance. Garment Segment, Portrait Segment và Body Segment trả về mỗi bộ phận một instance cho cả bức ảnh: có ba người thì `hair` là tóc của cả ba người gộp lại, trong một instance. Muốn chọn riêng một người trong nhiều người, hãy dùng SAM3 Segment.
+- **Nhãn của ba node phân tích người** được liệt kê trong bảng đầu ra của từng node: [Garment Segment](#garment-segment-nh), [Portrait Segment](#portrait-segment-nh) và [Body Segment](#body-segment-nh). Chúng không dùng hết cùng một từ: `mouth` là bên trong miệng ở Portrait Segment, còn Body Segment có `lips`, `teeth` và `tongue`. Các node Segs cũng đọc những từ riêng của node đã tạo ra segs (`skin` trên segs của Body Segment): xem [Segs Compose](#segs-compose-nh). Khi một nhãn không tìm thấy gì, hãy xem các nhãn trong bản xem trước hoặc trong [Segs To Masks](#segs-to-masks-nh).
+- Các instance của SAM3 Segment xếp theo thứ tự các nhãn xuất hiện trong concepts của bạn, và theo điểm trong cùng một nhãn. Các instance của ba node kia xếp theo thứ tự danh sách bộ phận của chúng.
 - Các node Segs xử lý từng ảnh trong batch riêng biệt.
+- Các instance của một ảnh còn giữ một bản in nhỏ màu xám của bức ảnh mà chúng được tìm ra từ đó. [Segs Compose](#segs-compose-nh) dùng nó để từ chối các instance của một bức ảnh khác.
 - Các node gốc của ComfyUI không đọc được `NH_SEGS`. Để lấy mask ra, hãy dùng các đầu ra `mask`, [Segs Compose](#segs-compose-nh) hoặc [Segs To Masks](#segs-to-masks-nh). Để dùng detailer của Impact Pack, hãy chuyển đổi bằng [Segs To Impact SEGS](#segs-to-impact-segs-nh).
 
 ---
 
 ## Viết công thức
 
-`concepts` của SAM3 Segment và `expression` của Segs Compose đọc cùng một ngôn ngữ nhỏ. Bạn gọi tên những thứ mình muốn, ghép chúng bằng các toán tử, và kết quả là một mask cho mỗi ảnh. Trong SAM3 Segment, các từ bạn viết cũng là thứ SAM 3 đi tìm. Trong Segs Compose, chúng chọn các instance đã được tìm sẵn.
+`concepts` của SAM3 Segment, `expression` của Segs Compose và `regions` của Body Segment đọc cùng một ngôn ngữ nhỏ. Bạn gọi tên những thứ mình muốn, ghép chúng bằng các toán tử, và kết quả là một mask cho mỗi ảnh. Trong SAM3 Segment, các từ bạn viết cũng là thứ SAM 3 đi tìm. Trong Segs Compose, chúng chọn các instance đã được tìm sẵn. Trong Body Segment, chúng chọn các bộ phận cơ thể mà model của nó gán nhãn.
 
 | Viết | Nghĩa |
 |---|---|
-| `person` | Một nhãn: các instance mang tên đó. Không phân biệt chữ hoa/thường. |
+| `person` | Một nhãn: các instance mang tên đó. Không phân biệt chữ hoa/thường, và khi so khớp instance thì số ít và số nhiều là một (`arm` tìm `arms`; `glasses` và `glass` vẫn là hai nhãn). |
 | `red car`, `women's dress` | Nhiều từ liền nhau là một nhãn, không cần ngoặc kép. Dấu gạch nối nằm giữa hai chữ cái hoặc chữ số thuộc về nhãn (`t-shirt`, `x-ray`), dấu nháy đơn nằm giữa một từ cũng vậy. |
 | `person, hair` | Một danh sách: hợp của các mục trong đó. Xuống dòng có tác dụng như dấu phẩy. Danh sách được đọc sau mọi toán tử khác, nên `person - hair, dress` là `person - hair` cộng với `dress`. Mục trống bị bỏ qua. |
 | `a + b`, `a \| b` | Hợp: mọi thứ thuộc a hoặc thuộc b. |
@@ -316,6 +507,8 @@ SAM 3 nhìn một bức ảnh cỡ 1000 px. Trên ảnh 6000 px, đó chỉ bằ
 | Ký tự đại diện `*` và `?` | Bị từ chối: SAM 3 cần từ thông thường. | Khớp với nhãn (`*shirt`). |
 | Nhãn làm gì | Là thứ SAM 3 được yêu cầu tìm. | Chọn các instance có nhãn đó. Nhãn mà không instance nào có cho một phần rỗng. |
 | Ô trống | Node dừng lại với thông báo yêu cầu viết ít nhất một concept. Ô chỉ có ghi chú, hoặc chỉ có `all`, `image` hay `none`, cũng được tính là trống. | Node dừng lại với thông báo dùng `all` để lấy mọi instance. |
+
+**`regions` của Body Segment** theo các quy tắc của SAM3 Segment, với ba điểm khác. `or`, `and` và `not` không phải toán tử ở đó (chúng bị từ chối kèm lời khuyên: hãy viết `+`, `-` hoặc `~`). Mỗi từ phải gọi tên một vùng cơ thể mà model của nó có, như `skin`, `hair` hay `clothes`: từ khác, và ký tự đại diện, bị từ chối trước khi nạp model. Và các từ tiếng Việt đi qua cùng danh sách đó, nên ở đó `tay` và `chân` nghĩa là cả chi. Xem [Body Segment](#body-segment-nh).
 
 ---
 
@@ -366,7 +559,7 @@ Các đầu vào COMBO không nêu mặc định sẽ bắt đầu ở lựa ch�
 - **Nhãn.** Các từ tiếng Anh mà SAM 3 được yêu cầu tìm là nhãn của các instance: `áo đỏ` được tìm là `red top`, và các instance của nó mang nhãn `red top`. Các node Segs bỏ qua chữ hoa/thường khi so khớp nhãn, nên cách viết hoa không thành vấn đề.
 - **Mask.** `mask` là kết quả của công thức. Với `person - bag`, SAM 3 tìm `person` và `bag`, `mask` là người trừ đi các túi, và `segs` vẫn chứa cả hai loại instance.
 - **`background`.** Là mọi thứ nằm ngoài mọi instance đã tìm được, nên node cần biết chủ thể nằm ở đâu. Khi công thức dùng nó mà không nêu `person`, SAM 3 cũng tìm `person`; các instance đó thuộc `segs` và `count` và có viền trong bản xem trước. Muốn loại cả những thứ khác ra khỏi phần nền, hãy nêu tên chúng: `~(person + wine glass + chair)`. Danh sách là phép hợp, nên `person, background` là cả bức ảnh.
-- **Thứ tự và bản trùng.** Các instance xếp theo thứ tự các nhãn xuất hiện trong công thức (`person` do `background` thêm vào đứng cuối), điểm cao nhất trước trong mỗi nhãn. Hai instance của cùng một nhãn mà mask gần như trùng hoàn toàn (từ 90% trở lên) được tính là một, giữ lại cái điểm cao hơn. Sau đó `max_per_concept` giữ những cái tốt nhất trong phần còn lại. Các instance có điểm đúng bằng nhau giữ thứ tự mà SAM 3 đưa ra.
+- **Thứ tự và bản trùng.** Các instance xếp theo thứ tự các nhãn xuất hiện trong công thức (`person` do `background` thêm vào đứng cuối), điểm cao nhất trước trong mỗi nhãn. Hai instance của cùng một nhãn mà mask gần như trùng hoàn toàn (từ 90% trở lên) được tính là một, giữ lại cái điểm cao hơn. Sau đó `max_per_concept` giữ những cái tốt nhất trong phần còn lại. Các instance có điểm đúng bằng nhau giữ thứ tự mà SAM 3 đưa ra. Một concept viết cả số ít lẫn số nhiều (`arm, arms`) chỉ được tìm một lần, và báo cáo cũng chỉ liệt kê nó một lần; `glass` và `glasses` vẫn là hai concept.
 - **Xem kết quả.** Khi `show_preview` bật, node tự vẽ bản xem trước: không cần node nào khác. Muốn xem ảnh ở kích thước đầy đủ (bản xem trước tối đa 1536 px), hoặc xem Segs Select đang làm việc với gì, hãy nối `segs` và đúng bức ảnh đó vào [Segs Preview](#segs-preview-nh).
 - **Tự chạy.** SAM3 Segment là một node đầu ra (output node; chấm trên thẻ của nó màu cam): ComfyUI chạy nó kể cả khi không có gì nối vào các đầu ra của nó. Vì vậy một node bạn không còn cần vẫn tiếp tục chạy SAM 3 mỗi khi đầu vào của nó thay đổi, và tắt `show_preview` không làm nó ngừng chạy. Hãy vô hiệu hóa nó (Mute) hoặc xóa nó. Chừng nào đầu vào giữ nguyên, ComfyUI dùng lại kết quả lần trước.
 - **Không tìm thấy gì** không phải lỗi: bạn nhận được không instance nào và `count` bằng 0. Mask rỗng với danh sách từ đơn thuần, và là cả bức ảnh với một công thức như `background` hay `~person`, vì không có gì được tìm thấy để loại ra.
@@ -393,8 +586,8 @@ Giữ lại những instance bạn muốn, theo nhãn, điểm, kích thước v
 
 | Đầu vào | Kiểu | Mặc định | Mô tả |
 |---|---|---|---|
-| `segs` | NH_SEGS | — | Các instance, từ SAM3 Segment hoặc một node Segs khác. |
-| `labels` | STRING | rỗng | Các nhãn cần giữ, cách nhau bằng dấu phẩy. `*` thay cho một chuỗi ký tự bất kỳ và `?` thay cho một ký tự (`*shirt`). Không phân biệt chữ hoa/thường, và `_` được coi là dấu cách (`red_car` tìm `red car`). Nhãn có dấu cách không cần ngoặc kép ở đây: `wine glass, red car`. Các từ tiếng Việt thông dụng được dịch (`tóc` tìm `hair`); các từ công thức `nền` và `tất cả` không phải nhãn ở đây. Để trống thì giữ mọi nhãn. |
+| `segs` | NH_SEGS | — | Các instance, từ SAM3 Segment, Garment Segment, Portrait Segment, Body Segment hoặc một node Segs khác. |
+| `labels` | STRING | rỗng | Các nhãn cần giữ, cách nhau bằng dấu phẩy. `*` thay cho một chuỗi ký tự bất kỳ và `?` thay cho một ký tự (`*shirt`). Không phân biệt chữ hoa/thường, số ít và số nhiều là một (`arm` tìm `arms`), và `_` được coi là dấu cách (`red_car` tìm `red car`). Nhãn có dấu cách không cần ngoặc kép ở đây: `wine glass, red car`. Các từ tiếng Việt thông dụng được dịch (`tóc` tìm `hair`); các từ công thức `nền` và `tất cả` không phải nhãn ở đây. Các từ riêng của node đã tạo ra segs cũng dùng được: `skin` trên segs của Body Segment giữ các bộ phận face, torso, arms, hands, legs và feet của nó (xem [Segs Compose](#segs-compose-nh)). Để trống thì giữ mọi nhãn. |
 | `min_score` | FLOAT | `0.0` | Khoảng 0 đến 1. Loại các instance có điểm thấp hơn. |
 | `min_area` | FLOAT | `0.0` | Khoảng 0 đến 1. Loại các instance nhỏ hơn tỉ lệ này của bức ảnh (`0.01` là 1%). |
 | `max_area` | FLOAT | `1.0` | Khoảng 0 đến 1. Loại các instance lớn hơn tỉ lệ này của bức ảnh. |
@@ -438,14 +631,17 @@ Giữ lại những instance bạn muốn, theo nhãn, điểm, kích thước v
 
 <p align="center"><img src="../assets/nodes/NH_SegsCompose.svg" alt="Segs Compose (NH) node" width="360"></p>
 
-Tạo một mask từ nhãn của các instance, bằng chính công thức nhỏ của `concepts` trong SAM3 Segment: hợp, trừ, giao và "mọi thứ trừ...".
+Tạo một mask từ nhãn của các instance, bằng chính công thức nhỏ của `concepts` trong SAM3 Segment: hợp, trừ, giao và "mọi thứ trừ...". Các instance có thể đến từ tối đa ba node cùng lúc.
 
-**Dùng khi** bạn đã có sẵn các instance và muốn có "phần nền", "người nhưng không có tóc", "bức tường nhưng không có cửa sổ", hoặc một tổ hợp khác của những gì SAM3 Segment tìm được: sau [Segs Select](#segs-select-nh), hoặc để tạo nhiều mask từ một lần chạy SAM 3. Với một mask duy nhất, bạn cũng có thể viết đúng công thức đó thẳng vào `concepts` của SAM3 Segment.
+**Dùng khi** bạn đã có sẵn các instance và muốn có "phần nền", "người nhưng không có tóc", "bức tường nhưng không có cửa sổ", hoặc một tổ hợp khác của những gì SAM3 Segment tìm được: sau [Segs Select](#segs-select-nh), hoặc để tạo nhiều mask từ một lần chạy SAM 3. Cũng dùng nó để trộn những gì nhiều node tìm được trên cùng một bức ảnh: cái túi từ SAM 3, chiếc đầm từ Garment Segment, đôi môi từ Body Segment. Với một mask duy nhất chỉ từ SAM 3, bạn cũng có thể viết đúng công thức đó thẳng vào `concepts` của SAM3 Segment.
 
 | Đầu vào | Kiểu | Mặc định | Mô tả |
 |---|---|---|---|
-| `segs` | NH_SEGS | — | Các instance, từ SAM3 Segment hoặc Segs Select. |
+| `segs` | NH_SEGS | — | Các instance, từ SAM3 Segment, Garment Segment, Portrait Segment, Body Segment hoặc Segs Select. |
 | `expression` | STRING | `all` | Công thức. Xem [Viết công thức](#viết-công-thức). Ô này có nhiều dòng: xuống dòng có tác dụng liệt kê, như dấu phẩy, và nối liền khi nằm cạnh một toán tử. |
+| `segs_2` | NH_SEGS | — | Tùy chọn (optional). Thêm các instance của cùng bức ảnh, từ một trong các node trên. Chúng được trộn vào công thức cùng với `segs`. |
+| `segs_3` | NH_SEGS | — | Tùy chọn (optional). Và thêm nữa. |
+| `check_same_photo` | BOOLEAN | `true` | Tùy chọn (optional). Từ chối các segs trông như từ những bức ảnh khác nhau có cùng kích thước. Hãy tắt nó khi cần trộn segs của các bản chỉnh sửa từ một bức ảnh mà khác nhau nhiều, như đổi phông nền hay đổi ánh sáng. Xem "Chỉ cùng một bức ảnh" bên dưới. |
 
 | Đầu ra | Kiểu | Mô tả |
 |---|---|---|
@@ -454,7 +650,7 @@ Tạo một mask từ nhãn của các instance, bằng chính công thức nh�
 **Ở đây có gì khác.** Ngôn ngữ chính là ngôn ngữ trong [Viết công thức](#viết-công-thức), với những khác biệt sau so với SAM3 Segment:
 
 - `or`, `and` và `not` là toán tử: `a or b` là `a | b`, `a and b` là `a & b`, `not a` là `~a`.
-- Một nhãn chọn các instance mang nhãn đó. Không phân biệt chữ hoa/thường, `_` được coi là dấu cách (`red_car` tìm `red car`), và `*`, `?` là ký tự đại diện (wildcard) (`*shirt`).
+- Một nhãn chọn các instance mang nhãn đó. Không phân biệt chữ hoa/thường, số ít và số nhiều là một (`arm` tìm `arms`, `foot` tìm `feet`, `shoe` tìm `shoes`, `scarf` tìm `scarves`; `glasses` và `glass` thì được giữ riêng), `_` được coi là dấu cách (`red_car` tìm `red car`), và `*`, `?` là ký tự đại diện (wildcard), được so khớp đúng như đã viết (`*shirt`).
 - Đặt nhãn có chứa ký tự toán tử trong ngoặc kép, `"` hoặc `'` (`"salt & pepper"`), và dùng ngoặc kép đôi khi nhãn còn có dấu nháy đơn. Nhiều từ liền nhau không cần ngoặc kép.
 - Nhãn tiếng Việt được dịch (`tóc` tìm `hair`), cả khi nằm trong ngoặc kép. `nền` là từ khóa `background`.
 
@@ -466,12 +662,31 @@ Tạo một mask từ nhãn của các instance, bằng chính công thức nh�
 | `(wall \| ceiling) - window` | Tường và trần, khoét bỏ các ô cửa sổ. |
 | `wine glass, person` | Các ly rượu và người cùng lúc (một danh sách, giống `wine glass \| person`). |
 | `all - person` | Mọi thứ đã tìm được trừ người. Khác với `~person`, nó không gồm phần nền mà không instance nào phủ tới. |
+| `dress - bag - lips` | Với ba node trên cùng một bức ảnh: SAM3 Segment (`bag`) vào `segs`, Garment Segment vào `segs_2` và Body Segment vào `segs_3`. Chiếc đầm nhưng bỏ mọi cái túi và đôi môi. |
+| `face - eyes - eyebrows` | Body Segment vào `segs` và Portrait Segment vào `segs_2`. `face` lấy khuôn mặt của cả hai node (xem bảng kế tiếp), còn mắt và lông mày của Portrait Segment bị bỏ ra. |
+| `skin - bag` | SAM3 Segment (`bag`) vào `segs` và Body Segment vào `segs_2`. Da nhưng bỏ cái túi: `skin` là một từ riêng của Body Segment (xem bảng kế tiếp). |
+| `skin - hands` | Chỉ cần segs của Body Segment, với cùng các từ đó. Da nhưng bỏ bàn tay. |
+
+**Từ riêng của một node.** Một nhãn chọn các instance mang nhãn đó. Mỗi node được đọc riêng: ở node nào không có instance mang từ đó làm nhãn, Segs Compose đọc từ đó như một từ riêng của node ấy và lấy các bộ phận mà từ đó đại diện. Instance của một node mang từ đó không che mất từ của node khác: khi segs của Portrait Segment và của Body Segment cùng có mặt, `skin` là instance skin của Portrait Segment cộng với các bộ phận da của Body Segment. [Segs Select](#segs-select-nh) đọc cùng những từ này trong `labels`. Chỉ các từ nhóm mới đại diện cho nhiều bộ phận:
+
+| Với segs của | Từ nhóm | Chúng lấy gì |
+|---|---|---|
+| Body Segment | `skin` (`body skin`), `head`, `mouth`, `clothes` (`clothing`, `outfit`), `person` (`body`), các từ tiếng Việt tương ứng (`da`, `đầu`, `miệng`, `quần áo`, `người`), và các chi nguyên vẹn `tay`, `đôi tay`, `hai tay`, `chân`, `đôi chân`, `hai chân` | `skin`: các bộ phận face, torso, arms, hands, legs và feet. `head`: face và hair. `mouth`: lips, teeth và tongue. `clothes`: top, bottom, shoes, socks và accessories. `person`: mọi bộ phận. `tay`, `đôi tay`, `hai tay`: arms và hands. `chân`, `đôi chân`, `hai chân`: legs và feet. |
+| Garment Segment | Các nhóm của `part`: `upper_garment`, `lower_garment`, `footwear`, `headwear`, `all_garments` | Với `fashn`: `upper_garment` là top, dress và scarf, `lower_garment` là skirt, pants và belt, `footwear` là feet, `headwear` là hat, `all_garments` là tất cả những thứ đó. Với `fashionpedia`: các nhóm riêng của nó (`footwear` là shoe và sock, `headwear` là hat và headband…). |
+| Portrait Segment | `face`, `face skin`, `mouth interior` | `face`: skin, nose, glasses, eyes, eyebrows, mouth và lips. `face skin`: bộ phận skin. `mouth interior`: bộ phận mouth, tức bên trong miệng. |
+
+- Một từ trùng tên với một bộ phận của chính node đó thì không bao giờ đại diện cho các bộ phận khác: `belt` của Fashionpedia chỉ là chiếc thắt lưng.
+- Các từ gần nghĩa trong `regions` của Body Segment (`dress`, `pants`, `skirt`, `jeans`, `shirt`, `neck`…) không được đọc ở đây: chỉ với segs của Body Segment, `dress` hay `váy` và `pants` hay `quần` không tìm thấy gì. Hãy viết tên bộ phận (`top`, `bottom`), hoặc trộn thêm segs của Garment Segment, nơi dress, skirt và pants được gắn nhãn thật.
+- Một từ chỉ phủ một phần của một bộ phận (`left hand`, `upper arm`, `thigh`) thì không tìm thấy gì ở đây, các dạng một bên `tay trái`, `tay phải`, `chân trái` và `chân phải` cũng vậy: segs của Body Segment không có instance riêng cho một bên. `regions` của Body Segment có những từ đó. `cánh tay` vẫn là chỉ cánh tay, không kèm bàn tay.
+- Segs Select đọc từ tiếng Việt `tay` và `chân` là `arm` và `leg`, tức cánh tay và cái chân không kèm bàn tay và bàn chân.
 
 **Cách hoạt động**
 
-- **Nhãn mà không instance nào có** cho một phần rỗng, và console báo điều đó (`no instance is labelled 'x'; those parts are empty`). Vì thế gõ sai `~persn` sẽ cho cả bức ảnh: hãy xem console khi mask trông lạ.
+- **Nhãn mà không instance nào có** cho một phần rỗng, và console báo điều đó kèm danh sách các nhãn mà segs đang có (`no instance is labelled 'x'; those parts are empty. The segs hold: hair, face, …`). Vì thế gõ sai `~persn` sẽ cho cả bức ảnh: hãy xem console khi mask trông lạ.
 - **Các từ liền nhau là một nhãn.** Khi không instance nào có nhãn đó nhưng mỗi từ lại là nhãn của một instance (`person hair`), node dừng với một lỗi gợi ý `person + hair`. Với dấu gạch nối cũng vậy: khi cả `person` và `hair` đều có, `person-hair` làm node dừng với lỗi cho thấy `person - hair`.
 - **Mỗi ảnh** trong batch có mask riêng, dựng từ chính các instance của nó.
+- **Trộn nhiều node.** `segs`, `segs_2` và `segs_3` được gộp lại trước khi công thức được đọc: mỗi ảnh nhận các instance của tất cả chúng, và một nhãn chọn các instance của mọi node có nhãn đó. Khi hai node dùng cùng một nhãn (`hair` ở Portrait Segment và ở Body Segment, `glasses` ở ba node), nhãn đó là hợp mask của chúng. Mỗi node cắt bức ảnh bằng model riêng của nó, nên mask từ các node khác nhau không khớp nhau đến từng cạnh.
+- **Chỉ cùng một bức ảnh.** Node dừng lại khi các segs đến từ các bức ảnh khác nhau: số ảnh khác nhau, hoặc kích thước khác nhau. Khi `check_same_photo` bật, node còn dừng lại nếu chúng trông như những bức ảnh khác nhau có cùng kích thước. Mỗi khung (frame) của segs giữ một bản in nhỏ màu xám của bức ảnh của nó, và các bản in phải khớp nhau. Ảnh đã chỉnh sửa từ cùng một bức (độ sáng, độ tương phản, màu sắc, làm mờ) vẫn được chấp nhận. Đây là chốt chặn cho việc nối nhầm dây chứ không phải bằng chứng: nó bắt được phần lớn các bức ảnh khác có cùng kích thước, một bản bị dịch hoặc phóng nhẹ thường vẫn lọt qua, và một phông nền mới sau cùng một người có thể bị từ chối. Với những bản chỉnh sửa như vậy, hãy tắt `check_same_photo`. Segs do phiên bản cũ tạo ra không có bản in và được trộn chỉ dựa vào kích thước.
 - **Công thức không đọc được** làm node dừng lại với thông báo nêu vị trí của chỗ sai, ví dụ `unexpected '(' at position 8` với `person (adult)`.
 
 <p align="center"><img src="../assets/examples/sam3-segment.jpg" alt="Các instance của SAM3 Segment do Segs Preview vẽ, và ba mask tạo từ chúng bằng Segs Compose và Segs Select trên một ảnh mẫu" width="720"><br><em>Các instance của "person, helmet, face" trên một ảnh mẫu, do Segs Preview vẽ, rồi ba mask tạo từ chúng bằng Segs Compose và Segs Select.</em></p>
@@ -488,7 +703,7 @@ Tạo một mask từ nhãn của các instance, bằng chính công thức nh�
 
 | Đầu vào | Kiểu | Mặc định | Mô tả |
 |---|---|---|---|
-| `segs` | NH_SEGS | — | Các instance, từ SAM3 Segment hoặc Segs Select. |
+| `segs` | NH_SEGS | — | Các instance, từ SAM3 Segment, Garment Segment, Portrait Segment, Body Segment hoặc Segs Select. |
 
 | Đầu ra | Kiểu | Mô tả |
 |---|---|---|
@@ -511,7 +726,7 @@ Chuyển các instance của một ảnh sang `SEGS` của Impact Pack, để c�
 
 | Đầu vào | Kiểu | Mặc định | Mô tả |
 |---|---|---|---|
-| `segs` | NH_SEGS | — | Các instance, từ SAM3 Segment hoặc Segs Select. |
+| `segs` | NH_SEGS | — | Các instance, từ SAM3 Segment, Garment Segment, Portrait Segment, Body Segment hoặc Segs Select. |
 | `crop_factor` | FLOAT | `3.0` | Khoảng 1 đến 10. Kích thước vùng mà detailer xử lý quanh mỗi instance, tính bằng bội số của khung của nó (cũng là `crop_factor` của Impact Pack). Vùng được dịch để nằm trong ảnh và luôn chứa trọn khung. |
 | `batch_index` | INT | `0` | Khoảng 0 đến 4095. SEGS của Impact Pack chỉ chứa một ảnh, nên đầu vào này chọn ảnh nào trong batch được chuyển. Số vượt quá ảnh cuối làm node dừng lại với một thông báo. |
 
@@ -604,7 +819,9 @@ Load Image → SAM3 Segment (concepts: building - (window + door))
 | Lỗi từ Segs Preview về kích thước hoặc số ảnh | Hãy nối đúng bức ảnh mà segs được tìm ra từ đó. |
 | Lỗi từ Segs Compose có nêu một vị trí | Kiểm tra công thức tại vị trí đó. Xem [Viết công thức](#viết-công-thức). |
 | Lỗi từ Segs Compose báo không instance nào có nhãn `person hair`, nhưng `person` và `hair` thì có | Các từ liền nhau là một nhãn. Hãy nối chúng lại: `person + hair`. |
-| Mask của Segs Compose rỗng, và console báo không instance nào có một nhãn | Kiểm tra chính tả của nhãn. Đặt dấu cách quanh dấu trừ: `person - hair`, không phải `person-hair`. |
+| Mask của Segs Compose rỗng, và console báo không instance nào có một nhãn | Kiểm tra chính tả của nhãn, và đọc các nhãn mà console liệt kê sau "The segs hold". Đặt dấu cách quanh dấu trừ: `person - hair`, không phải `person-hair`. Nhãn khác nhau giữa các node: xem bảng đầu ra của node đã tạo ra segs, và các từ riêng của nó ở mục "Từ riêng của một node" trong [Segs Compose](#segs-compose-nh). |
+| Lỗi từ Segs Compose báo các segs cần trộn đến từ các bức ảnh khác nhau (different pictures) | `segs`, `segs_2` và `segs_3` phải đến từ cùng một batch ảnh: cùng số ảnh, cùng kích thước. Hãy chạy mọi node trên cùng một Load Image. |
+| Lỗi từ Segs Compose báo các segs cần trộn trông như những bức ảnh khác nhau có cùng kích thước (look like different photos of the same size) | Một trong các node đã chạy trên một bức ảnh khác có cùng kích thước. Hãy chạy mọi node trên cùng một bức ảnh. Nếu chúng là các bản chỉnh sửa của một bức ảnh mà khác nhau nhiều (đổi phông nền, đổi ánh sáng), hãy tắt `check_same_photo`. Bản chỉ chỉnh độ sáng, độ tương phản, màu sắc hoặc làm mờ thì được chấp nhận. |
 | Lỗi từ Segs To Masks báo các mask instance kích thước đầy đủ cần nhiều bộ nhớ hơn mức còn trống | Có quá nhiều instance so với kích thước bức ảnh. Dùng Segs Select để chỉ giữ những instance bạn cần, hoặc Segs Compose để lấy một mask duy nhất. |
 | Console báo SAM 3 nhìn bức ảnh bị nén vào hình vuông và có thể bỏ sót vật nhỏ | Bức ảnh rộng hoặc cao hơn 4:1. Hãy chia nó thành các ô bằng Image Tile (NH) rồi chạy từng ô. |
 | ComfyUI hết VRAM sau khi node chạy | Để `keep_model_loaded` tắt, để trọng số rời GPU sau mỗi lần chạy. |

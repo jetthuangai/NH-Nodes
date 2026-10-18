@@ -1,5 +1,5 @@
-<svg xmlns="http://www.w3.org/2000/svg" width="360" height="149" viewBox="0 0 360 149" font-family="Inter, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif" role="img" aria-label="Segs Compose (NH) node">
-<rect x="0.5" y="0.5" width="359" height="148" rx="10" fill="#26282c" stroke="#45484f"/>
+<svg xmlns="http://www.w3.org/2000/svg" width="360" height="222" viewBox="0 0 360 222" font-family="Inter, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif" role="img" aria-label="Segs Compose (NH) node">
+<rect x="0.5" y="0.5" width="359" height="221" rx="10" fill="#26282c" stroke="#45484f"/>
 <path d="M0.5 10.5 a10 10 0 0 1 10 -10 h339 a10 10 0 0 1 10 10 v36 h-359 z" fill="#34373d"/>
 <circle cx="17" cy="17" r="4.5" fill="#8FD18F"/>
 <text x="28" y="22" font-size="14" font-weight="600" fill="#EEF0F3">Segs Compose (NH)</text>
@@ -8,7 +8,15 @@
 <text x="24" y="71.0" font-size="12" fill="#D7DADF">segs</text>
 <text x="336" y="71.0" font-size="12" fill="#D7DADF" text-anchor="end">mask</text>
 <circle cx="348" cy="67.0" r="5" fill="#81C784" stroke="#1b1c1f" stroke-width="1.5"/>
-<rect x="12" y="86" width="336" height="46" rx="7" fill="#1d1f22" stroke="#3a3d43"/>
-<text x="22" y="102" font-size="11.5" fill="#9AA0A8">expression</text>
-<text x="22" y="122" font-size="11.5" fill="#E6E8EB" font-family="'JetBrains Mono', Consolas, 'Courier New', monospace">all</text>
+<circle cx="12" cy="89.0" r="5" fill="#E0B272" stroke="#1b1c1f" stroke-width="1.5"/>
+<text x="24" y="93.0" font-size="12" fill="#D7DADF">segs_2 <tspan fill="#7d838c" font-style="italic">(optional)</tspan></text>
+<circle cx="12" cy="111.0" r="5" fill="#E0B272" stroke="#1b1c1f" stroke-width="1.5"/>
+<text x="24" y="115.0" font-size="12" fill="#D7DADF">segs_3 <tspan fill="#7d838c" font-style="italic">(optional)</tspan></text>
+<rect x="12" y="130" width="336" height="46" rx="7" fill="#1d1f22" stroke="#3a3d43"/>
+<text x="22" y="146" font-size="11.5" fill="#9AA0A8">expression</text>
+<text x="22" y="166" font-size="11.5" fill="#E6E8EB" font-family="'JetBrains Mono', Consolas, 'Courier New', monospace">all</text>
+<rect x="12" y="181" width="336" height="24" rx="7" fill="#1d1f22" stroke="#3a3d43"/>
+<text x="22" y="197" font-size="11.5" fill="#9AA0A8">check_same_photo <tspan fill="#6f747c" font-style="italic">opt</tspan></text>
+<rect x="308" y="187" width="30" height="13" rx="6.5" fill="#4C8BF5"/>
+<circle cx="331" cy="193.5" r="5" fill="#F5F6F7"/>
 </svg>

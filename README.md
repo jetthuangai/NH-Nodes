@@ -11,11 +11,12 @@
 
 # NH-Nodes for ComfyUI
 
-**75 production-focused nodes** for ComfyUI: load and save image sets with their metadata, tile and composite large
+**76 production-focused nodes** for ComfyUI: load and save image sets with their metadata, tile and composite large
 images, pick the right resolution for current models and put results back into the original frame, refine masks,
-segment garments and faces (also in half-body and group photos), get the mask of anything you name with SAM 3 from a
-short formula such as `person - bag` or `background`, build VTON masks, route workflows with lazy switches, generate
-prompts, and test many LoRAs or models from one node.
+segment garments and faces (also in half-body and group photos), mask the skin, hair, lips, teeth and clothes of people
+by typing their names, get the mask of anything you name with SAM 3 from a short formula such as `person - bag` or
+`background`, build VTON masks, route workflows with lazy switches, generate prompts, and test many LoRAs or models from
+one node.
 
 Every node is documented with a visual card, its inputs and outputs, and examples — in
 [English](docs/en/README.md) and [Vietnamese](docs/vi/README.md).
@@ -35,8 +36,9 @@ Every node is documented with a visual card, its inputs and outputs, and example
     <td><a href="docs/en/vision.md"><img src="docs/assets/examples/garment-segment.jpg" alt="Garment segmentation"></a><br>
       <b>Segmentation</b> — name what you want (people, windows, the sky) or write a formula such as
       <code>person - bag</code> or <code>background</code>, and SAM 3 returns the mask, with crisp edges on small and
-      medium objects even in 4K–8K photos, and shows it on the node; garment and face-part masks from SegFormer models
-      that parse faces and people close up; VTON garment masks with pose and parsing.</td>
+      medium objects even in 4K–8K photos, and shows it on the node; type <code>skin</code>, <code>hair, face</code> or
+      <code>clothes - shoes</code> and Body Segment masks those parts of every person; garment and face-part masks from
+      models that parse faces and people close up; VTON garment masks with pose and parsing.</td>
     <td><a href="docs/en/mask.md"><img src="docs/assets/examples/mask-morphology.jpg" alt="Mask morphology"></a><br>
       <b>Mask tools</b> — fast grow / shrink on the CPU or the GPU, hole filling, soft edges, bounding boxes and
       aspect-ratio matching.</td>
@@ -69,22 +71,24 @@ cd NH-Nodes
 python -m pip install -r requirements.txt
 ```
 
-Restart ComfyUI afterwards. Requirements: a recent ComfyUI (tested with 0.41) and Python 3.10+. **SAM3 Segment** has
-more requirements, listed below.
+Restart ComfyUI afterwards. Requirements: a recent ComfyUI (tested with 0.41) and Python 3.10+. **SAM3 Segment** and
+**Body Segment** have more requirements, listed below.
 
 ### Optional: VTON and segmentation models
 
 - **VTON Ultimate Processor** needs ONNX Runtime, which is not installed automatically (the CPU wheel would overwrite an
   existing GPU build). Install one of them into ComfyUI's Python:
   `python -m pip install onnxruntime-gpu` (NVIDIA) or `python -m pip install onnxruntime` (CPU).
-- **Garment Segment**, **Portrait Segment** and **VTON** download their models from Hugging Face on first use (pinned
-  revisions, only the needed files). Garment Segment and Portrait Segment also fetch YuNet, a 230 KB face detector
-  (MIT) that runs on the CPU. To keep models elsewhere, add these keys to `extra_model_paths.yaml`:
+- **Garment Segment**, **Portrait Segment**, **Body Segment** and **VTON** download their models from Hugging Face on
+  first use (pinned revisions, only the needed files): about 256 MB for Garment Segment, and 1.6 GB for Body Segment
+  (3.3 GB and 5.9 GB for its larger sizes). Garment Segment, Portrait Segment and Body Segment also fetch YuNet, a
+  230 KB face detector (MIT) that runs on the CPU. **Body Segment needs PyTorch 2.4 or newer.** To keep models
+  elsewhere, add these keys to `extra_model_paths.yaml`:
 
   ```yaml
   my_models:
       base_path: D:/ai-models/
-      nh_nodes: NH-Nodes/            # SegFormer models (garment, face parsing) and the YuNet face detector
+      nh_nodes: NH-Nodes/            # garment, face and body-part models, and the YuNet face detector
       vton_mask: ComfyUI-Vton-Mask/  # VTON pose + parsing ONNX models
       sam3: sam3/                    # SAM 3 checkpoint (you download sam3.pt yourself)
   ```
@@ -100,6 +104,7 @@ more requirements, listed below.
 | Upscale or refine a huge image piece by piece | Load Image → **Image Tile** → your sampler/upscaler per tile → **Image Untile** | [image-compose](docs/en/image-compose.md#image-tile-nh) |
 | Generate at the model's native size, then restore the original framing | Load Image → **NH Smart Ratio Image Resize** → edit → **NH Restore Image Geometry** | [resolution](docs/en/resolution.md) |
 | Inpaint only the clothes | Load Image → **Garment Segment** → **Mask Morphology** (grow) → inpaint | [vision](docs/en/vision.md) |
+| Mask the skin, hair, lips, teeth or clothes of the people in a photo by name | Load Image → **Body Segment** (`regions`: `skin`, `hair, face` or `clothes - shoes`; Vietnamese works: `da`, `tóc, môi`) → mask → retouch or inpaint | [vision](docs/en/vision.md#body-segment-nh) |
 | Mask every person, window or the sky in a large photo, or everything except the person | Load Image → **SAM3 Segment** (`concepts`: `window`, `person - bag` or `background`) → mask → edit or inpaint; add **Segs Select** to pick single instances | [vision](docs/en/vision.md#sam-3-workflows) |
 | Compare many LoRAs, one per queue | **Counter** → **Load LoRA Model Index** (index) → sampler → **Image Label** (prints the LoRA name) → Save Image | [loaders](docs/en/loaders.md) |
 | Run one of two branches without executing the other | condition → **If/Else** (lazy) → … | [logic](docs/en/logic.md#ifelse-nh) |
@@ -114,7 +119,7 @@ more requirements, listed below.
 | Image — mask-based retouch | NH Mask-Aware Resize, NH Agnostic Image Generator, NH Simple Face Paste | [EN](docs/en/image-retouch.md) · [VI](docs/vi/image-retouch.md) |
 | Resolution | NH Smart Resolution Picker, NH Smart Ratio Image Resize, NH Ratio Preset Image Resize, NH Remove Resize Padding, NH Restore Image Geometry | [EN](docs/en/resolution.md) · [VI](docs/vi/resolution.md) |
 | Mask | Mask Morphology, Mask Properties, NH Create Box Mask, NH Mask Aspect Ratio Match | [EN](docs/en/mask.md) · [VI](docs/vi/mask.md) |
-| Vision | Garment Segment, Portrait Segment, SAM3 Segment, Segs Select, Segs Compose, Segs To Masks, Segs To Impact SEGS, Segs Preview | [EN](docs/en/vision.md) · [VI](docs/vi/vision.md) |
+| Vision | Garment Segment, Portrait Segment, Body Segment, SAM3 Segment, Segs Select, Segs Compose, Segs To Masks, Segs To Impact SEGS, Segs Preview | [EN](docs/en/vision.md) · [VI](docs/vi/vision.md) |
 | VTON | VTON Ultimate Processor | [EN](docs/en/vton.md) · [VI](docs/vi/vton.md) |
 | Logic | Compare, Logic Gate, If/Else, Switch N, Any Switch, Any Branch Switch, Gate Switch, Value Match Index, Math Eval, Random Choice | [EN](docs/en/logic.md) · [VI](docs/vi/logic.md) |
 | Text | Prompt Template, Prompt Scheduler, String Operations, Prompt Join, Text Split, Regex Extract, Text Index, Text Concatenate, Text Split Lines, Text Random Line | [EN](docs/en/text.md) · [VI](docs/vi/text.md) |
@@ -138,7 +143,13 @@ NH-Nodes' own code is [MIT](LICENSE). Some features rely on third-party code or 
 
 - **VTON Ultimate Processor** and **Portrait Segment** are for **non-commercial use only** (CC BY-NC-SA 4.0 code and
   parsing models; non-commercial face-parsing model).
-- **Garment Segment**'s model does not declare a licence.
+- **Garment Segment** is for **non-commercial use only, and NVIDIA's licence defines that as research or evaluation
+  purposes only**: its default model (FASHN Human Parser) is under the NVIDIA Source Code License for SegFormer. The
+  other model, `fashionpedia`, declares no licence but is fine-tuned from NVIDIA's `mit-b3`, so treat it the same way.
+- **Body Segment** uses Meta's Sapiens2 under the Sapiens2 License: royalty-free, with no non-commercial clause, but
+  it prohibits surveillance, biometric processing, identifying people, deepfakes and other uses, requires you to follow
+  privacy, biometric and trade-control laws, and lets Meta audit your use, end the licence and change its terms. The
+  model code is included with its licence; the weights are downloaded from Meta's Hugging Face repositories.
 - **SAM3 Segment** uses Meta's SAM 3 under the SAM License: royalty-free, with no non-commercial clause, but it bars
   military or warfare, nuclear, espionage, and gun or illegal-weapon uses. The weights and the `sam3` package are not
   included; you get them from Meta.

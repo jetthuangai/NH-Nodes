@@ -36,6 +36,12 @@
   "deprecated": false
  },
  {
+  "id": "NH_BodySegment",
+  "name": "Body Segment (NH)",
+  "category": "NH-Nodes/Vision",
+  "deprecated": false
+ },
+ {
   "id": "NH_BooleanSwitch",
   "name": "Boolean Switch (NH)",
   "category": "NH-Nodes/Utils",
