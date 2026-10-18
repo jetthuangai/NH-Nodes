@@ -52,6 +52,32 @@ def test_context_scores_ignore_ancestors_all_candidates_share(tmp_path):
     shared = tmp_path / "Photos" / "Library"
     paths = [str(shared / "Nam" / "subject_01"), str(shared / "Nu" / "subject_01")]
     source = [str(tmp_path / "Photos" / "Source" / "Nu" / "subject_01")]
-    scores = folder_loaders._context_scores(paths, source)
+    scores = folder_loaders._context_scores(paths, source, str(shared))
     assert scores[paths[1]] > scores[paths[0]]
-    assert folder_loaders._context_scores(paths, None) == {paths[0]: 0, paths[1]: 0}
+    assert folder_loaders._context_scores(paths, None, str(shared)) == {paths[0]: 0, paths[1]: 0}
+
+
+@pytest.mark.parametrize("extra", [(), ("Nam/Anh",)])
+def test_an_unrelated_folder_does_not_change_the_pick(tmp_path, extra):
+    # The base comes from the search roots, not from what matched: adding Nam/Anh must not flip the Nu result.
+    library = tmp_path / "L"
+    _tree(library, "Nu/Anh/Anh", *extra)
+    source = tmp_path / "Shoots" / "Nu" / "Anh"
+    _tree(source)
+    picked = folder_loaders._resolve_best_matching_folder(
+        str(library), "Anh", "exact", True, source_context_paths=[str(source)], context_names=("Nam", "Nu"),
+    )
+    assert os.path.relpath(picked, str(library)).replace("\\", "/") == "Nu/Anh"
+
+
+def test_twin_root_with_shared_parents_follows_the_source_group(tmp_path):
+    # matching_root_path points into Library/Nam while the source is in Nu: the Nu twin wins.
+    photos = tmp_path / "Photos"
+    _tree(photos / "Library", "Nam/subject_01", "Nu/subject_01")
+    source = photos / "Source" / "Nu" / "subject_01"
+    _tree(source)
+    picked = folder_loaders._resolve_best_matching_folder(
+        str(photos / "Library" / "Nam"), "subject_01", "exact", True,
+        source_context_paths=[str(source)], context_names=("Nam", "Nu"),
+    )
+    assert os.path.relpath(picked, str(photos / "Library")).replace("\\", "/") == "Nu/subject_01"

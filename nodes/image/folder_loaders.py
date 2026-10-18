@@ -84,23 +84,41 @@ def _candidate_context_score(candidate_path, source_context_paths):
     return best_score
 
 
-def _context_scores(paths, source_context_paths):
-    """Context score of each candidate, measured on its path below the folder all candidates share.
+def _context_base(search_roots):
+    """The folder every search root of one request lives in; context is scored on the path below it.
+
+    Computed once per request from the search roots (never from whatever happened to match), so an unrelated folder
+    elsewhere in the library cannot move the base and change which match wins.
+    """
+    absolute = [os.path.abspath(path) for path in search_roots if path]
+    if not absolute:
+        return ""
+    try:
+        return os.path.commonpath(absolute)
+    except ValueError:  # roots on different drives share nothing
+        return ""
+
+
+def _context_scores(paths, source_context_paths, base):
+    """Context score of each candidate, measured on its path below ``base``.
 
     Ancestors every candidate has in common say nothing about which one fits the source. Counting them let a library
     next to the source (D:/Photos/Library beside D:/Photos/Source/Nu) outvote the Nu/Nam context and pick Nam.
     """
     if not source_context_paths or not paths:
         return {path: 0 for path in paths}
-    absolute = [os.path.abspath(path) for path in paths]
-    try:
-        base = os.path.commonpath(absolute) if len(absolute) > 1 else os.path.dirname(absolute[0])
-    except ValueError:  # candidates on different drives share nothing
-        base = ""
     scores = {}
-    for path, absolute_path in zip(paths, absolute):
-        relative = os.path.relpath(absolute_path, base) if base else absolute_path
-        scores[path] = _candidate_context_score("" if relative == "." else relative, source_context_paths)
+    for path in paths:
+        absolute_path = os.path.abspath(path)
+        relative = absolute_path
+        if base:
+            try:
+                relative = os.path.relpath(absolute_path, base)
+            except ValueError:  # another drive
+                relative = absolute_path
+            if relative == os.pardir or relative.startswith(os.pardir + os.sep):
+                relative = absolute_path  # outside the base: score it as before
+        scores[path] = _candidate_context_score("" if relative == os.curdir else relative, source_context_paths)
     return scores
 
 
@@ -266,12 +284,12 @@ def _context_root_candidates(root_path, source_context_paths, context_names=()):
     for twin_path in _context_twins(root_path, context_names, source_segments):
         _add_unique_path(candidates, twin_path)
 
-    scores = _context_scores(candidates, source_context_paths)
+    scores = _context_scores(candidates, source_context_paths, _context_base(candidates))
     candidates.sort(key=lambda item: (-scores[item], natural_key(item)))
     return candidates
 
 
-def _resolve_matching_folder(root_path, match_text, match_mode, recursive, source_context_paths=None):
+def _resolve_matching_folder(root_path, match_text, match_mode, recursive, source_context_paths=None, context_base=None):
     root_path = _absolute_root(root_path)
     if not root_path:
         raise ValueError("Matching root path is empty")
@@ -300,7 +318,8 @@ def _resolve_matching_folder(root_path, match_text, match_mode, recursive, sourc
         raise _NoMatchError(f"No matching folder found for '{match_text}' under: {root_path}", match_text)
 
     if source_context_paths:
-        scores = _context_scores(matches, source_context_paths)
+        base = context_base if context_base is not None else _context_base([root_path])
+        scores = _context_scores(matches, source_context_paths, base)
         matches.sort(key=lambda item: (-scores[item], natural_key(os.path.relpath(item, root_path))))
     else:
         matches.sort(key=lambda item: natural_key(os.path.relpath(item, root_path)))
@@ -314,6 +333,7 @@ def _resolve_best_matching_folder(root_path, match_text, match_mode, recursive, 
     _check_search_root(root_path, recursive)
 
     search_roots = _context_root_candidates(root_path, source_context_paths, context_names)
+    context_base = _context_base(search_roots)
     if recursive:
         # Walking a folder covers everything below it, so a search root inside another one is not walked twice.
         search_roots = [path for path in search_roots if not any(_is_inside(path, other) for other in search_roots)]
@@ -328,6 +348,7 @@ def _resolve_best_matching_folder(root_path, match_text, match_mode, recursive, 
                 match_mode,
                 recursive,
                 source_context_paths=source_context_paths,
+                context_base=context_base,
             )
             _add_unique_path(matched_folders, matched_folder)
         except ValueError as exc:
@@ -340,7 +361,7 @@ def _resolve_best_matching_folder(root_path, match_text, match_mode, recursive, 
                 raise exc
         raise _NoMatchError(f"No matching folder found for '{match_text}' under: {root_path}", match_text)
 
-    scores = _context_scores(matched_folders, source_context_paths)
+    scores = _context_scores(matched_folders, source_context_paths, context_base)
     matched_folders.sort(key=lambda item: (-scores[item], natural_key(item)))
     return matched_folders[0]
 
