@@ -4,10 +4,10 @@
 
 # Hướng dẫn NH-Nodes
 
-NH-Nodes bổ sung **75 node** cho ComfyUI, phục vụ công việc ảnh và sản xuất: nạp và lưu bộ ảnh, chia ô (tile) và ghép ảnh,
-quản lý độ phân giải cho các model hiện nay, công cụ mask, phân đoạn trang phục và khuôn mặt, mask của bất cứ thứ gì bạn gọi tên
-bằng SAM 3 qua một công thức ngắn, tạo mask VTON, rẽ nhánh logic, xử lý prompt và văn bản, tiện ích batch và bộ nạp model theo
-chỉ số.
+NH-Nodes bổ sung **76 node** cho ComfyUI, phục vụ công việc ảnh và sản xuất: nạp và lưu bộ ảnh, chia ô (tile) và ghép ảnh,
+quản lý độ phân giải cho các model hiện nay, công cụ mask, phân đoạn trang phục, khuôn mặt và các bộ phận cơ thể (da, tóc,
+quần áo của người trong ảnh, chỉ cần gõ tên), mask của bất cứ thứ gì bạn gọi tên bằng SAM 3 qua một công thức ngắn, tạo mask
+VTON, rẽ nhánh logic, xử lý prompt và văn bản, tiện ích batch và bộ nạp model theo chỉ số.
 
 Tài liệu này giải thích từng node: dùng để làm gì, từng đầu vào và đầu ra, và cách node xử lý ở những chi tiết quan trọng.
 Phần cài đặt và hướng dẫn nhanh nằm ở [trang dự án](../../README.md#installation).
@@ -41,7 +41,7 @@ Mỗi phần node bắt đầu bằng một thẻ được vẽ trực tiếp t�
 | Ảnh — chỉnh sửa theo mask | [image-retouch](image-retouch.md) | NH Mask-Aware Resize · NH Agnostic Image Generator · NH Simple Face Paste |
 | Độ phân giải | [resolution](resolution.md) | NH Smart Resolution Picker · NH Smart Ratio Image Resize · NH Ratio Preset Image Resize · NH Remove Resize Padding · NH Restore Image Geometry |
 | Mask | [mask](mask.md) | Mask Morphology · Mask Properties · NH Create Box Mask · NH Mask Aspect Ratio Match |
-| Vision | [vision](vision.md) | Garment Segment · Portrait Segment · SAM3 Segment · Segs Select · Segs Compose · Segs To Masks · Segs To Impact SEGS · Segs Preview |
+| Vision | [vision](vision.md) | Garment Segment · Portrait Segment · Body Segment · SAM3 Segment · Segs Select · Segs Compose · Segs To Masks · Segs To Impact SEGS · Segs Preview |
 | VTON | [vton](vton.md) | VTON Ultimate Processor |
 | Logic | [logic](logic.md) | Compare · Logic Gate · If/Else · Switch N · Any Switch · Any Branch Switch · Gate Switch · Value Match Index · Math Eval · Random Choice |
 | Văn bản | [text](text.md) | Prompt Template · Prompt Scheduler · String Operations · Prompt Join · Text Split · Regex Extract · Text Index · Text Concatenate · Text Split Lines · Text Random Line |
@@ -64,16 +64,20 @@ Mỗi phần node bắt đầu bằng một thẻ được vẽ trực tiếp t�
 - **Resize data.** Các node độ phân giải trả về `resize_data` ghi lại ảnh đã được cắt hay thêm viền thế nào, để đưa kết quả
   về đúng khung ảnh gốc bằng [NH Restore Image Geometry](resolution.md#nh-restore-image-geometry).
 - **Instance.** SAM3 Segment trả về mỗi thứ nó tìm thấy như một instance riêng, có nhãn, điểm và mask, trong một giá trị
-  `NH_SEGS`. Các node Segs chọn instance, ghép chúng bằng công thức và đổi chúng thành mask; xem
-  [Các instance: kiểu NH_SEGS](vision.md#các-instance-kiểu-nh_segs).
+  `NH_SEGS`. Garment Segment, Portrait Segment và Body Segment trả về các bộ phận chúng tìm được (tóc, áo, môi…) cũng trong
+  kiểu này. Các node Segs chọn instance, ghép chúng bằng công thức và đổi chúng thành mask, và Segs Compose trộn được
+  instance của nhiều node trong số đó; xem [Các instance: kiểu NH_SEGS](vision.md#các-instance-kiểu-nh_segs).
 - **Giấy phép.** Mọi node theo giấy phép MIT, trừ các phần ghi trong [THIRD_PARTY_NOTICES](../../THIRD_PARTY_NOTICES.md):
-  VTON Ultimate Processor và Portrait Segment chỉ dùng cho mục đích **phi thương mại**, còn model của Garment Segment
-  không công bố giấy phép. SAM3 Segment dùng SAM 3 của Meta theo SAM License, giấy phép không có điều khoản cấm thương mại
-  nhưng cấm các mục đích quân sự, hạt nhân, gián điệp, súng và vũ khí bất hợp pháp; bạn tự cài gói và tự tải checkpoint.
+  VTON Ultimate Processor và Portrait Segment chỉ dùng cho mục đích **phi thương mại**, Garment Segment cũng vậy, và ở đó
+  giấy phép của NVIDIA định nghĩa "phi thương mại" là chỉ để nghiên cứu hoặc đánh giá. Body Segment dùng Sapiens2 của Meta
+  theo Sapiens2 License, giấy phép không có điều khoản cấm thương mại nhưng cấm theo dõi (surveillance), xử lý sinh trắc học,
+  nhận dạng người, deepfake và một số mục đích khác. SAM3 Segment dùng SAM 3 của Meta theo SAM License, giấy phép không có
+  điều khoản cấm thương mại nhưng cấm các mục đích quân sự, hạt nhân, gián điệp, súng và vũ khí bất hợp pháp; bạn tự cài gói
+  và tự tải checkpoint.
 
 ## Xem thêm
 
 - [Changelog](../CHANGELOG.md) — thay đổi của từng phiên bản, gồm cả các thay đổi về hành vi.
 - [Sơ đồ cổng logic](../logic_gate_diagram.html) — bảng chân trị trực quan cho node Logic Gate (tải về và mở bằng trình
   duyệt).
-- [Third-party notices](../../THIRD_PARTY_NOTICES.md) — giấy phép của mã nguồn đi kèm, các model được tải về và SAM 3.
+- [Third-party notices](../../THIRD_PARTY_NOTICES.md) — giấy phép của mã nguồn đi kèm, các model được tải về, Sapiens2 và SAM 3.

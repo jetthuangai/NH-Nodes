@@ -12,7 +12,7 @@ Ba node làm việc với mask. Một node đổi kích thước ảnh về đú
 | [NH Agnostic Image Generator](#nh-agnostic-image-generator) | Xóa vùng mask bằng màu xám, nhiễu hoặc làm mờ |
 | [NH Simple Face Paste](#nh-simple-face-paste) | Dán khuôn mặt trong mask của ảnh này lên vùng mask của ảnh khác |
 
-Một `MASK` có màu trắng (`1`) ở nơi node cần làm việc và màu đen (`0`) ở những chỗ còn lại. Bạn lấy mask từ một node phân đoạn như [SAM3 Segment (NH)](./vision.md#sam3-segment-nh) (mọi vật thể gọi được tên, hoặc một công thức như `person - bag` hay `background`), [Garment Segment (NH)](./vision.md#garment-segment-nh) hoặc [Portrait Segment (NH)](./vision.md#portrait-segment-nh), hoặc từ bất kỳ công cụ mask nào trong ComfyUI.
+Một `MASK` có màu trắng (`1`) ở nơi node cần làm việc và màu đen (`0`) ở những chỗ còn lại. Bạn lấy mask từ một node phân đoạn như [SAM3 Segment (NH)](./vision.md#sam3-segment-nh) (mọi vật thể gọi được tên, hoặc một công thức như `person - bag` hay `background`), [Garment Segment (NH)](./vision.md#garment-segment-nh), [Portrait Segment (NH)](./vision.md#portrait-segment-nh) hoặc [Body Segment (NH)](./vision.md#body-segment-nh) (da, tóc hay quần áo của người trong ảnh, chỉ cần gõ tên), hoặc từ bất kỳ công cụ mask nào trong ComfyUI.
 
 ---
 
