@@ -446,7 +446,8 @@ def test_labels_match_singular_and_plural_but_wildcards_as_written():
     assert segs.label_matches("cars", "car*") and not segs.label_matches("car", "cars*")  # a wildcard is as written
 
 
-def test_a_node_s_own_words_name_the_parts_of_its_segs():
+def test_a_node_s_own_words_name_the_parts_of_its_segs(monkeypatch):
+    monkeypatch.setattr(segs, "_ALIASES", dict(segs._ALIASES))
     segs.add_aliases("test-parser", {"skin": {1, 2, 3}, "body": {1, 2, 3, 4}, "nothing": {9}},
                      {"face": {1}, "arms": {2, 3}, "top": {4}})
     face = segs.make_segment("face", 1.0, torch.ones(2, 2, dtype=torch.bool), (0, 0), "test-parser")
@@ -458,7 +459,8 @@ def test_a_node_s_own_words_name_the_parts_of_its_segs():
     assert segs.matching(frame.segments, "arm") == [arms, other]  # a label is found on every node's instances
     assert segs.matching(frame.segments, "bodies") == [face, arms, top] and segs.matching(frame.segments, "nothing") == []
     labelled_skin = segs.make_segment("skin", 0.9, torch.ones(2, 2, dtype=torch.bool), (0, 6), "sam3")
-    assert segs.matching(frame.segments + (labelled_skin,), "skin") == [labelled_skin]  # an instance's own label wins
+    # each node is read its own way: SAM 3's "skin" instance, and the test parser's skin parts
+    assert segs.matching(frame.segments + (labelled_skin,), "skin") == [face, arms, labelled_skin]
     assert int(segs.evaluate(segs.parse_expression("skin - face"), frame).sum()) == 4
     (picked,) = segs.select_segments(frame, labels=("skin",)).segments[1:]
     assert picked is arms
@@ -479,3 +481,31 @@ def test_the_photo_check_can_be_turned_off_and_a_nan_does_not_trip_it():
     assert segs.same_picture(a[0].picture, segs.picture_print(spoiled[0]))
     optional = segs_nodes.NH_SegsCompose.INPUT_TYPES()["optional"]
     assert optional["check_same_photo"][1]["default"] is True
+
+
+def test_compose_decides_node_by_node_and_a_part_keeps_its_name(monkeypatch):
+    monkeypatch.setattr(segs, "_ALIASES", dict(segs._ALIASES))
+    segs.add_aliases("body-like", {"skin": {1, 2}, "tay": {2, 5}}, {"face": {1}, "arms": {2}, "hands": {5}, "top": {3}})
+    segs.add_aliases("garment-like", {"dress": {7}, "upper garment": {6, 7}}, {"top": {6}, "dress": {7}})
+    assert ("garment-like", "dress") not in segs._ALIASES  # the name of one of its parts
+
+    def seg(label, x, source):
+        return segs.make_segment(label, 1.0, torch.ones(1, 1, dtype=torch.bool), (x, 0), source)
+
+    face, arms, hands, top = (seg(label, x, "body-like") for x, label in enumerate(("face", "arms", "hands", "top")))
+    skin, garment_top, sam_arm = seg("skin", 4, "portrait-like"), seg("top", 5, "garment-like"), seg("arm", 6, "sam3")
+    frame = segs.SegsFrame(1, 8, (face, arms, hands, top, skin, garment_top, sam_arm))
+    assert segs.matching(frame.segments, "skin") == [face, arms, skin]  # one node's label hides no other node's parts
+    assert segs.matching(frame.segments, "dress") == []  # no dress anywhere: nothing stands in for it
+    assert segs.matching(frame.segments, "upper garment") == [garment_top]
+    assert segs.matching(frame.segments, "arm") == [arms, sam_arm]
+    assert segs.matching(frame.segments, "arm", "tay") == [arms, hands, sam_arm]  # a node's own reading of "tay"
+    assert segs.evaluate(segs.parse_expression("tay"), frame).numpy().tolist() == [
+        [False, True, True, False, False, False, True, False]]
+
+
+def test_plural_exceptions():
+    assert not segs.label_matches("glass", "glasses") and segs.label_matches("Glasses", "glasses")
+    for plural, single in (("scarves", "scarf"), ("calves", "calf"), ("hoodies", "hoodie"), ("leaves", "leaf"),
+                           ("movies", "movie"), ("ties", "tie")):
+        assert segs.label_matches(plural, single) and segs.label_matches(single, plural)

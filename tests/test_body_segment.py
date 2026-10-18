@@ -315,14 +315,69 @@ def test_batch_previews_get_their_own_picture_s_numbers(monkeypatch):
     assert drawn[0][0] == f"hair: {whole:.1f}% of the picture" and drawn[1][0] == f"hair: {cut:.1f}% of the picture"
 
 
+def _limb_labels():
+    """A person with both arms, hands, legs and feet, as a Sapiens2 label map."""
+    labels = np.zeros((H, W), np.int64)
+    labels[5:15, 15:25] = C["face_neck"]
+    labels[3:5, 15:25] = C["hair"]
+    labels[15:30, 12:28] = C["torso"]
+    for side, x in (("right", 4), ("left", 30)):
+        labels[15:28, x:x + 6] = C[f"{side}_upper_arm"]
+        labels[28:38, x:x + 6] = C[f"{side}_lower_arm"]
+        labels[38:42, x:x + 6] = C[f"{side}_hand"]
+    for side, x in (("left", 13), ("right", 21)):
+        labels[30:42, x:x + 6] = C[f"{side}_upper_leg"]
+        labels[42:52, x:x + 6] = C[f"{side}_lower_leg"]
+        labels[52:56, x:x + 6] = C[f"{side}_foot"]
+    return labels
+
+
+def _run_on(monkeypatch, labels, regions):
+    """Body Segment on a picture that parses to ``labels`` (the class id is written into the red channel)."""
+    image = np.zeros((*labels.shape, 3), np.float32)
+    image[..., 0] = labels * 8 / 255.0
+    monkeypatch.setattr(bs, "find_faces", lambda picture, second_look=True: [])
+    monkeypatch.setattr(bs.sapiens2, "load", lambda size, device: {"size": size})
+    monkeypatch.setattr(bs.sapiens2, "offload", lambda bundle: None)
+    monkeypatch.setattr(bs.sapiens2, "predict_labels", lambda bundle, picture, confidence=False: (
+        np.rint(picture[..., 0] / 8.0).astype(np.int64), np.full(picture.shape[:2], 0.95, np.float16)))
+    return bs.NH_BodySegment().segment(torch.from_numpy(image)[None], regions, "0.4b", 0, 0, False, "cpu", False)
+
+
+def test_whole_limbs_on_a_picture_with_hands_and_feet(monkeypatch):
+    labels = _limb_labels()
+    for regions, ids in (("tay - cánh tay", bs.HANDS), ("chân", bs.LEGS | bs.FEET), ("tay", bs.ARMS | bs.HANDS),
+                         ("tay trái", bs.WHOLE_LIMBS["tay trái"]), ("cánh tay", bs.ARMS), ("bàn chân", bs.FEET),
+                         ("chân phải - bàn chân", bs.WHOLE_LIMBS["chân phải"] - bs.FEET)):
+        wanted = np.isin(labels, list(ids))
+        mask = _run_on(monkeypatch, labels, regions)[0]
+        assert wanted.any() and (mask[0].numpy() > 0.5).tolist() == wanted.tolist(), regions
+
+
 def test_compose_reads_body_words_on_body_segs(monkeypatch):
     segs_nodes = importlib.import_module("NH-Nodes.nodes.vision.segs_nodes")
-    (_, _, _, segs, _), labels, _, _ = _run(monkeypatch, "skin")
+    labels = _limb_labels()
+    segs = _run_on(monkeypatch, labels, "skin")[3]
     compose = segs_nodes.NH_SegsCompose().compose
-    for formula, ids in (("skin", bs.SKIN), ("da", bs.SKIN), ("arm", bs.ARMS), ("tay", bs.ARMS), ("clothes", bs.CLOTHES),
-                         ("quần", bs.BOTTOM), ("skin - face", bs.SKIN - bs.FACE), ("head", bs.FACE | bs.HAIR)):
+    for formula, ids in (("skin", bs.SKIN), ("da", bs.SKIN), ("arm", bs.ARMS), ("tay", bs.ARMS | bs.HANDS),
+                         ("chân", bs.LEGS | bs.FEET), ("skin - face", bs.SKIN - bs.FACE), ("head", bs.FACE | bs.HAIR),
+                         ("person", bs.PERSON), ("quần", frozenset()), ("váy", frozenset())):
         (mask,) = compose(segs, formula)
         assert (mask[0].numpy() > 0.5).tolist() == np.isin(labels, list(ids)).tolist(), formula
+
+
+def test_compose_does_not_stand_body_parts_in_for_another_node_s_garments(monkeypatch):
+    segs_nodes = importlib.import_module("NH-Nodes.nodes.vision.segs_nodes")
+    vs = importlib.import_module("NH-Nodes.nodes.vision.vision_segment_nodes")
+    (_, _, _, body, _), labels, _, _ = _run(monkeypatch, "skin")
+    fashn = np.zeros((H, W), np.int64)
+    fashn[25:45, 10:30], fashn[45:58, 12:28] = 3, 6  # FASHN: a top and pants, no dress or skirt
+    garment = (vs.parts_frame(fashn, vs.FASHN_SEGS, (H, W), "fashn_human_parser"),)
+    for formula in ("váy", "dress", "chân váy", "skirt"):
+        (mask,) = segs_nodes.NH_SegsCompose().compose(body, formula, segs_2=garment)
+        assert not mask.any(), formula
+    (mask,) = segs_nodes.NH_SegsCompose().compose(body, "pants", segs_2=garment)
+    assert (mask[0].numpy() > 0.5).tolist() == (fashn == 6).tolist()
 
 
 def test_region_words_are_read_in_singular_or_plural():
@@ -334,3 +389,13 @@ def test_region_words_are_read_in_singular_or_plural():
     assert set(bs.check_regions(tree)) == {"lower leg", "upper arm", "thigh"}
     with pytest.raises(ValueError, match="part of 'face'"):
         bs.check_regions(bs.parse_concepts("eyebrow"))
+
+
+def test_class_notes_only_for_words_the_picture_has_and_the_beard_advice():
+    counts = np.zeros(len(s2.CLASSES), np.int64)
+    assert bs.describe(bs.parse_concepts("skin, dress"), counts, 1000) == [
+        "skin: not in the picture", "dress: not in the picture"]
+    counts[C["face_neck"]] = 10
+    assert bs._FACE_CLASS in bs.describe(bs.parse_concepts("skin"), counts, 1000)
+    with pytest.raises(ValueError, match="no NH-Nodes parser has a beard class"):
+        bs.check_regions(bs.parse_concepts("râu"))

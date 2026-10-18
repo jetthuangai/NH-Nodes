@@ -270,11 +270,23 @@ def test_the_floor_goes_by_the_share_the_parser_is_sure_of():
     def predict(picture):
         labels = np.rint(picture[..., 0] / 8.0).astype(np.int64)
         labels[labels != 3] = 0
-        sure = np.full(picture.shape[:2], 0.3, np.float16)
+        sure = np.full(picture.shape[:2], 0.7, np.float16)
         sure[10:10 + sure_rows[0], 20:40] = 0.95
         return labels, sure
 
-    # 40% of the labelled pixels are sure (their mean confidence is 0.56): nobody
+    # 40% of the labelled pixels are sure: nobody, although the median confidence (0.7) is well over the floor
     assert not crops.people_labels(predict, image, 0.75, floor=0.5).any()
     sure_rows[0] = 24  # 60% sure: the people stay
     assert crops.people_labels(predict, image, 0.75, floor=0.5)[10:50, 20:40].all()
+
+
+def test_the_floor_needs_the_mirror_to_agree():
+    image = np.zeros((60, 80, 3), np.uint8)
+
+    def predict(picture):  # a sure "person" at the same place in any picture: invented, so the mirror misses it
+        labels = np.zeros(picture.shape[:2], np.int64)
+        labels[10:50, 5:25] = 3
+        return labels, np.full(picture.shape[:2], 0.95, np.float16)
+
+    assert not crops.people_labels(predict, image, 0.75, floor=0.5).any()
+    assert crops.people_labels(predict, image, 0.75)[10:50, 5:25].all()  # without the floor: kept as it was

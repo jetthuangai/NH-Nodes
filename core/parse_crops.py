@@ -207,6 +207,10 @@ def _grown(region, sides, aspect, image_size):
 
 COARSE_TRUST = 0.5  # the first look's confidence counts this much against a crop's: a crop sees people sharper
 SURE = 0.9  # a parser's confidence counted as sure, for the floor of people_labels
+# Least overlap (IoU) of the first look's people with those of a look at the mirrored picture, when no face is found:
+# people seen without a face come back in the mirror (0.83 to 0.99 on 32 photos), what a parser invents on a facade
+# does not (0.02 to 0.03, under every everyday edit of the picture).
+MIRROR_AGREEMENT = 0.6
 # A region shorter than this (px) is not parsed again: blown up to a parser's input (4 to 8 times) so little is mostly
 # made up (a speck of a held helmet came back as salt-and-pepper labels); the first look's labels stay there.
 MIN_CROP = 128
@@ -238,13 +242,17 @@ def people_labels(predict, image, aspect, margin=0.08, people=(), floor=None):
     With ``floor`` and no ``people`` boxes, a first look that is sure (SURE or more) of less than ``floor`` of what it
     labels means nobody is there, and the map is all background: a parser trained on people sees them in a picture
     without any, but is unsure of most of it (a facade or a cafe's shelves come out as faint arms and clothes), and its
-    crops of such a picture would find more.
+    crops of such a picture would find more. So does a first look that a look at the mirrored picture does not repeat
+    (MIRROR_AGREEMENT): what is invented is not where the mirror would put it.
     """
     height, width = image.shape[:2]
     coarse, trust = predict(image)
     if floor is not None and not len(people):
         labelled = trust[coarse != 0]
         if not labelled.size or np.count_nonzero(labelled >= labelled.dtype.type(SURE)) < floor * labelled.size:
+            return np.zeros_like(coarse)
+        found, mirrored = coarse != 0, predict(np.ascontiguousarray(image[:, ::-1]))[0][:, ::-1] != 0
+        if np.count_nonzero(found & mirrored) < MIRROR_AGREEMENT * np.count_nonzero(found | mirrored):
             return np.zeros_like(coarse)
     regions = [region for box in foreground_clusters(coarse, extra=people)
                for region in cover_box(box, aspect, margin, (height, width)) if region[3] - region[1] >= MIN_CROP]

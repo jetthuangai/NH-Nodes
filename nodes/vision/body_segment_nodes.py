@@ -118,10 +118,12 @@ WHOLE_LIMBS = {
 }
 # Words people try that Sapiens2 has no class for, and what to do instead.
 _IN_FACE = "eyes, eyebrows, nose and ears are part of 'face' here; Portrait Segment masks them one by one"
+_BEARD = "a beard is part of 'face' here, and no NH-Nodes parser has a beard class (SAM3 Segment can try 'beard')"
 _ACCESSORY = ("Sapiens2 puts hats, bags and other accessories in one class, 'accessories'; for one of them use "
               "Garment Segment or SAM3 Segment")
 NOT_REGIONS = {
-    **dict.fromkeys(("eye", "eyes", "eyebrow", "eyebrows", "eyelash", "nose", "ear", "ears", "beard"), _IN_FACE),
+    **dict.fromkeys(("eye", "eyes", "eyebrow", "eyebrows", "eyelash", "nose", "ear", "ears"), _IN_FACE),
+    **dict.fromkeys(("beard", "mustache", "moustache"), _BEARD),
     **dict.fromkeys(("hat", "cap", "bag", "handbag", "backpack", "scarf", "belt", "necklace", "jewelry", "watch",
                      "glove", "gloves", "tie"), _ACCESSORY),
     **dict.fromkeys(("shoulder", "shoulders"), "shoulders are part of 'torso' and 'upper arms'"),
@@ -148,8 +150,10 @@ _NOBODY = "no person found (none Sapiens2 was sure of, and no face)"
 # the words above in singular (fold_label), so "lower leg", "accessory" or "dresses" are read like the listed form
 _FOLDED_REGIONS = {fold_label(word): ids for word, ids in REGIONS.items()}
 _FOLDED_NOT_REGIONS = {fold_label(word): advice for word, advice in NOT_REGIONS.items()}
-# Segs Compose and Segs Select read Body Segment's words on its segs: "skin" is the face, torso, arms... parts.
-add_aliases("sapiens2", REGIONS, PARTS)
+# Segs Compose and Segs Select read Body Segment's group words on its segs ("skin" is the face, torso, arms... parts)
+# and the Vietnamese whole limbs; not the near synonyms ("dress" is its top), which other nodes label for real.
+_GROUP_WORDS = ("skin", "body skin", "head", "mouth", "clothes", "clothing", "outfit", "person", "body")
+add_aliases("sapiens2", {**{word: REGIONS[word] for word in _GROUP_WORDS}, **WHOLE_LIMBS}, PARTS)
 
 
 def region_ids(written, english, status):
@@ -222,15 +226,17 @@ def describe(tree, counts, pixels, where="picture"):
             continue
         ids = region_ids(written, english, status)
         name = f"{written} -> {english}" if status == "translated" and word != normalize(written) else written
-        lines.append(f"{name}: {_share(int(sum(counts[i] for i in ids)), pixels, where)}")
+        covered = int(sum(counts[i] for i in ids))
+        lines.append(f"{name}: {_share(covered, pixels, where)}")
         folded = fold_label(word)
         if word.startswith(("left ", "right ")):
             notes.append(_SIDES)
-        if folded in ("skin", "body skin", "face", "neck", "face neck", "face skin", "head"):
+        # what a class holds matters only when the picture has some of it
+        if covered and folded in ("skin", "body skin", "face", "neck", "face neck", "face skin", "head"):
             notes.append(_FACE_CLASS)
-        if folded in ("dress", "wedding dress", "ao dai"):
+        if covered and folded in ("dress", "wedding dress", "ao dai"):
             notes.append(f"{name}: Sapiens2 labels a dress as a top (upper clothes)")
-        if folded == "skirt":
+        if covered and folded == "skirt":
             notes.append("skirt: the skirt of a dress counts as a top in Sapiens2")
         if status == "translated" and normalize(written) in WHOLE_LIMBS:
             notes.append(f"{written}: the whole limb, {'hands' if ids & HANDS else 'feet'} included")
