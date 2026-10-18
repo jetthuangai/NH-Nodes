@@ -399,3 +399,32 @@ def test_class_notes_only_for_words_the_picture_has_and_the_beard_advice():
     assert bs._FACE_CLASS in bs.describe(bs.parse_concepts("skin"), counts, 1000)
     with pytest.raises(ValueError, match="no NH-Nodes parser has a beard class"):
         bs.check_regions(bs.parse_concepts("râu"))
+
+
+def test_compose_on_body_segs_gives_no_wrong_advice_and_reads_any_accent_form(monkeypatch, capsys):
+    import unicodedata
+
+    segs_nodes = importlib.import_module("NH-Nodes.nodes.vision.segs_nodes")
+    labels = _limb_labels()
+    segs = _run_on(monkeypatch, labels, "skin")[3]
+    compose = segs_nodes.NH_SegsCompose().compose
+    for formula in ("da mặt", "face skin"):  # not a word of Body's segs: empty, with the labels it holds
+        (mask,) = compose(segs, formula)
+        assert not mask.any() and "The segs hold: arms, face, feet, hair, hands, legs, torso" in capsys.readouterr().out
+    (mask,) = compose(segs, unicodedata.normalize("NFD", "chân"))  # some keyboards send the accents apart
+    assert (mask[0].numpy() > 0.5).tolist() == np.isin(labels, list(bs.LEGS | bs.FEET)).tolist()
+    (mask,) = compose(segs, "upper clothes, apparel")
+    assert not mask.any()  # Body's exact words, found nowhere in this picture, and no error
+
+
+def test_real_sapiens2_finds_nobody_on_pictures_without_people():
+    if s2.model_path("0.4b", download=False) is None:
+        pytest.skip("Sapiens2 0.4b weights not on disk")
+    data = pytest.importorskip("skimage.data")
+    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    bundle = s2.load("0.4b", device)
+    try:
+        for name in ("rocket", "coffee", "chelsea"):  # a launch pad, a cup of coffee, a cat
+            assert not bs.body_labels(bundle, np.ascontiguousarray(getattr(data, name)()[..., :3])).any(), name
+    finally:
+        s2.offload(bundle)

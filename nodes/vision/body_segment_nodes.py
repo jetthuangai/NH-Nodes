@@ -150,10 +150,12 @@ _NOBODY = "no person found (none Sapiens2 was sure of, and no face)"
 # the words above in singular (fold_label), so "lower leg", "accessory" or "dresses" are read like the listed form
 _FOLDED_REGIONS = {fold_label(word): ids for word, ids in REGIONS.items()}
 _FOLDED_NOT_REGIONS = {fold_label(word): advice for word, advice in NOT_REGIONS.items()}
-# Segs Compose and Segs Select read Body Segment's group words on its segs ("skin" is the face, torso, arms... parts)
-# and the Vietnamese whole limbs; not the near synonyms ("dress" is its top), which other nodes label for real.
-_GROUP_WORDS = ("skin", "body skin", "head", "mouth", "clothes", "clothing", "outfit", "person", "body")
-add_aliases("sapiens2", {**{word: REGIONS[word] for word in _GROUP_WORDS}, **WHOLE_LIMBS}, PARTS)
+# Segs Compose and Segs Select read Body Segment's group words on its segs ("skin" is the face, torso, arms... parts),
+# the other names of its parts that mean exactly them, and the Vietnamese whole limbs; not the near synonyms ("dress"
+# is its top, "neck" its face), which other nodes label for real.
+_COMPOSE_WORDS = ("skin", "body skin", "head", "mouth", "clothes", "clothing", "outfit", "person", "body",
+                  "upper clothes", "lower clothes", "apparel")
+add_aliases("sapiens2", {**{word: REGIONS[word] for word in _COMPOSE_WORDS}, **WHOLE_LIMBS}, PARTS)
 
 
 def region_ids(written, english, status):

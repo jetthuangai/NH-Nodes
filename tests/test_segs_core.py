@@ -509,3 +509,16 @@ def test_plural_exceptions():
     for plural, single in (("scarves", "scarf"), ("calves", "calf"), ("hoodies", "hoodie"), ("leaves", "leaf"),
                            ("movies", "movie"), ("ties", "tie")):
         assert segs.label_matches(plural, single) and segs.label_matches(single, plural)
+
+
+def test_a_concept_in_singular_and_plural_is_one_report_line():
+    frame = _frame(_seg("arm", 0.8, (0, 0, 4, 4)))
+    lines = segs.describe_request(segs.parse_concepts("arm, arms"), (frame,), 0.5, {}, ())
+    assert lines == ["arm: 1 found (best 0.80)"]
+
+
+def test_labels_with_accents_typed_apart_are_the_same_label():
+    import unicodedata
+
+    assert segs.label_matches("chân", unicodedata.normalize("NFD", "chân"))
+    assert segs.normalize_label(unicodedata.normalize("NFD", "Tóc_Dài")) == "tóc dài"

@@ -9,6 +9,7 @@ Plain torch/numpy, no model: the select, compose, preview and convert nodes and 
 
 import fnmatch
 import functools
+import unicodedata
 from collections import namedtuple
 from dataclasses import dataclass, replace
 
@@ -202,8 +203,9 @@ def count_segments(segs):
 # Labels
 # ---------------------------------------------------------------------------
 def normalize_label(text):
-    """Lower case, '_' as a space, single spaces: "Red_Car " and "red  car" both become "red car"."""
-    return " ".join(str(text).replace("_", " ").lower().split())
+    """Lower case, '_' as a space, single spaces, accents in one form (keyboards differ): "Red_Car " and "red  car"
+    both become "red car"."""
+    return " ".join(unicodedata.normalize("NFC", str(text)).replace("_", " ").lower().split())
 
 
 # Plurals the usual rules miss (see _singular), and "glasses" kept apart from a drinking glass
