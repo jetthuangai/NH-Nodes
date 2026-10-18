@@ -1,16 +1,8 @@
 import { app } from "../../../scripts/app.js";
+import { findWidget, markDirty, toInt } from "./nh_widget_utils.js";
 
 const NODE_NAME = "NH_LoadImagesFromFolder";
 const COUNT_ENDPOINT = "/nh-nodes/load-images-folder/count";
-
-function findWidget(node, name) {
-    return node.widgets?.find((widget) => widget.name === name);
-}
-
-function toInt(value, fallback) {
-    const parsed = Number.parseInt(value, 10);
-    return Number.isFinite(parsed) ? parsed : fallback;
-}
 
 function wrapIndex(value, count) {
     const index = Math.trunc(value);
@@ -20,9 +12,13 @@ function wrapIndex(value, count) {
     return Math.max(0, index);
 }
 
-async function getImageCount(folderPath) {
+// How many images the node sees in the folder. `recursive` has to be the node's own setting: a recursive node sees the
+// images of the sub-folders too, so counting only the top level would wrap the index too early. The count is asked for
+// on every queue, so a changed folder_path or recursive value is picked up without a cache to refresh.
+async function getImageCount(folderPath, recursive) {
     const url = new URL(COUNT_ENDPOINT, window.location.origin);
     url.searchParams.set("folder_path", folderPath || "");
+    url.searchParams.set("recursive", recursive ? "true" : "false");
 
     try {
         const response = await fetch(url);
@@ -38,8 +34,7 @@ async function getImageCount(folderPath) {
 
 function setWidgetValue(node, widget, value) {
     widget.value = value;
-    node.setDirtyCanvas?.(true, true);
-    app.graph?.setDirtyCanvas?.(true, true);
+    markDirty(node, app.graph);
 }
 
 function installIndexControl(node) {
@@ -51,6 +46,7 @@ function installIndexControl(node) {
     const indexWidget = findWidget(node, "index");
     const stepWidget = findWidget(node, "step");
     const modeWidget = findWidget(node, "seed_mode");
+    const recursiveWidget = findWidget(node, "recursive"); // optional: a node without it counts as not recursive
 
     if (!folderWidget || !indexWidget || !stepWidget || !modeWidget) {
         return;
@@ -61,7 +57,7 @@ function installIndexControl(node) {
     indexWidget.serializeValue = async function () {
         const mode = modeWidget.value || "fixed";
         const step = Math.max(1, toInt(stepWidget.value, 1));
-        const imageCount = await getImageCount(folderWidget.value);
+        const imageCount = await getImageCount(folderWidget.value, Boolean(recursiveWidget?.value));
         let currentIndex = wrapIndex(toInt(indexWidget.value, 0), imageCount);
 
         if (mode === "random") {

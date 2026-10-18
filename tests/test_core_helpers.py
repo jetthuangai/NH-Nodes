@@ -126,6 +126,57 @@ def test_tensor_to_pil_rejects_batches_with_clear_message():
         utils.tensor_to_pil(torch.rand((2, 4, 4, 3)))
 
 
+def _flat(channels, level=0.5):
+    """1x1 image whose channel k holds (10 * (k + 1) + level) / 255, i.e. the byte value 10 * (k + 1)."""
+    return torch.tensor([[[(10 * (k + 1) + level) / 255.0 for k in range(channels)]]])
+
+
+@pytest.mark.parametrize("channels,expected", [(1, (10, 10, 10)), (3, (10, 20, 30)), (4, (10, 20, 30))])
+def test_tensor_to_pil_rgb_always_gives_rgb(channels, expected):
+    pil = utils.tensor_to_pil(_flat(channels), rgb=True)
+    assert pil.mode == "RGB" and pil.getpixel((0, 0)) == expected  # grey is expanded, alpha is dropped
+
+
+@pytest.mark.parametrize(
+    "channels,mode,expected",
+    [(1, "RGB", (10, 10, 10)), (3, "RGB", (10, 20, 30)), (4, "RGBA", (10, 20, 30, 40))],
+)
+def test_tensor_to_pil_keep_alpha_keeps_a_fourth_channel_only(channels, mode, expected):
+    pil = utils.tensor_to_pil(_flat(channels), rgb=True, keep_alpha=True)
+    assert pil.mode == mode and pil.getpixel((0, 0)) == expected
+
+
+def test_tensor_to_pil_two_channel_image_becomes_rgb_whatever_the_flags():
+    for keep_alpha in (False, True):
+        assert utils.tensor_to_pil(_flat(2), rgb=True, keep_alpha=keep_alpha).mode == "RGB"
+
+
+def test_tensor_to_pil_keep_alpha_alone_changes_nothing():
+    for channels, mode in ((1, "L"), (3, "RGB"), (4, "RGBA")):
+        assert utils.tensor_to_pil(_flat(channels), keep_alpha=True).mode == mode
+
+
+def test_tensor_to_pil_flags_are_keyword_only():
+    with pytest.raises(TypeError):
+        utils.tensor_to_pil(_flat(3), True)
+
+
+def test_tensor_to_pil_accepts_a_single_image_batch_with_the_flags():
+    pil = utils.tensor_to_pil(torch.rand((1, 5, 4, 4)), rgb=True, keep_alpha=True)
+    assert pil.mode == "RGBA" and pil.size == (4, 5)
+
+
+# --- pil_to_tensor ---
+
+def test_pil_to_tensor_gives_a_batch_of_one_float32_image():
+    from PIL import Image
+
+    pil = Image.new("RGB", (4, 3), (255, 0, 51))
+    tensor = utils.pil_to_tensor(pil)
+    assert tensor.shape == (1, 3, 4, 3) and tensor.dtype == torch.float32
+    assert torch.allclose(tensor[0, 0, 0], torch.tensor([1.0, 0.0, 51 / 255]))
+
+
 # --- parse_hex_color ---
 
 @pytest.mark.parametrize(

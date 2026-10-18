@@ -12,7 +12,8 @@ import torch
 from PIL import Image
 
 grid = importlib.import_module("NH-Nodes.nodes.image.image_grid_nodes")
-tools = importlib.import_module("NH-Nodes.nodes.image.image_tools_nodes")
+save_image_path = importlib.import_module("NH-Nodes.nodes.image.save_image_path")
+utils = importlib.import_module("NH-Nodes.core.utils")
 
 GIB = 2**30
 
@@ -58,7 +59,7 @@ def test_grid_guard_accepts_big_canvases_whatever_pillow_limit_other_packs_set(
 
 
 def test_grid_estimate_is_the_peak_of_the_canvas_to_tensor_conversion():
-    # PIL keeps an RGB canvas as 4 bytes per pixel; _pil_to_tensor then holds two float32 RGB arrays (astype, / 255.0).
+    # PIL keeps an RGB canvas as 4 bytes per pixel; pil_to_tensor then holds two float32 RGB arrays (astype, / 255.0).
     pil_rgb, float32_rgb = 4, 3 * 4
     peak_per_pixel = pil_rgb + 2 * float32_rgb
 
@@ -69,7 +70,7 @@ def test_grid_estimate_is_the_peak_of_the_canvas_to_tensor_conversion():
 
 def test_grid_estimate_covers_what_the_node_keeps_alive():
     canvas = Image.new("RGB", (64, 48))
-    tensor = grid._pil_to_tensor(canvas)
+    tensor = utils.pil_to_tensor(canvas)
 
     held = tensor.numel() * tensor.element_size() + 64 * 48 * 4  # the IMAGE tensor and the PIL canvas
     assert grid._estimate_canvas_bytes(64, 48) >= held
@@ -183,20 +184,20 @@ def written(monkeypatch):
     """Record the files Save Image Path would write instead of writing them, so that a prefix that escapes the
     target folder cannot leave a stray file on the real disk."""
     paths = []
-    monkeypatch.setattr(tools, "_save_pil_image", lambda image, path, file_format, dpi: paths.append(path))
+    monkeypatch.setattr(save_image_path, "_save_pil_image", lambda image, path, file_format, dpi: paths.append(path))
     return paths
 
 
 @pytest.fixture
 def as_windows(monkeypatch):
     """Judge prefixes by the Windows rules even where the tests run on another OS (a no-op on Windows itself)."""
-    monkeypatch.setattr(tools, "_WINDOWS", True, raising=False)
+    monkeypatch.setattr(save_image_path, "_WINDOWS", True, raising=False)
 
 
 def _save_image_path(tmp_path, prefix, **kwargs):
     settings = dict(folder_path=str(tmp_path / "out"), create_new_folder=False, new_folder_name="")
     settings.update(kwargs)
-    return tools.NH_SaveImagePath().save_images(torch.rand((1, 4, 4, 3)), filename_prefix=prefix, **settings)
+    return save_image_path.NH_SaveImagePath().save_images(torch.rand((1, 4, 4, 3)), filename_prefix=prefix, **settings)
 
 
 def _png_files_outside_out(tmp_path):

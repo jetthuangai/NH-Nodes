@@ -1,4 +1,4 @@
-import numpy as np
+from ...core.mask_ops import mask_bbox
 
 # File này chứa logic cho node Mask Properties (phiên bản gốc).
 
@@ -17,32 +17,19 @@ class NH_MaskProperties:
     CATEGORY = "NH-Nodes/Mask"
 
     def get_properties(self, mask):
-        # Chỉ xử lý mask đầu tiên trong batch
-        m = mask[0]
-        
-        # Chuyển tensor sang numpy array
-        m_np = m.cpu().numpy()
-        
-        # Lấy tọa độ của tất cả các pixel không phải màu đen (giá trị > 0.5)
-        rows, cols = np.where(m_np > 0.5)
-        
+        # Chỉ xử lý mask đầu tiên trong batch; hộp bao quanh các pixel > 0.5
+        bbox = mask_bbox(mask[0].cpu().numpy())
+
         # Xử lý trường hợp mask rỗng (toàn màu đen)
-        if len(rows) == 0:
+        if bbox is None:
             return (0, 0, 0, 0, 0, 0, (0, 0, 0, 0))
-            
-        # Tìm các giá trị min và max để xác định hộp bao quanh
-        x1 = int(np.min(cols))
-        y1 = int(np.min(rows))
-        x2 = int(np.max(cols))
-        y2 = int(np.max(rows))
-        
+
+        x1, y1, x2, y2 = bbox
+
         # Tính toán chiều rộng và chiều cao
         width = x2 - x1 + 1
         height = y2 - y1 + 1
-        
-        # Tạo bounding box tuple để trả về
-        bbox = (x1, y1, x2, y2)
-        
+
         # Trả về tất cả các giá trị theo thứ tự đã định nghĩa
         return (width, height, x1, y1, x2, y2, bbox)
 

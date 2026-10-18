@@ -1,14 +1,11 @@
 import { app } from "../../../scripts/app.js";
+import { chainCallback, findWidget, markDirty } from "./nh_widget_utils.js";
 
 const NODE_NAME = "NH_SmartResolutionPicker";
 const RATIO_RESIZE_NODE_NAME = "NH_RatioPresetImageResize";
 const PRESETS_ENDPOINT = "/nh-nodes/smart-resolution-picker/presets";
 
 let cachedPresetData = null;
-
-function findWidget(node, name) {
-    return node.widgets?.find((widget) => widget.name === name);
-}
 
 async function getPresetData() {
     if (cachedPresetData) {
@@ -45,8 +42,7 @@ function updatePresetDropdown(node, presetData, keepCurrent = true) {
         presetWidget.value = model === presetData.default_model ? presetData.default_preset : presets[0];
     }
 
-    node.setDirtyCanvas?.(true, true);
-    app.graph?.setDirtyCanvas?.(true, true);
+    markDirty(node, app.graph);
 }
 
 function updateRatioDropdown(node, presetData, keepCurrent = true) {
@@ -69,8 +65,7 @@ function updateRatioDropdown(node, presetData, keepCurrent = true) {
         ratioWidget.value = ratios.includes("1:1") ? "1:1" : ratios[0];
     }
 
-    node.setDirtyCanvas?.(true, true);
-    app.graph?.setDirtyCanvas?.(true, true);
+    markDirty(node, app.graph);
 }
 
 function installSmartResolutionPicker(node) {
@@ -87,11 +82,7 @@ function installSmartResolutionPicker(node) {
             return;
         }
 
-        const oldCallback = modelWidget.callback;
-        modelWidget.callback = function () {
-            oldCallback?.apply(this, arguments);
-            updatePresetDropdown(node, presetData, false);
-        };
+        chainCallback(modelWidget, () => updatePresetDropdown(node, presetData, false));
     }).catch((error) => {
         console.warn("[NH-Nodes] Smart Resolution Picker preset update failed:", error);
     });
@@ -112,11 +103,7 @@ function installRatioPresetImageResize(node) {
                 continue;
             }
 
-            const oldCallback = widget.callback;
-            widget.callback = function () {
-                oldCallback?.apply(this, arguments);
-                updateRatioDropdown(node, presetData, false);
-            };
+            chainCallback(widget, () => updateRatioDropdown(node, presetData, false));
         }
     }).catch((error) => {
         console.warn("[NH-Nodes] Ratio Preset Image Resize ratio update failed:", error);

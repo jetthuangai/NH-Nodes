@@ -20,9 +20,12 @@ from PIL import Image
 import comfy.cli_args
 import comfy.sd
 import comfy.utils
+import folder_paths
 from comfy_execution.graph_utils import ExecutionBlocker
 
-tools = importlib.import_module("NH-Nodes.nodes.image.image_tools_nodes")
+folder_loaders = importlib.import_module("NH-Nodes.nodes.image.folder_loaders")
+image_folders = importlib.import_module("NH-Nodes.core.image_folders")
+layer_composite = importlib.import_module("NH-Nodes.nodes.image.layer_composite")
 loaders = importlib.import_module("NH-Nodes.nodes.loaders.loader_index_nodes")
 
 PACK_DIR = Path(__file__).resolve().parent.parent
@@ -40,11 +43,11 @@ def _inside(path, folder):
 # --- 1. Layer Stack Composite is a pure function: it must not opt out of ComfyUI's cache ---
 
 def test_layer_stack_has_no_is_changed_so_it_can_be_cached():
-    assert not hasattr(tools.NH_LayerStackComposite, "IS_CHANGED")
+    assert not hasattr(layer_composite.NH_LayerStackComposite, "IS_CHANGED")
 
 
 def test_layer_stack_depends_only_on_its_inputs():
-    node = tools.NH_LayerStackComposite()
+    node = layer_composite.NH_LayerStackComposite()
     background = torch.zeros(1, 8, 8, 3)
     layer = torch.ones(1, 4, 4, 3)
     first = node.composite(background, 1, "2,2", layer_1=layer)
@@ -79,11 +82,11 @@ def _args(**overrides):
 
 
 def _load(**overrides):
-    return tools.NH_LoadImagesMatching().load_matching(**_args(**overrides))
+    return folder_loaders.NH_LoadImagesMatching().load_matching(**_args(**overrides))
 
 
 def _changed(**overrides):
-    return tools.NH_LoadImagesMatching.IS_CHANGED(**_args(**overrides))
+    return folder_loaders.NH_LoadImagesMatching.IS_CHANGED(**_args(**overrides))
 
 
 # The node only reads the names in the source path, never the folder, so tests use one that does not exist. It also
@@ -179,7 +182,7 @@ def test_source_file_names_give_the_match_text_and_the_context(studio):
 
 
 def test_legacy_person_folder_path_still_names_the_source(studio):
-    _, _, path, _, found = tools.NH_LoadImagesMatching().load_matching(
+    _, _, path, _, found = folder_loaders.NH_LoadImagesMatching().load_matching(
         **_args(matching_root_path=str(studio.root)), person_folder_path=str(studio.source),
     )
     assert found and _norm(path) == _norm(studio.root / "Nu" / "Anh")
@@ -253,7 +256,7 @@ def test_the_models_folder_is_never_entered(tmp_path, monkeypatch):
     _png(work / "Nam" / "Anh" / "01.png", 10)
     models = work / "models"
     _png(models / "previews" / "Anh" / "01.png", 99)
-    monkeypatch.setattr(tools.folder_paths, "models_dir", str(models))
+    monkeypatch.setattr(folder_paths, "models_dir", str(models))
     fs = _Fs(monkeypatch)
     source = _png(tmp_path / "src" / "Anh" / "p.png").parent
     _, _, path, _, found = _load(source_folder_path=str(source), matching_root_path=str(work))
@@ -265,13 +268,13 @@ def test_collecting_images_skips_the_models_folder(tmp_path, monkeypatch):
     _png(tmp_path / "work" / "Anh" / "01.png")
     _png(tmp_path / "work" / "models" / "previews" / "02.png")
     _png(tmp_path / "work" / "models" / "03.png")
-    monkeypatch.setattr(tools.folder_paths, "models_dir", str(tmp_path / "work" / "models"))
+    monkeypatch.setattr(folder_paths, "models_dir", str(tmp_path / "work" / "models"))
     fs = _Fs(monkeypatch)
     # No pictures directly in "work", so the walk goes down, as it always did - but not into the models folder.
-    assert tools._collect_image_files(str(tmp_path / "work")) == [os.path.join("Anh", "01.png")]
+    assert image_folders.collect_image_files(str(tmp_path / "work")) == [os.path.join("Anh", "01.png")]
     assert fs.touched(tmp_path / "work" / "models") == []
     # A folder inside the models folder, named on purpose, is still read.
-    assert tools._collect_image_files(str(tmp_path / "work" / "models"), recursive=True) == [
+    assert image_folders.collect_image_files(str(tmp_path / "work" / "models"), recursive=True) == [
         "03.png", os.path.join("previews", "02.png"),
     ]
 
@@ -279,7 +282,7 @@ def test_collecting_images_skips_the_models_folder(tmp_path, monkeypatch):
 def test_the_models_folder_is_refused_as_a_search_root(tmp_path, monkeypatch):
     models = tmp_path / "models"
     _png(models / "Anh" / "01.png")
-    monkeypatch.setattr(tools.folder_paths, "models_dir", str(models))
+    monkeypatch.setattr(folder_paths, "models_dir", str(models))
     with pytest.raises(ValueError, match="models"):
         _load(source_folder_path=str(tmp_path / "Anh"), matching_root_path=str(models), match_text="Anh")
 
@@ -379,7 +382,7 @@ def test_is_changed_with_a_wired_root_cannot_know_what_to_look_at(studio):
 def test_is_changed_gives_up_on_a_tree_too_big_to_fingerprint(studio, monkeypatch):
     wired = {"source_folder_path": None, "source_file_names": None, "matching_root_path": str(studio.root)}
     assert isinstance(_changed(**wired), str)
-    monkeypatch.setattr(tools, "_SIGNATURE_ENTRY_LIMIT", 3)
+    monkeypatch.setattr(folder_loaders, "_SIGNATURE_ENTRY_LIMIT", 3)
     assert math.isnan(_changed(**wired))
 
 
@@ -406,8 +409,9 @@ def _cache_key(monkeypatch, prompt, node_id):
     from execution import IsChangedCache
 
     for name, cls in (
-        ("NH_LayerStackComposite", tools.NH_LayerStackComposite),
-        ("NH_LoadImagesMatching", tools.NH_LoadImagesMatching),
+        ("NH_LayerStackComposite", layer_composite.NH_LayerStackComposite),
+        ("NH_LoadImagesMatching", folder_loaders.NH_LoadImagesMatching),
+        ("NH_LoadImagesFromFolder", folder_loaders.NH_LoadImagesFromFolder),
         ("NH_Text", _Text),
     ):
         monkeypatch.setitem(comfy_nodes.NODE_CLASS_MAPPINGS, name, cls)
@@ -459,7 +463,7 @@ def test_matching_cache_key_does_not_hold_a_miss(studio, monkeypatch):
 
 def _lazy(**overrides):
     """check_lazy_status the way ComfyUI calls it: every setting, and fallback_images None until it has run."""
-    return tools.NH_LoadImagesMatching().check_lazy_status(**_args(**overrides))
+    return folder_loaders.NH_LoadImagesMatching().check_lazy_status(**_args(**overrides))
 
 
 def _where(studio, **overrides):
@@ -467,7 +471,7 @@ def _where(studio, **overrides):
 
 
 def test_fallback_images_is_the_only_new_input_and_it_is_optional_and_lazy():
-    spec = tools.NH_LoadImagesMatching.INPUT_TYPES()
+    spec = folder_loaders.NH_LoadImagesMatching.INPUT_TYPES()
     assert list(spec["required"]) == [
         "source_folder_path", "matching_root_path", "match_text", "match_mode", "recursive", "index", "step",
         "repeat_count", "context_folder_names",
@@ -475,13 +479,13 @@ def test_fallback_images_is_the_only_new_input_and_it_is_optional_and_lazy():
     assert list(spec["optional"]) == ["source_file_names", "fallback_images"]
     kind, options = spec["optional"]["fallback_images"]
     assert kind == "IMAGE" and options["lazy"] is True
-    assert tools.NH_LoadImagesMatching.RETURN_TYPES == ("IMAGE", "STRING", "STRING", "STRING", "BOOLEAN")
-    assert tools.NH_LoadImagesMatching.RETURN_NAMES == ("images", "filename", "path", "matched_text", "found")
+    assert folder_loaders.NH_LoadImagesMatching.RETURN_TYPES == ("IMAGE", "STRING", "STRING", "STRING", "BOOLEAN")
+    assert folder_loaders.NH_LoadImagesMatching.RETURN_NAMES == ("images", "filename", "path", "matched_text", "found")
 
 
 def test_description_and_tooltip_send_users_to_fallback_images_instead_of_a_switch():
-    description = tools.NH_LoadImagesMatching.DESCRIPTION
-    tooltip = tools.NH_LoadImagesMatching.INPUT_TYPES()["optional"]["fallback_images"][1]["tooltip"]
+    description = folder_loaders.NH_LoadImagesMatching.DESCRIPTION
+    tooltip = folder_loaders.NH_LoadImagesMatching.INPUT_TYPES()["optional"]["fallback_images"][1]["tooltip"]
     for text in (description, tooltip):
         assert "instead of routing images through a switch" in text
     assert "fallback_images" in description and "nothing matches" in description and "found" in description
@@ -573,6 +577,63 @@ def test_cache_key_with_a_fallback_wired_is_stable_on_a_hit_and_never_holds_a_mi
     assert first != _cache_key(monkeypatch, hit, "2")
     miss = prompt(match_text="Zed")
     assert _cache_key(monkeypatch, miss, "2") != _cache_key(monkeypatch, miss, "2")
+
+
+# 2g. Load Images Folder (a different node): IS_CHANGED fingerprints the folder it reads, and gives up on an unknown one
+
+def _folder_changed(folder, **overrides):
+    args = {"folder_path": folder, "index": 0, "step": 1, "seed_mode": "fixed"}
+    args.update(overrides)
+    return folder_loaders.NH_LoadImagesFromFolder.IS_CHANGED(**args)
+
+
+def test_folder_is_changed_follows_the_selected_files_only(tmp_path):
+    folder = tmp_path / "pics"
+    _png(folder / "01.png")
+    _png(folder / "02.png")
+    before = _folder_changed(str(folder))
+    assert isinstance(before, str) and before == _folder_changed(str(folder))
+    _touch(folder / "02.png")  # not selected (index 0, step 1)
+    assert _folder_changed(str(folder)) == before
+    _touch(folder / "01.png")  # selected
+    assert _folder_changed(str(folder)) != before
+    assert _folder_changed(str(folder), index=1) != before  # another selection is another fingerprint
+
+
+def test_folder_is_changed_with_a_wired_folder_is_a_constant_not_the_input_folder(tmp_path, monkeypatch):
+    # ComfyUI passes None for an input that comes from another node, so the folder that will be read is unknown. None
+    # used to resolve to ComfyUI's input folder: the node hashed that folder and never saw a change in the real one.
+    inputs = tmp_path / "input"
+    _png(inputs / "01.png")
+    monkeypatch.setattr(folder_paths, "get_input_directory", lambda: str(inputs))
+    input_signature = _folder_changed("")  # no text at all still means the input folder
+    assert isinstance(input_signature, str)
+    wired = _folder_changed(None)
+    assert isinstance(wired, str) and wired == _folder_changed(None) and wired != input_signature
+
+
+def test_folder_cache_key_is_stable_until_a_selected_file_or_the_wired_path_changes(tmp_path, monkeypatch):
+    folder = tmp_path / "pics"
+    _png(folder / "01.png")
+    settings = {
+        "folder_path": str(folder), "index": 0, "step": 1, "seed_mode": "fixed", "recursive": False,
+        "filename_extension": True, "path_output": "file_path",
+    }
+    typed = {"2": {"class_type": "NH_LoadImagesFromFolder", "inputs": settings}}
+    first = _cache_key(monkeypatch, typed, "2")
+    assert first == _cache_key(monkeypatch, typed, "2")
+    _touch(folder / "01.png")
+    assert first != _cache_key(monkeypatch, typed, "2")
+
+    def wired(path):
+        return {
+            "1": {"class_type": "NH_Text", "inputs": {"value": str(path)}},
+            "2": {"class_type": "NH_LoadImagesFromFolder", "inputs": {**settings, "folder_path": ["1", 0]}},
+        }
+
+    # Same upstream path: cached (nodes downstream are not re-run); another path: runs again.
+    assert _cache_key(monkeypatch, wired(folder), "2") == _cache_key(monkeypatch, wired(folder), "2")
+    assert _cache_key(monkeypatch, wired(folder), "2") != _cache_key(monkeypatch, wired(tmp_path / "other"), "2")
 
 
 # --- 3. Indexed loaders keep what they loaded ---

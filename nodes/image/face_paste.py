@@ -2,14 +2,7 @@ import torch
 import numpy as np
 import cv2 # Cần thư viện OpenCV
 
-def get_bounding_box(mask_np):
-    rows = np.any(mask_np, axis=1)
-    cols = np.any(mask_np, axis=0)
-    if not np.any(rows) or not np.any(cols):
-        return None, None, None, None
-    ymin, ymax = np.where(rows)[0][[0, -1]]
-    xmin, xmax = np.where(cols)[0][[0, -1]]
-    return xmin, ymin, xmax, ymax
+from ...core.mask_ops import mask_bbox
 
 def _to_uint8(image):
     # Clip trước khi ép uint8: giá trị lệch khỏi [0,1] (vd. do resample) sẽ bị wrap về gần 0 nếu không clip.
@@ -60,11 +53,14 @@ class NH_SimpleFacePaste:
         dest_img_np = _to_uint8(dest_image)
         dest_mask_np = dest_mask.cpu().numpy()
 
-        src_x1, src_y1, src_x2, src_y2 = get_bounding_box(src_mask_np > 0.5)
-        dest_x1, dest_y1, dest_x2, dest_y2 = get_bounding_box(dest_mask_np > 0.5)
+        src_box = mask_bbox(src_mask_np)
+        dest_box = mask_bbox(dest_mask_np)
 
-        if src_x1 is None or dest_x1 is None:
+        if src_box is None or dest_box is None:
             return None
+
+        src_x1, src_y1, src_x2, src_y2 = src_box
+        dest_x1, dest_y1, dest_x2, dest_y2 = dest_box
 
         src_face = src_img_np[src_y1:src_y2+1, src_x1:src_x2+1]
         src_face_mask = (np.clip(src_mask_np[src_y1:src_y2+1, src_x1:src_x2+1], 0.0, 1.0) * 255).astype(np.uint8)

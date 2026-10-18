@@ -1,19 +1,11 @@
 import { app } from "../../../scripts/app.js";
+import { chainCallback, clampInt, findWidget, refreshNode } from "./nh_widget_utils.js";
 
 const NODE_NAME = "NH_AnyListSplit";
 const MAX_INDEX_OUTPUTS = 10;
 
-function findWidget(node, name) {
-    return node.widgets?.find((widget) => widget.name === name);
-}
-
-function toInt(value, fallback) {
-    const parsed = Number.parseInt(value, 10);
-    return Number.isFinite(parsed) ? parsed : fallback;
-}
-
 function clampIndexCount(value) {
-    return Math.max(0, Math.min(MAX_INDEX_OUTPUTS, toInt(value, 4)));
+    return clampInt(value, 0, MAX_INDEX_OUTPUTS, 4);
 }
 
 function indexOutputNumber(output) {
@@ -51,9 +43,7 @@ function updateOutputs(node) {
         }
     }
 
-    node.setSize?.(node.computeSize?.() || node.size);
-    node.setDirtyCanvas?.(true, true);
-    app.graph?.setDirtyCanvas?.(true, true);
+    refreshNode(node, app.graph);
 }
 
 function installControls(node) {
@@ -69,11 +59,7 @@ function installControls(node) {
 
     const countWidget = findWidget(node, "index_count");
     if (countWidget) {
-        const oldCallback = countWidget.callback;
-        countWidget.callback = function () {
-            oldCallback?.apply(this, arguments);
-            updateOutputs(node);
-        };
+        chainCallback(countWidget, () => updateOutputs(node));
     }
 
     setTimeout(() => updateOutputs(node), 0);

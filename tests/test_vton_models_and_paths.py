@@ -26,6 +26,7 @@ for path in (COMFY_ROOT, os.path.dirname(PACK_DIR)):
 
 folder_paths = importlib.import_module("folder_paths")
 backend = importlib.import_module("NH-Nodes.core.segformer_backend")
+model_files = importlib.import_module("NH-Nodes.core.model_files")
 ort_session = importlib.import_module("NH-Nodes.nodes.vton.preprocess.ort_session")
 vton = importlib.import_module("NH-Nodes.nodes.vton.vton_preprocessor_nodes")
 
@@ -224,7 +225,7 @@ def test_extension_filter_does_not_change_a_set_comfyui_shares_between_folders(m
 def test_registering_the_extension_filter_twice_changes_nothing(models_root):
     default = str(models_root / "NH-Nodes")
     for _ in range(2):
-        backend.register_model_folder("nh_nodes", default, {".safetensors"})
+        model_files.register_model_folder("nh_nodes", default, {".safetensors"})
     assert folder_paths.folder_names_and_paths["nh_nodes"] == ([default], {".safetensors"})
 
 
@@ -239,7 +240,7 @@ def test_a_failing_extension_filter_does_not_lose_the_registered_locations(model
     monkeypatch.setattr(folder_paths, "folder_names_and_paths", registry)
 
     default = str(models_root / "NH-Nodes")
-    assert backend.register_model_folder("nh_nodes", default, {".safetensors"}) == [user_dir, default]
+    assert model_files.register_model_folder("nh_nodes", default, {".safetensors"}) == [user_dir, default]
     assert "read-only" in capsys.readouterr().out
 
 
@@ -278,9 +279,21 @@ def test_extra_model_paths_location_is_found_and_wins_over_the_default(models_ro
 
 def test_registering_twice_does_not_duplicate_the_default(models_root):
     default = str(models_root / "NH-Nodes")
-    assert backend.register_model_folder("nh_nodes", default) == [default]
-    assert backend.register_model_folder("nh_nodes", default) == [default]
+    assert model_files.register_model_folder("nh_nodes", default) == [default]
+    assert model_files.register_model_folder("nh_nodes", default) == [default]
     assert folder_paths.get_folder_paths("nh_nodes") == [default]
+
+
+def test_unique_dirs_keeps_the_first_spelling_and_the_order(tmp_path):
+    a, b = tmp_path / "a", tmp_path / "b"
+    spellings = [str(a), str(b), str(a / ".." / "a"), str(b) + os.sep, str(tmp_path / "c")]
+    assert model_files.unique_dirs(spellings) == [str(a), str(b), str(tmp_path / "c")]
+    assert model_files.unique_dirs([]) == []
+
+
+def test_segformer_and_vton_use_the_same_model_helpers():
+    for name in ("register_model_folder", "download_pinned", "make_room_on_gpu"):
+        assert getattr(backend, name) is getattr(model_files, name) is getattr(vton, name)
 
 
 def test_incomplete_model_folder_is_skipped_and_the_next_candidate_is_used(models_root, hub):
@@ -658,7 +671,7 @@ def ready_loaders(stub_loaders):
 
 def test_cuda_load_asks_comfyui_for_room_before_creating_sessions(ready_loaders, monkeypatch, cuda_spy):
     comfy = _FakeComfyMemory(ready_loaders)
-    monkeypatch.setattr(backend, "_mm", comfy)
+    monkeypatch.setattr(model_files, "_mm", comfy)
     vton.NH_VTonUltimateProcessor().load_model("cuda")
 
     assert [event[0] for event in ready_loaders] == ["free_memory", "soft_empty_cache", "detector", "parsing"]
@@ -669,13 +682,13 @@ def test_cuda_load_asks_comfyui_for_room_before_creating_sessions(ready_loaders,
 
 
 def test_cpu_load_never_touches_comfyui_memory(ready_loaders, monkeypatch, cuda_spy):
-    monkeypatch.setattr(backend, "_mm", _FakeComfyMemory(ready_loaders))
+    monkeypatch.setattr(model_files, "_mm", _FakeComfyMemory(ready_loaders))
     vton.NH_VTonUltimateProcessor().load_model("cpu")
     assert [event[0] for event in ready_loaders] == ["detector", "parsing"]
 
 
 def test_cuda_request_without_the_cuda_provider_does_not_evict_comfyui_models(ready_loaders, fake_ort, monkeypatch, cuda_spy):
-    monkeypatch.setattr(backend, "_mm", _FakeComfyMemory(ready_loaders))
+    monkeypatch.setattr(model_files, "_mm", _FakeComfyMemory(ready_loaders))
     fake_ort.available = ["CPUExecutionProvider"]  # CPU-only onnxruntime wheel
     fake_ort.working = {"CPUExecutionProvider"}
     vton.NH_VTonUltimateProcessor().load_model("cuda")
@@ -683,7 +696,7 @@ def test_cuda_request_without_the_cuda_provider_does_not_evict_comfyui_models(re
 
 
 def test_cuda_run_that_falls_back_asks_for_room_once_then_stops_evicting(ready_loaders, fake_ort, monkeypatch, cuda_spy):
-    monkeypatch.setattr(backend, "_mm", _FakeComfyMemory(ready_loaders))
+    monkeypatch.setattr(model_files, "_mm", _FakeComfyMemory(ready_loaders))
     fake_ort.working = {"CPUExecutionProvider"}  # onnxruntime-gpu is installed, but CUDA/cuDNN do not start
 
     # First run: nothing says yet that the GPU is unusable, so ComfyUI is asked, once.
@@ -703,7 +716,7 @@ def test_cuda_run_that_falls_back_asks_for_room_once_then_stops_evicting(ready_l
 
 
 def test_cuda_runs_on_the_gpu_keep_asking_for_room_and_release(ready_loaders, monkeypatch, cuda_spy):
-    monkeypatch.setattr(backend, "_mm", _FakeComfyMemory(ready_loaders))
+    monkeypatch.setattr(model_files, "_mm", _FakeComfyMemory(ready_loaders))
     for _ in range(2):
         ready_loaders.clear()
         _process("cuda")
@@ -725,7 +738,7 @@ def test_load_model_uses_the_resolved_folder_and_caches_per_device(stub_loaders,
 
 
 def test_switching_device_drops_the_old_sessions_first(ready_loaders, monkeypatch, cuda_spy):
-    monkeypatch.setattr(backend, "_mm", _FakeComfyMemory(ready_loaders))
+    monkeypatch.setattr(model_files, "_mm", _FakeComfyMemory(ready_loaders))
     node = vton.NH_VTonUltimateProcessor()
     cuda_ref = weakref.ref(node.load_model("cuda")["dwprocessor"])
     ready_loaders.clear()
@@ -735,7 +748,7 @@ def test_switching_device_drops_the_old_sessions_first(ready_loaders, monkeypatc
 
 
 def test_switching_device_away_from_cpu_fallback_sessions_does_not_flush_torchs_cache(ready_loaders, fake_ort, monkeypatch, cuda_spy):
-    monkeypatch.setattr(backend, "_mm", _FakeComfyMemory(ready_loaders))
+    monkeypatch.setattr(model_files, "_mm", _FakeComfyMemory(ready_loaders))
     fake_ort.working = {"CPUExecutionProvider"}
     node = vton.NH_VTonUltimateProcessor()
     cuda_ref = weakref.ref(node.load_model("cuda")["dwprocessor"])
@@ -807,16 +820,16 @@ def test_cpu_requests_are_never_a_fallback(fake_ort):
 # --- the shared GPU helper -------------------------------------------------------------------------
 def test_make_room_is_a_noop_without_cuda_in_comfy_cpu_mode_or_outside_comfyui(monkeypatch):
     events = []
-    monkeypatch.setattr(backend, "_mm", _FakeComfyMemory(events))
+    monkeypatch.setattr(model_files, "_mm", _FakeComfyMemory(events))
     monkeypatch.setattr(torch.cuda, "is_available", lambda: False)
-    backend.make_room_on_gpu(GIB)
+    model_files.make_room_on_gpu(GIB)
 
     monkeypatch.setattr(torch.cuda, "is_available", lambda: True)
-    monkeypatch.setattr(backend, "_mm", _FakeComfyMemory(events, device=torch.device("cpu")))  # ComfyUI --cpu
-    backend.make_room_on_gpu(GIB)
+    monkeypatch.setattr(model_files, "_mm", _FakeComfyMemory(events, device=torch.device("cpu")))  # ComfyUI --cpu
+    model_files.make_room_on_gpu(GIB)
 
-    monkeypatch.setattr(backend, "_mm", None)
-    backend.make_room_on_gpu(GIB)
+    monkeypatch.setattr(model_files, "_mm", None)
+    model_files.make_room_on_gpu(GIB)
     assert events == []
 
 
@@ -824,8 +837,8 @@ def test_make_room_asks_for_the_size_plus_the_reserve_comfyui_keeps_for_itself(m
     events = []
     comfy = _FakeComfyMemory(events)
     monkeypatch.setattr(torch.cuda, "is_available", lambda: True)
-    monkeypatch.setattr(backend, "_mm", comfy)
-    backend.make_room_on_gpu(GIB)
+    monkeypatch.setattr(model_files, "_mm", comfy)
+    model_files.make_room_on_gpu(GIB)
     # ComfyUI's own loaders ask for their size plus extra_reserved_memory(); asking for less would leave us short.
     assert events == [("free_memory", GIB + comfy.reserved, torch.device("cuda", 0)), ("soft_empty_cache",)]
 
@@ -837,8 +850,8 @@ def test_make_room_on_a_comfyui_without_extra_reserved_memory_asks_for_the_size_
         extra_reserved_memory = None  # the function does not exist in older ComfyUI builds
 
     monkeypatch.setattr(torch.cuda, "is_available", lambda: True)
-    monkeypatch.setattr(backend, "_mm", OlderComfy(events))
-    backend.make_room_on_gpu(GIB)
+    monkeypatch.setattr(model_files, "_mm", OlderComfy(events))
+    model_files.make_room_on_gpu(GIB)
     assert events[0] == ("free_memory", GIB, torch.device("cuda", 0))
 
 
@@ -848,8 +861,8 @@ def test_make_room_reports_comfyui_errors_instead_of_failing_the_run(monkeypatch
             raise RuntimeError("model list changed")
 
     monkeypatch.setattr(torch.cuda, "is_available", lambda: True)
-    monkeypatch.setattr(backend, "_mm", Broken([]))
-    backend.make_room_on_gpu(GIB)  # must not raise
+    monkeypatch.setattr(model_files, "_mm", Broken([]))
+    model_files.make_room_on_gpu(GIB)  # must not raise
     assert "model list changed" in capsys.readouterr().out
 
 
@@ -871,7 +884,7 @@ def test_segformer_asks_comfyui_for_room_using_comfyuis_own_device(monkeypatch):
     events = []
     comfy = _FakeComfyMemory(events)
     monkeypatch.setattr(torch.cuda, "is_available", lambda: True)
-    monkeypatch.setattr(backend, "_mm", comfy)
+    monkeypatch.setattr(model_files, "_mm", comfy)
     model = _FakeSegformer(torch.device("cpu"))
     backend._ensure_on_device({"model": model, "device": torch.device("cuda")})
 
@@ -884,7 +897,7 @@ def test_segformer_asks_comfyui_for_room_using_comfyuis_own_device(monkeypatch):
 def test_segformer_already_on_the_gpu_is_not_moved_or_evicted_again(monkeypatch):
     events = []
     monkeypatch.setattr(torch.cuda, "is_available", lambda: True)
-    monkeypatch.setattr(backend, "_mm", _FakeComfyMemory(events))
+    monkeypatch.setattr(model_files, "_mm", _FakeComfyMemory(events))
     model = _FakeSegformer(torch.device("cuda", 0))  # what .to("cuda") leaves behind
     backend._ensure_on_device({"model": model, "device": torch.device("cuda")})
     assert events == [] and model.moved_to == []

@@ -1,23 +1,7 @@
 import torch
 import numpy as np
 
-def get_bounding_box_and_ratio(mask_tensor):
-    """Tính toán bounding box và tỷ lệ (width / height) từ một mask tensor."""
-    m_np = mask_tensor.cpu().numpy()
-    rows, cols = np.where(m_np > 0.5)
-
-    if len(rows) == 0:
-        return None, 1.0 # Trả về None và tỷ lệ 1:1 nếu mask rỗng
-
-    ymin, ymax = np.min(rows), np.max(rows)
-    xmin, xmax = np.min(cols), np.max(cols)
-
-    bbox = (xmin, ymin, xmax, ymax)
-    width = xmax - xmin + 1
-    height = ymax - ymin + 1
-
-    aspect_ratio = width / height if height > 0 else 1.0
-    return bbox, aspect_ratio
+from ...core.mask_ops import mask_bbox
 
 
 def _fit_window(start, length, limit):
@@ -110,16 +94,17 @@ class NH_MaskAspectRatioMatch:
 
         adjusted = []
         for index in range(masks.shape[0]):
-            # Batch của mask A ngắn hơn thì lặp lại vòng tròn
-            bbox_a, _ = get_bounding_box_and_ratio(targets[index % targets.shape[0]])
-            bbox_b, _ = get_bounding_box_and_ratio(masks[index])
+            mask_np = masks[index].cpu().numpy()
+            bbox_b = mask_bbox(mask_np)
             if bbox_b is None:
                 adjusted.append(masks[index]) # Mask B rỗng: giữ nguyên
                 continue
 
+            # Batch của mask A ngắn hơn thì lặp lại vòng tròn
+            bbox_a = mask_bbox(targets[index % targets.shape[0]].cpu().numpy())
             # Mask A rỗng thì coi như tỷ lệ 1:1
             target_size = (1, 1) if bbox_a is None else (bbox_a[2] - bbox_a[0] + 1, bbox_a[3] - bbox_a[1] + 1)
-            output_np = _adjust_mask(masks[index].cpu().numpy(), bbox_b, target_size, mode)
+            output_np = _adjust_mask(mask_np, bbox_b, target_size, mode)
             adjusted.append(torch.from_numpy(output_np).to(masks.device))
 
         return (torch.stack(adjusted),)

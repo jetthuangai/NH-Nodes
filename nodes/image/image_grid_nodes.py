@@ -1,6 +1,7 @@
-import numpy as np
 import torch
 from PIL import Image, ImageColor
+
+from ...core.utils import pil_to_tensor, tensor_to_pil
 
 try:
     import psutil
@@ -14,7 +15,7 @@ _RESAMPLING = getattr(Image, "Resampling", Image)
 # (Image.MAX_IMAGE_PIXELS): that limit is process-wide, other packs raise or disable it, and it only applies to
 # Image.open, never to an IMAGE that stays in memory.
 #
-# Peak RAM per canvas pixel, reached inside _pil_to_tensor (measured 28.1-28.2 B/px on Windows, Pillow 11, NumPy 2):
+# Peak RAM per canvas pixel, reached inside pil_to_tensor (measured 28.1-28.2 B/px on Windows, Pillow 11, NumPy 2):
 #   4 B   the PIL canvas (Pillow stores an RGB image as 4 bytes per pixel)
 #  12 B   the float32 array from astype(np.float32)
 #  12 B   the float32 result of "/ 255.0" (NumPy only reuses that temporary on Linux)
@@ -71,24 +72,12 @@ def _check_canvas_size(canvas_width, canvas_height, columns, rows, cell_width, c
 
 
 def _parse_hex_color(value, default):
+    # Pillow's own parser, not core.utils.parse_hex_color: it also reads CSS names and rgb(...), and it needs the '#'.
+    # Kept so that every background colour the node accepted before still gives the same fill.
     try:
         return ImageColor.getrgb((value or "").strip())
     except Exception:
         return default
-
-
-def _tensor_to_pil(image_tensor):
-    array = np.clip(255.0 * image_tensor.cpu().numpy(), 0, 255).astype(np.uint8)
-    if array.ndim == 2:
-        return Image.fromarray(array).convert("RGB")
-    if array.ndim == 3 and array.shape[-1] == 1:
-        return Image.fromarray(array[:, :, 0]).convert("RGB")
-    return Image.fromarray(array).convert("RGB")
-
-
-def _pil_to_tensor(image):
-    array = np.array(image).astype(np.float32) / 255.0
-    return torch.from_numpy(array).unsqueeze(0)
 
 
 def _first_value(value):
@@ -110,10 +99,10 @@ def _flatten_images(images):
             raise TypeError(f"Expected IMAGE tensor input, got {type(image_item).__name__}")
 
         if image_item.ndim == 3:
-            pil_images.append(_tensor_to_pil(image_item))
+            pil_images.append(tensor_to_pil(image_item, rgb=True))
         elif image_item.ndim == 4:
             for batch_index in range(int(image_item.shape[0])):
-                pil_images.append(_tensor_to_pil(image_item[batch_index]))
+                pil_images.append(tensor_to_pil(image_item[batch_index], rgb=True))
         else:
             raise ValueError(f"Unsupported IMAGE tensor shape: {tuple(image_item.shape)}")
 
@@ -244,7 +233,7 @@ class NH_ImageGridComposite:
                 f"{image_index}: x={x}, y={y}, w={cell_width}, h={cell_height}, source={source.width}x{source.height}"
             )
 
-        return (_pil_to_tensor(canvas), slot_count, used_count, "\n".join(info_lines))
+        return (pil_to_tensor(canvas), slot_count, used_count, "\n".join(info_lines))
 
 
 NODE_CLASS_MAPPINGS = {

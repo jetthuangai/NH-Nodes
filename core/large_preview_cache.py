@@ -10,9 +10,10 @@ import uuid
 from pathlib import Path
 
 import folder_paths
-import numpy as np
 import torch
 from PIL import Image, ImageChops, ImageDraw
+
+from .utils import tensor_to_pil
 
 
 CACHE_SUBDIR = "nh_large_preview"
@@ -137,21 +138,6 @@ def delete_cache(cache_id):
         "cache_id": validate_cache_id(cache_id),
         "path": str(cache_dir),
     }
-
-
-def _tensor_to_pil(image_tensor):
-    if not isinstance(image_tensor, torch.Tensor):
-        raise TypeError(f"Expected IMAGE tensor, got {type(image_tensor).__name__}")
-
-    array = image_tensor.detach().cpu().numpy()
-    array = np.clip(array * 255.0, 0, 255).astype(np.uint8)
-    if array.ndim == 2:
-        return Image.fromarray(array).convert("RGB")
-    if array.ndim == 3 and array.shape[-1] == 1:
-        return Image.fromarray(array[:, :, 0]).convert("RGB")
-    if array.ndim == 3 and array.shape[-1] == 4:
-        return Image.fromarray(array).convert("RGBA")
-    return Image.fromarray(array).convert("RGB")
 
 
 def _preview_dimensions(width, height, preview_megapixels):
@@ -292,7 +278,9 @@ def create_preview_cache(
     batch_index=0,
     batch_count=1,
 ):
-    source = _tensor_to_pil(image_tensor)
+    if not isinstance(image_tensor, torch.Tensor):
+        raise TypeError(f"Expected IMAGE tensor, got {type(image_tensor).__name__}")
+    source = tensor_to_pil(image_tensor, rgb=True, keep_alpha=True)
     source_width, source_height = source.size
     preview_width, preview_height = _preview_dimensions(source_width, source_height, preview_megapixels)
     preview = source.copy()
