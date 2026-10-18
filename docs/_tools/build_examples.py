@@ -1,14 +1,15 @@
 """Build the example pictures of the NH-Nodes guides by running the real node code on open-licensed sample photos.
 
 Run with ComfyUI's Python from the ComfyUI root:
-    python custom_nodes/NH-Nodes/docs/_tools/build_examples.py [assets_dir] [--only a.jpg,b.jpg]
+    python custom_nodes/NH-Nodes/docs/_tools/build_examples.py [assets_dir] [--only a.jpg,b.jpg] [--gpu]
 It writes <assets_dir>/examples/*.jpg and <assets_dir>/banner.jpg (default assets_dir: docs/assets of the pack).
 
 Every picture is made from the live node classes, called the way ComfyUI calls them, so the examples cannot drift
 from the code: rerun the script after a node changes. The photos are the public-domain / CC0 sample images that ship
 with scikit-image (astronaut, coffee, chelsea, rocket). The script is deterministic and runs on the CPU only: the GPU
-is hidden before torch loads, so a ComfyUI server that is running at the same time is never disturbed. An example whose
-models are missing is skipped (and reported); nothing is downloaded.
+is hidden before torch loads, so a ComfyUI server that is running at the same time is never disturbed. The one
+exception is the SAM 3 example, which needs a CUDA GPU: it is built only with --gpu, which leaves the GPU visible (SAM 3
+goes back to RAM after its run). An example whose models are missing is skipped (and reported); nothing is downloaded.
 """
 
 import argparse
@@ -23,7 +24,9 @@ import warnings
 from dataclasses import dataclass
 from pathlib import Path
 
-os.environ["CUDA_VISIBLE_DEVICES"] = "-1"  # CPU only. (An empty value would be dropped by Windows, so use -1.)
+GPU = "--gpu" in sys.argv[1:]  # read before torch loads: only the SAM 3 example needs the GPU
+if not GPU:
+    os.environ["CUDA_VISIBLE_DEVICES"] = "-1"  # CPU only. (An empty value would be dropped by Windows, so use -1.)
 warnings.filterwarnings("ignore")
 if hasattr(sys.stdout, "reconfigure"):
     sys.stdout.reconfigure(encoding="utf-8", errors="replace")
@@ -46,7 +49,7 @@ from PIL import Image, ImageChops, ImageDraw, ImageFilter, ImageFont  # noqa: E4
 
 from comfy.cli_args import args  # noqa: E402
 
-args.cpu = True  # before the pack imports comfy.model_management
+args.cpu = not GPU  # before the pack imports comfy.model_management
 torch.set_num_threads(max(1, min(8, os.cpu_count() or 1)))  # leave the rest of the machine to its other users
 
 PACK_DIR = COMFY_ROOT / "custom_nodes" / "NH-Nodes"
@@ -1056,6 +1059,51 @@ def ex_vton_masks():
                         "pose, body parsing and the try-on mask of a person photo")
 
 
+SAM3_CONCEPTS = "person, helmet, face"
+
+
+@example("sam3-segment.jpg")
+def ex_sam3_segment():
+    if not GPU or not torch.cuda.is_available():
+        raise Skip("SAM 3 needs a CUDA GPU: run with --gpu")
+    if importlib.util.find_spec("sam3") is None:
+        raise Skip("the sam3 package is not installed")
+    try:
+        importlib.import_module("NH-Nodes.core.sam3_backend").resolve_checkpoint("sam3.pt")
+    except RuntimeError:
+        raise Skip("models/sam3/sam3.pt is missing") from None
+    image = photo("astronaut")
+    segs, _mask, count = run("NH_SAM3Segment", image=to_tensor(image), concepts=SAM3_CONCEPTS, threshold=0.5,
+                             detail_level="balanced", max_per_concept=0, checkpoint="sam3.pt",
+                             keep_model_loaded=False)
+    (preview,) = run("NH_SegsPreview", image=to_tensor(image), segs=segs)
+
+    def compose(expression):
+        (mask,) = run("NH_SegsCompose", segs=segs, expression=expression)
+        return mask_array(mask)
+
+    _biggest, biggest_mask, biggest_count = run("NH_SegsSelect", segs=segs, labels="helmet", min_score=0.0,
+                                                min_area=0.0, max_area=1.0, sort_by="area", start=0, count=1)
+    if biggest_count != 1:
+        raise RuntimeError("SAM 3 found no helmet in the astronaut photo")
+    top = Row(
+        [Tile(image, "image", "input photo"), ARROW,
+         Tile(to_pil(preview), "Segs Preview", f"concepts: {SAM3_CONCEPTS}")],
+        "SAM3 Segment (NH)  →  Segs Preview (NH)", f"{count} instances · threshold 0.5 · detail_level balanced",
+        max_h=470,
+    )
+    bottom = Row(
+        [Tile(masked(image, Layer(compose("person - face"), TEAL, 0.45, 2.0)), "person - face",
+              "Segs Compose: the person without the face", aspect=1.0),
+         Tile(masked(image, Layer(compose("~person"), TEAL, 0.45, 2.0)), "~person",
+              "Segs Compose: everything except the person", aspect=1.0),
+         Tile(masked(image, Layer(compose("helmet"), TEAL, 0.0, 1.6), Layer(mask_array(biggest_mask), AMBER, 0.5, 2.2)),
+              "Segs Select", "labels helmet · sort_by area · count 1: the biggest helmet", aspect=1.0)],
+        "Segs Compose and Segs Select (NH)", "masks from the labels", max_h=330,
+    )
+    return render_panel([top, bottom])
+
+
 # ---------------------------------------------------------------------------------------------------------------
 # Banner
 # ---------------------------------------------------------------------------------------------------------------
@@ -1204,6 +1252,7 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__.split("\n")[0])
     parser.add_argument("assets_dir", nargs="?", default=str(PACK_DIR / "docs" / "assets"))
     parser.add_argument("--only", default="", help="comma separated file names to build (default: all)")
+    parser.add_argument("--gpu", action="store_true", help="leave the GPU visible so the SAM 3 example is built too")
     options = parser.parse_args()
     assets = Path(options.assets_dir)
     wanted = {name.strip() for name in options.only.split(",") if name.strip()}

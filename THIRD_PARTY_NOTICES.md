@@ -16,6 +16,7 @@ MIT license.
 | `VTON Ultimate Processor (NH)` | **No** | Its code and parsing models are CC BY-NC-SA 4.0 (FitDiT / OOTDiffusion) |
 | `Portrait Segment (NH)` | **No** | The face-parsing model card restricts use to non-commercial research and education |
 | `Garment Segment (NH)` | Unclear | The model uploader does not declare a license |
+| `SAM3 Segment (NH)` | Yes, within trade-control limits | Meta's SAM License is royalty-free and has no non-commercial clause, but it forbids ITAR-regulated activities and uses that trade controls prohibit (military or warfare, nuclear, espionage, guns and illegal weapons). The model and the `sam3` package are not part of NH-Nodes: you get them from Meta |
 
 ## Source code bundled in this repository
 
@@ -55,8 +56,38 @@ They are looked up first in the folders registered as `vton_mask` and `nh_nodes`
 | Portrait Segment | [`jonathandinu/face-parsing`](https://huggingface.co/jonathandinu/face-parsing) @ `758b82e` | SegFormer fine-tuned on CelebAMask-HQ | Model card: "non-commercial research and educational purposes" |
 | Garment Segment | [`1038lab/segformer_fashion`](https://huggingface.co/1038lab/segformer_fashion) @ `e5bae2d` | SegFormer trained for Fashionpedia classes | No license declared by the uploader (Fashionpedia annotations are CC BY 4.0) |
 
+## Software and models you install yourself
+
+`SAM3 Segment (NH)` runs Meta's SAM 3. NH-Nodes neither bundles nor downloads it, and the
+nodes only load it when you use them. You get both parts from Meta and accept Meta's terms
+yourself.
+
+| What | Where it comes from | Terms |
+|------|---------------------|-------|
+| `sam3` package (code) | [`facebookresearch/sam3`](https://github.com/facebookresearch/sam3), installed by the user with pip | SAM License |
+| SAM 3 checkpoint `sam3.pt` | [`facebook/sam3`](https://huggingface.co/facebook/sam3) on Hugging Face, a gated repository: access is granted after the user accepts the license. It goes in the `sam3` model folder (`models/sam3`, or any location added under `sam3` in `extra_model_paths.yaml`), which other SAM 3 packs share | SAM License |
+
+The [SAM License](https://github.com/facebookresearch/sam3/blob/main/LICENSE) (Meta, last
+updated 19 November 2025) is a non-exclusive, worldwide, non-transferable, royalty-free
+limited license to use, reproduce, distribute, copy, modify and create derivative works of
+the SAM Materials. It does not mention commercial use. What matters to a user of NH-Nodes:
+
+- **Trade controls.** You must not be a target of trade controls and must comply with them.
+  The materials may not be used for activities subject to the International Traffic in Arms
+  Regulations (ITAR), or for end uses that trade controls prohibit, including military or
+  warfare purposes, nuclear industries or applications, espionage, and the development or
+  use of guns or illegal weapons.
+- Whoever redistributes the SAM Materials must include a copy of the license. NH-Nodes does
+  not redistribute them.
+- Research publications that use the SAM Materials must acknowledge it.
+- The materials may not be used to reverse engineer or decompile them, nor to encourage
+  others to.
+- They are provided "as is", and Meta may terminate the license if you breach it.
+
 ## Python dependencies
 
 Dependencies listed in `requirements.txt` are installed from PyPI and are not
 redistributed here; each keeps its own license. ONNX Runtime (MIT) is optional
-and only needed by the VTON node.
+and only needed by the VTON node. The `sam3` package (SAM License) and its extras
+(`timm`, `ftfy`, `regex`, `iopath`) are optional too: only `SAM3 Segment (NH)` needs
+them, and you install them yourself.

@@ -11,10 +11,10 @@
 
 # NH-Nodes for ComfyUI
 
-**69 production-focused nodes** for ComfyUI: load and save image sets with their metadata, tile and composite large
+**75 production-focused nodes** for ComfyUI: load and save image sets with their metadata, tile and composite large
 images, pick the right resolution for current models and put results back into the original frame, refine masks,
-segment garments and faces, build VTON masks, route workflows with lazy switches, generate prompts, and test many
-LoRAs or models from one node.
+segment garments and faces, find every person, window or sky by name with SAM 3, build VTON masks, route workflows
+with lazy switches, generate prompts, and test many LoRAs or models from one node.
 
 Every node is documented with a visual card, its inputs and outputs, and examples — in
 [English](docs/en/README.md) and [Vietnamese](docs/vi/README.md).
@@ -32,8 +32,9 @@ Every node is documented with a visual card, its inputs and outputs, and example
   </tr>
   <tr>
     <td><a href="docs/en/vision.md"><img src="docs/assets/examples/garment-segment.jpg" alt="Garment segmentation"></a><br>
-      <b>Segmentation</b> — garment and face-part masks from SegFormer models, plus VTON garment masks with pose and
-      parsing.</td>
+      <b>Segmentation</b> — name what you want (people, windows, the sky) and SAM 3 returns every instance as its own
+      mask, with crisp edges on small and medium objects even in 4K–8K photos; garment and face-part masks from
+      SegFormer models; VTON garment masks with pose and parsing.</td>
     <td><a href="docs/en/mask.md"><img src="docs/assets/examples/mask-morphology.jpg" alt="Mask morphology"></a><br>
       <b>Mask tools</b> — fast grow / shrink on the CPU or the GPU, hole filling, soft edges, bounding boxes and
       aspect-ratio matching.</td>
@@ -66,7 +67,8 @@ cd NH-Nodes
 python -m pip install -r requirements.txt
 ```
 
-Restart ComfyUI afterwards. Requirements: a recent ComfyUI (tested with 0.41) and Python 3.10+.
+Restart ComfyUI afterwards. Requirements: a recent ComfyUI (tested with 0.41) and Python 3.10+. **SAM3 Segment** has
+more requirements, listed below.
 
 ### Optional: VTON and segmentation models
 
@@ -81,7 +83,12 @@ Restart ComfyUI afterwards. Requirements: a recent ComfyUI (tested with 0.41) an
       base_path: D:/ai-models/
       nh_nodes: NH-Nodes/            # SegFormer models (garment, face parsing)
       vton_mask: ComfyUI-Vton-Mask/  # VTON pose + parsing ONNX models
+      sam3: sam3/                    # SAM 3 checkpoint (you download sam3.pt yourself)
   ```
+- **Requirements for SAM 3** (SAM3 Segment only): an NVIDIA GPU with CUDA, Meta's `sam3` package and the `sam3.pt`
+  checkpoint. NH-Nodes installs and downloads none of them: you install the package yourself and request the weights
+  from Meta. The steps, and what to do if another SAM 3 pack is already installed, are in
+  [Before you start with SAM 3](docs/en/vision.md#before-you-start-with-sam-3).
 
 ## Quick start
 
@@ -90,6 +97,7 @@ Restart ComfyUI afterwards. Requirements: a recent ComfyUI (tested with 0.41) an
 | Upscale or refine a huge image piece by piece | Load Image → **Image Tile** → your sampler/upscaler per tile → **Image Untile** | [image-compose](docs/en/image-compose.md#image-tile-nh) |
 | Generate at the model's native size, then restore the original framing | Load Image → **NH Smart Ratio Image Resize** → edit → **NH Restore Image Geometry** | [resolution](docs/en/resolution.md) |
 | Inpaint only the clothes | Load Image → **Garment Segment** → **Mask Morphology** (grow) → inpaint | [vision](docs/en/vision.md) |
+| Mask every person, window or the sky in a large photo | Load Image → **SAM3 Segment** → **Segs Select** or **Segs Compose** → mask → edit or inpaint | [vision](docs/en/vision.md#sam-3-workflows) |
 | Compare many LoRAs, one per queue | **Counter** → **Load LoRA Model Index** (index) → sampler → **Image Label** (prints the LoRA name) → Save Image | [loaders](docs/en/loaders.md) |
 | Run one of two branches without executing the other | condition → **If/Else** (lazy) → … | [logic](docs/en/logic.md#ifelse-nh) |
 
@@ -103,7 +111,7 @@ Restart ComfyUI afterwards. Requirements: a recent ComfyUI (tested with 0.41) an
 | Image — mask-based retouch | NH Mask-Aware Resize, NH Agnostic Image Generator, NH Simple Face Paste | [EN](docs/en/image-retouch.md) · [VI](docs/vi/image-retouch.md) |
 | Resolution | NH Smart Resolution Picker, NH Smart Ratio Image Resize, NH Ratio Preset Image Resize, NH Remove Resize Padding, NH Restore Image Geometry | [EN](docs/en/resolution.md) · [VI](docs/vi/resolution.md) |
 | Mask | Mask Morphology, Mask Properties, NH Create Box Mask, NH Mask Aspect Ratio Match | [EN](docs/en/mask.md) · [VI](docs/vi/mask.md) |
-| Vision | Garment Segment, Portrait Segment | [EN](docs/en/vision.md) · [VI](docs/vi/vision.md) |
+| Vision | Garment Segment, Portrait Segment, SAM3 Segment, Segs Select, Segs Compose, Segs To Masks, Segs To Impact SEGS, Segs Preview | [EN](docs/en/vision.md) · [VI](docs/vi/vision.md) |
 | VTON | VTON Ultimate Processor | [EN](docs/en/vton.md) · [VI](docs/vi/vton.md) |
 | Logic | Compare, Logic Gate, If/Else, Switch N, Any Switch, Any Branch Switch, Gate Switch, Value Match Index, Math Eval, Random Choice | [EN](docs/en/logic.md) · [VI](docs/vi/logic.md) |
 | Text | Prompt Template, Prompt Scheduler, String Operations, Prompt Join, Text Split, Regex Extract, Text Index, Text Concatenate, Text Split Lines, Text Random Line | [EN](docs/en/text.md) · [VI](docs/vi/text.md) |
@@ -128,6 +136,9 @@ NH-Nodes' own code is [MIT](LICENSE). Some features rely on third-party code or 
 - **VTON Ultimate Processor** and **Portrait Segment** are for **non-commercial use only** (CC BY-NC-SA 4.0 code and
   parsing models; non-commercial face-parsing model).
 - **Garment Segment**'s model does not declare a licence.
+- **SAM3 Segment** uses Meta's SAM 3 under the SAM License: royalty-free, with no non-commercial clause, but it bars
+  military or warfare, nuclear, espionage, and gun or illegal-weapon uses. The weights and the `sam3` package are not
+  included; you get them from Meta.
 
 ## Development
 
