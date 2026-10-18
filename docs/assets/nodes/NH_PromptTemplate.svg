@@ -1,0 +1,23 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="360" height="229" viewBox="0 0 360 229" font-family="Inter, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif" role="img" aria-label="Prompt Template (NH) node">
+<rect x="0.5" y="0.5" width="359" height="228" rx="10" fill="#26282c" stroke="#45484f"/>
+<path d="M0.5 10.5 a10 10 0 0 1 10 -10 h339 a10 10 0 0 1 10 10 v36 h-359 z" fill="#34373d"/>
+<circle cx="17" cy="17" r="4.5" fill="#8FD18F"/>
+<text x="28" y="22" font-size="14" font-weight="600" fill="#EEF0F3">Prompt Template (NH)</text>
+<text x="28" y="38" font-size="10.5" fill="#9AA0A8" font-family="'JetBrains Mono', Consolas, 'Courier New', monospace">NH_PromptTemplate · Text</text>
+<circle cx="12" cy="67.0" r="5" fill="#C5E1A5" stroke="#1b1c1f" stroke-width="1.5"/>
+<text x="24" y="71.0" font-size="12" fill="#D7DADF">var1 <tspan fill="#7d838c" font-style="italic">(optional)</tspan></text>
+<text x="336" y="71.0" font-size="12" fill="#D7DADF" text-anchor="end">result</text>
+<circle cx="348" cy="67.0" r="5" fill="#C5E1A5" stroke="#1b1c1f" stroke-width="1.5"/>
+<circle cx="12" cy="89.0" r="5" fill="#C5E1A5" stroke="#1b1c1f" stroke-width="1.5"/>
+<text x="24" y="93.0" font-size="12" fill="#D7DADF">var2 <tspan fill="#7d838c" font-style="italic">(optional)</tspan></text>
+<text x="336" y="93.0" font-size="12" fill="#D7DADF" text-anchor="end">missing_vars</text>
+<circle cx="348" cy="89.0" r="5" fill="#C5E1A5" stroke="#1b1c1f" stroke-width="1.5"/>
+<rect x="12" y="108" width="336" height="46" rx="7" fill="#1d1f22" stroke="#3a3d43"/>
+<text x="22" y="124" font-size="11.5" fill="#9AA0A8">template</text>
+<text x="22" y="144" font-size="11.5" fill="#E6E8EB" font-family="'JetBrains Mono', Consolas, 'Courier New', monospace">a {color} {garment}, {style},…</text>
+<rect x="12" y="159" width="336" height="24" rx="7" fill="#1d1f22" stroke="#3a3d43"/>
+<text x="22" y="175" font-size="11.5" fill="#9AA0A8">var_names</text>
+<text x="338" y="175" font-size="11.5" fill="#E6E8EB" text-anchor="end">color,garment,style</text>
+<rect x="12" y="188" width="336" height="24" rx="7" fill="#1d1f22" stroke="#3a3d43"/>
+<text x="180.0" y="204" font-size="11" fill="#9AA0A8" text-anchor="middle" font-style="italic">var3 … var6</text>
+</svg>
