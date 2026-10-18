@@ -1,10 +1,13 @@
 # VTON Ultimate Processor (NH). Built on ComfyUI-Vton-Mask's mask generator and FitDiT
 # preprocessing: CC BY-NC-SA 4.0 (non-commercial). See THIRD_PARTY_NOTICES.md.
+import gc
+import traceback
 import torch
 import numpy as np
 from PIL import Image, ImageFilter
 import os
 import folder_paths
+from ...core.segformer_backend import download_pinned, make_room_on_gpu, register_model_folder
 from ...core.utils import resize_image, tensor_to_pil, pil_to_tensor, pil_to_mask
 
 # onnxruntime (via preprocess/) and scikit-image (via utils_mask) are imported
@@ -12,8 +15,85 @@ from ...core.utils import resize_image, tensor_to_pil, pil_to_tensor, pil_to_mas
 # this node needs, and loading them at ComfyUI start-up makes the pack import
 # heavier and breaks process memory snapshots (Modal restores segfault).
 
+# Default location: where the models are downloaded and where existing installs already keep them.
 MODELS_DIR = os.path.join(folder_paths.models_dir, "ComfyUI-Vton-Mask")
 LOADED_VTON_MODELS = None
+
+# extra_model_paths.yaml key. Each location holds dwpose/ and humanparsing/, like MODELS_DIR.
+VTON_FOLDER_NAME = "vton_mask"
+VTON_FOLDER_EXTENSIONS = (".onnx",)  # what ComfyUI lists for VTON_FOLDER_NAME: the models, not the HF cache metadata
+VTON_REPO_ID = "kg-09/kg-vton-mask"
+# The repo is third-party: pin it so a moving "main" cannot change what gets downloaded.
+VTON_REVISION = "4648778286cac2dca9aab8da167ea5257462487d"
+VTON_MODEL_FILES = (
+    "dwpose/yolox_l.onnx", "dwpose/dw-ll_ucoco_384.onnx",
+    "humanparsing/parsing_atr.onnx", "humanparsing/parsing_lip.onnx",
+)
+_VTON_DOWNLOAD_PATTERNS = ("dwpose/*.onnx", "humanparsing/*.onnx")  # skips the repo's other files
+# Measured with the four CUDA sessions (RTX 5090): ~2.9 GB held after one run, ~0.9 GB of it weights
+# and the rest ONNX Runtime's arena. Used to ask ComfyUI for that much room (plus the reserve it keeps
+# for itself, see make_room_on_gpu) before they are created.
+_VTON_VRAM_ESTIMATE = 3 * 1024 ** 3
+
+register_model_folder(VTON_FOLDER_NAME, MODELS_DIR, VTON_FOLDER_EXTENSIONS)  # make the folder name known to ComfyUI at load time
+
+
+def _missing_vton_files(root):
+    return [name for name in VTON_MODEL_FILES if not os.path.isfile(os.path.join(root, *name.split("/")))]
+
+
+def resolve_vton_models_dir(download=True):
+    """Folder holding all four VTON .onnx files, downloading them into MODELS_DIR if none does.
+
+    Searched: MODELS_DIR (models/ComfyUI-Vton-Mask) and every `vton_mask` location from
+    extra_model_paths.yaml. A folder missing any of the four files, as an interrupted first
+    download leaves it, does not count: the next call finishes the download.
+    """
+    for root in register_model_folder(VTON_FOLDER_NAME, MODELS_DIR, VTON_FOLDER_EXTENSIONS):
+        if not _missing_vton_files(root):
+            return root
+    if not download:
+        return None
+    download_pinned(VTON_REPO_ID, VTON_REVISION, MODELS_DIR, _VTON_DOWNLOAD_PATTERNS)
+    missing = _missing_vton_files(MODELS_DIR)
+    if missing:
+        raise RuntimeError(f"[NH-Nodes] VTON model files missing after download in {MODELS_DIR}: {', '.join(missing)}")
+    return MODELS_DIR
+
+
+def release_vton_models():
+    """Drop the cached ONNX Runtime sessions, which frees the GPU memory they hold.
+
+    ONNX Runtime allocates outside PyTorch, so ComfyUI's model management cannot see or unload
+    these sessions: their VRAM only comes back when the last reference to them goes away.
+    Sessions that ran on the CPU are dropped the same way, but hold no VRAM: torch's cache is left alone.
+    """
+    global LOADED_VTON_MODELS
+    from .preprocess.ort_session import cuda_sessions_alive
+
+    on_gpu = cuda_sessions_alive()  # asked before the sessions go: afterwards nothing is left to ask about
+    LOADED_VTON_MODELS = None
+    gc.collect()
+    if on_gpu and torch.cuda.is_available():
+        try:
+            torch.cuda.empty_cache()
+        except Exception as exc:  # runs in a finally: after a CUDA error this must not replace the run's own error
+            print(f"[NH-Nodes] VTON: released the models but torch.cuda.empty_cache() failed: {exc}")
+
+
+def _should_release(device, keep_model_loaded):
+    """True when a run on `device` must hand its cached sessions back once it is over.
+
+    That is the case for sessions ONNX Runtime serves from the GPU while the user has not asked to
+    keep them. What counts is where they really run, not the device widget: a cuda request that
+    fell back to the CPU (CUDA/cuDNN mismatch, CPU-only wheel) holds plain RAM, no VRAM, so it keeps
+    its cache like device=cpu does: dropping it would only reload four models for every item of a list.
+    Called after the run, once the sessions exist.
+    """
+    from .preprocess.ort_session import cuda_sessions_alive
+
+    return device == "cuda" and not keep_model_loaded and cuda_sessions_alive()
+
 
 LIP_PALETTE = [
     0,0,0, 128,0,0, 255,0,0, 0,85,0, 170,0,51, 255,85,0, 0,0,85, 0,119,221, 85,85,0, 0,85,85,
@@ -38,6 +118,17 @@ class NH_VTonUltimateProcessor:
                 "offset_bottom": ("INT", {"default": 0, "min": -200, "max": 200, "step": 1}),
                 "offset_left": ("INT", {"default": 0, "min": -200, "max": 200, "step": 1}),
                 "offset_right": ("INT", {"default": 0, "min": -200, "max": 200, "step": 1}),
+                "keep_model_loaded": ("BOOLEAN", {"default": False, "tooltip": (
+                    "Off (default): after each run on cuda the four ONNX models (about 3 GB of VRAM) are released, "
+                    "so whatever runs next gets the whole GPU; the next run reloads them. "
+                    "On: keep them in VRAM for faster repeated runs. With a list of images ComfyUI calls this node "
+                    "once per item (a batch tensor is a single call), so keeping the models loaded is much faster "
+                    "for lists and repeated runs. "
+                    "ComfyUI cannot see or free that memory, so Free memory does nothing for it "
+                    "and a large model run afterwards may run out of VRAM. "
+                    "Ignored when the models run on the CPU (device cpu, or cuda without a working ONNX Runtime GPU "
+                    "build): they always stay cached."
+                )}),
              }
         }
 
@@ -50,28 +141,54 @@ class NH_VTonUltimateProcessor:
         global LOADED_VTON_MODELS
         if LOADED_VTON_MODELS is not None and LOADED_VTON_MODELS.get("device") == device:
             return LOADED_VTON_MODELS
-        from .preprocess.ort_session import ensure_onnxruntime
+        from .preprocess.ort_session import cpu_fallback_seen, cuda_provider_available, ensure_onnxruntime
         ensure_onnxruntime()
         from .preprocess.dwpose import DWposeDetector
         from .preprocess.humanparsing.run_parsing import Parsing
-        if not os.path.exists(MODELS_DIR):
-            from huggingface_hub import snapshot_download
-            os.makedirs(MODELS_DIR, exist_ok=True)
-            snapshot_download(repo_id="kg-09/kg-vton-mask", local_dir=MODELS_DIR, local_dir_use_symlinks=False)
+        model_root = resolve_vton_models_dir()
+        if LOADED_VTON_MODELS is not None:
+            release_vton_models()  # sessions cached for the other device go before the new ones are allocated
+        # Room is only worth making when the sessions can really use the GPU. Not with the CPU-only wheel, and not
+        # once a cuda request was seen served from the CPU in this process (the GPU wheel is installed but CUDA/cuDNN
+        # do not start; see create_session): evicting ComfyUI's models would not help those sessions. The very first
+        # run cannot know yet and asks once.
+        if device == "cuda" and cuda_provider_available() and not cpu_fallback_seen():
+            make_room_on_gpu(_VTON_VRAM_ESTIMATE)
         LOADED_VTON_MODELS = {
-            'dwprocessor': DWposeDetector(model_root=MODELS_DIR, device=device),
-            'parsing_model': Parsing(model_root=MODELS_DIR, device=device),
+            'dwprocessor': DWposeDetector(model_root=model_root, device=device),
+            'parsing_model': Parsing(model_root=model_root, device=device),
             'device': device
         }
         return LOADED_VTON_MODELS
 
     def process(self, human_image, category, mask_feathering, cover_shoes, refine_hands, refine_hair, device,
-                offset_top=0, offset_bottom=0, offset_left=0, offset_right=0):
+                offset_top=0, offset_bottom=0, offset_left=0, offset_right=0, keep_model_loaded=False):
         # Import trước load_model: thiếu scikit-image thì báo lỗi ngay, không phải tải model xong mới lỗi.
         from ...core.utils_mask import get_mask_location
 
         if human_image.shape[0] == 0:
             raise ValueError("VTON Ultimate Processor: human_image is an empty batch")
+        # Only sessions served by the GPU pin VRAM that ComfyUI cannot manage. Asked after the run, because only
+        # then it is known where load_model's sessions ended up: on the CPU (device=cpu, or a cuda request that fell
+        # back to it) the cache stays whatever the flag says.
+        try:
+            return self._process_batch(
+                human_image, get_mask_location, category, mask_feathering, cover_shoes, refine_hands, refine_hair,
+                device, offset_top, offset_bottom, offset_left, offset_right,
+            )
+        except BaseException as exc:
+            if _should_release(device, keep_model_loaded):
+                # The traceback keeps the failed frames alive and they reference the sessions: clear them,
+                # or the release below frees nothing until the exception has been handled.
+                traceback.clear_frames(exc.__traceback__)
+            raise
+        finally:
+            if _should_release(device, keep_model_loaded):
+                release_vton_models()
+
+    def _process_batch(self, human_image, get_mask_location, category, mask_feathering, cover_shoes, refine_hands,
+                       refine_hair, device, offset_top, offset_bottom, offset_left, offset_right):
+        # The models are only referenced from this frame and _process_image's, so release_vton_models() can free them.
         vton_model = self.load_model(device)
         # Mỗi ảnh trong batch chạy độc lập với cùng setting, rồi nối các output theo chiều batch.
         results = [

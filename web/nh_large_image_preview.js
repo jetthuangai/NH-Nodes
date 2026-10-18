@@ -10,12 +10,12 @@ function ensurePreviewButton(node) {
     }
 
     node.__nhLargePreviewButton = node.addWidget("button", "Open Viewer", "Open Viewer", () => {
-        const manifest = node.__nhLargePreviewManifest?.[0];
-        if (!manifest) {
+        const manifests = node.__nhLargePreviewManifest;
+        if (!manifests?.length) {
             alert("NH Large Image Preview has no viewer data yet. Queue the node first.");
             return;
         }
-        openManifest(manifest);
+        openManifest(manifests, 0);
     });
 }
 
@@ -25,12 +25,12 @@ function ensureCompareButton(node) {
     }
 
     node.__nhLargeCompareButton = node.addWidget("button", "Open Compare", "Open Compare", () => {
-        const manifest = node.__nhLargeCompareManifest?.[0];
-        if (!manifest) {
+        const manifests = node.__nhLargeCompareManifest;
+        if (!manifests?.length) {
             alert("NH Large Image Compare has no viewer data yet. Queue the node first.");
             return;
         }
-        openCompareManifest(manifest);
+        openCompareManifest(manifests, 0);
     });
 }
 
@@ -63,9 +63,12 @@ function tileUrl(manifest, level, x, y) {
         .replace("{y}", `${y}`));
 }
 
-function openManifest(manifest) {
-    if (!manifest?.levels?.length) {
-        const url = thumbUrl(manifest);
+// A run can hold a whole batch: the viewers get every manifest of it and the one to start on.
+function openManifest(manifests, startIndex = 0) {
+    const list = Array.isArray(manifests) ? manifests : [manifests];
+    const tiled = list.filter((item) => item?.levels?.length);
+    if (!tiled.length) {
+        const url = thumbUrl(list[startIndex] || list[0]);
         if (url) {
             window.open(url, "_blank", "noopener,noreferrer");
             return;
@@ -73,15 +76,17 @@ function openManifest(manifest) {
         alert("NH Large Image Preview has no thumbnail or tile data.");
         return;
     }
-    openTiledViewer(manifest);
+    openTiledViewer(tiled, Math.max(0, tiled.indexOf(list[startIndex])));
 }
 
-function openCompareManifest(compare) {
-    if (!compare?.a || !compare?.b) {
+function openCompareManifest(compares, startIndex = 0) {
+    const list = Array.isArray(compares) ? compares : [compares];
+    const pairs = list.filter((item) => item?.a && item?.b);
+    if (!pairs.length) {
         alert("NH Large Image Compare has no A/B tile data.");
         return;
     }
-    openCompareViewer(compare);
+    openCompareViewer(pairs, Math.max(0, pairs.indexOf(list[startIndex])));
 }
 
 function makeButton(label, onClick) {
@@ -100,15 +105,87 @@ function makeButton(label, onClick) {
     return button;
 }
 
-function openTiledViewer(manifest) {
+// Cancels the tile requests still running and forgets the tiles: the image was left, or the viewer closed.
+function clearTileCache(tileCache) {
+    for (const item of tileCache.values()) {
+        item.image.onload = null;
+        item.image.onerror = null;
+        item.image.src = "";
+    }
+    tileCache.clear();
+}
+
+function setButtonEnabled(button, enabled) {
+    button.disabled = !enabled;
+    button.style.opacity = enabled ? "1" : "0.4";
+    button.style.cursor = enabled ? "pointer" : "default";
+}
+
+// Batch navigation. The part that needs no DOM lives here so both viewers share it.
+function clampBatchIndex(index, count) {
+    const last = Math.max(0, count - 1);
+    const value = Number.isFinite(index) ? Math.trunc(index) : 0;
+    return Math.min(last, Math.max(0, value));
+}
+
+// -1 or +1 for an unmodified Left or Right arrow that was not pressed in a text field or slider, otherwise 0.
+function batchStepForKey(event) {
+    if (event.altKey || event.ctrlKey || event.metaKey || event.shiftKey) {
+        return 0;
+    }
+    const tag = (event.target?.tagName || "").toLowerCase();
+    if (event.target?.isContentEditable || tag === "input" || tag === "textarea" || tag === "select") {
+        return 0;
+    }
+    if (event.key === "ArrowLeft") {
+        return -1;
+    }
+    return event.key === "ArrowRight" ? 1 : 0;
+}
+
+// The "previous / n of N / next" group of the toolbar; update(index) refreshes the counter and the end buttons.
+function makeBatchNav(count, onStep) {
+    const element = document.createElement("div");
+    element.style.cssText = "display:flex;gap:6px;align-items:center";
+    const previous = makeButton("\u25C0", () => onStep(-1));
+    previous.title = "Previous image (Left arrow)";
+    const next = makeButton("\u25B6", () => onStep(1));
+    next.title = "Next image (Right arrow)";
+    const label = document.createElement("span");
+    label.style.cssText = "min-width:54px;text-align:center;color:#ddd;font:12px system-ui,sans-serif";
+    element.appendChild(previous);
+    element.appendChild(label);
+    element.appendChild(next);
+    return {
+        element,
+        update(index) {
+            label.textContent = `${index + 1} / ${count}`;
+            setButtonEnabled(previous, index > 0);
+            setButtonEnabled(next, index < count - 1);
+        },
+    };
+}
+
+function openTiledViewer(items, startIndex = 0) {
+    let index = clampBatchIndex(startIndex, items.length);
+    let manifest = items[index];
+    let levels = [];
+    let fullLevel = null;
+    let closed = false;
     const overlay = document.createElement("div");
-    let closeOnEscape;
+    let onKeyDown;
     let onMouseMove;
     let onMouseUp;
     const closeViewer = () => {
+        closed = true;
+        if (state.raf) {
+            cancelAnimationFrame(state.raf);
+            state.raf = 0;
+        }
+        clearTileCache(tileCache);
         overlay.remove();
-        if (closeOnEscape) {
-            document.removeEventListener("keydown", closeOnEscape);
+        if (onKeyDown) {
+            document.removeEventListener("keydown", onKeyDown);
         }
         if (onMouseMove) {
             window.removeEventListener("mousemove", onMouseMove);
@@ -119,10 +196,12 @@ function openTiledViewer(manifest) {
         window.removeEventListener("resize", resizeCanvas);
     };
 
+    overlay.tabIndex = -1; // focusable, so the arrow keys reach the viewer even if a text field was focused before
     overlay.style.cssText = [
         "position:fixed",
         "inset:0",
         "z-index:100000",
+        "outline:none",
         "background:rgba(0,0,0,0.82)",
         "display:flex",
         "align-items:center",
@@ -156,7 +235,6 @@ function openTiledViewer(manifest) {
     ].join(";");
 
     const title = document.createElement("div");
-    title.textContent = `${manifest.title || "NH Large Image Preview"} | ${manifest.width}x${manifest.height} | ${manifest.levels.length} levels`;
     title.style.cssText = "overflow:hidden;text-overflow:ellipsis;white-space:nowrap";
 
     const buttons = document.createElement("div");
@@ -198,8 +276,6 @@ function openTiledViewer(manifest) {
     document.body.appendChild(overlay);
 
     const ctx = canvas.getContext("2d");
-    const levels = [...manifest.levels].sort((a, b) => a.scale - b.scale);
-    const fullLevel = levels[levels.length - 1];
     const tileCache = new Map();
     const state = {
         zoom: 1,
@@ -210,6 +286,28 @@ function openTiledViewer(manifest) {
         lastY: 0,
         raf: 0,
     };
+
+    function loadManifest() {
+        manifest = items[index];
+        levels = [...manifest.levels].sort((a, b) => a.scale - b.scale);
+        fullLevel = levels[levels.length - 1];
+        clearTileCache(tileCache);
+        title.textContent = `${manifest.title || "NH Large Image Preview"} | ${manifest.width}x${manifest.height} | ${levels.length} levels`;
+        if (nav) {
+            nav.update(index);
+        }
+    }
+
+    // Every image starts fitted: the zoom and pan of the one before are not carried over.
+    function showManifest(nextIndex) {
+        const target = clampBatchIndex(nextIndex, items.length);
+        if (target === index) {
+            return;
+        }
+        index = target;
+        loadManifest();
+        fit();
+    }
 
     function getCanvasSize() {
         return {
@@ -340,11 +438,15 @@ function openTiledViewer(manifest) {
     }
 
     function scheduleDraw() {
-        if (!state.raf) {
+        if (!state.raf && !closed) {
             state.raf = requestAnimationFrame(draw);
         }
     }
 
+    const nav = items.length > 1 ? makeBatchNav(items.length, (delta) => showManifest(index + delta)) : null;
+    if (nav) {
+        buttons.appendChild(nav.element);
+    }
     buttons.appendChild(makeButton("Fit", fit));
     buttons.appendChild(makeButton("100%", setHundredPercent));
     buttons.appendChild(makeButton("-", () => zoomAt(canvas.clientWidth / 2, canvas.clientHeight / 2, 0.8)));
@@ -389,31 +491,53 @@ function openTiledViewer(manifest) {
             closeViewer();
         }
     });
-    closeOnEscape = function (event) {
-        if (event.key === "Escape" && document.body.contains(overlay)) {
+    onKeyDown = function (event) {
+        if (!document.body.contains(overlay)) {
+            return;
+        }
+        if (event.key === "Escape") {
             closeViewer();
+            return;
+        }
+        const step = items.length > 1 ? batchStepForKey(event) : 0;
+        if (step) {
+            // The arrow keys belong to the viewer while it is open, not to the canvas behind it.
+            event.preventDefault();
+            event.stopPropagation();
+            showManifest(index + step);
         }
     };
-    document.addEventListener("keydown", closeOnEscape);
+    document.addEventListener("keydown", onKeyDown);
     window.addEventListener("resize", resizeCanvas);
     resizeCanvas();
+    loadManifest();
     fit();
+    overlay.focus({ preventScroll: true });
 }
 
-function openCompareViewer(compare) {
-    const manifestA = compare.a;
-    const manifestB = compare.b;
-    const baseWidth = Math.max(manifestA.width || 1, manifestB.width || 1);
-    const baseHeight = Math.max(manifestA.height || 1, manifestB.height || 1);
+function openCompareViewer(items, startIndex = 0) {
+    let index = clampBatchIndex(startIndex, items.length);
+    let compare = items[index];
+    let manifestA = compare.a;
+    let manifestB = compare.b;
+    let baseWidth = 1;
+    let baseHeight = 1;
+    let closed = false;
 
     const overlay = document.createElement("div");
-    let closeOnEscape;
+    let onKeyDown;
     let onMouseMove;
     let onMouseUp;
     const closeViewer = () => {
+        closed = true;
+        if (state.raf) {
+            cancelAnimationFrame(state.raf);
+            state.raf = 0;
+        }
+        clearTileCache(tileCache);
         overlay.remove();
-        if (closeOnEscape) {
-            document.removeEventListener("keydown", closeOnEscape);
+        if (onKeyDown) {
+            document.removeEventListener("keydown", onKeyDown);
         }
         if (onMouseMove) {
             window.removeEventListener("mousemove", onMouseMove);
@@ -424,10 +548,12 @@ function openCompareViewer(compare) {
         window.removeEventListener("resize", resizeCanvas);
     };
 
+    overlay.tabIndex = -1; // focusable, so the arrow keys reach the viewer even if a text field was focused before
     overlay.style.cssText = [
         "position:fixed",
         "inset:0",
         "z-index:100000",
+        "outline:none",
         "background:rgba(0,0,0,0.84)",
         "display:flex",
         "align-items:center",
@@ -461,7 +587,6 @@ function openCompareViewer(compare) {
     ].join(";");
 
     const title = document.createElement("div");
-    title.textContent = `${compare.title || "NH Large Image Compare"} | A ${manifestA.width}x${manifestA.height} | B ${manifestB.width}x${manifestB.height}`;
     title.style.cssText = "overflow:hidden;text-overflow:ellipsis;white-space:nowrap";
 
     const buttons = document.createElement("div");
@@ -524,6 +649,32 @@ function openCompareViewer(compare) {
         lastY: 0,
         raf: 0,
     };
+
+    function loadPair() {
+        compare = items[index];
+        manifestA = compare.a;
+        manifestB = compare.b;
+        baseWidth = Math.max(manifestA.width || 1, manifestB.width || 1);
+        baseHeight = Math.max(manifestA.height || 1, manifestB.height || 1);
+        frameLayouts.clear();
+        levelSets.clear();
+        clearTileCache(tileCache);
+        title.textContent = `${compare.title || "NH Large Image Compare"} | A ${manifestA.width}x${manifestA.height} | B ${manifestB.width}x${manifestB.height}`;
+        if (nav) {
+            nav.update(index);
+        }
+    }
+
+    // Every pair starts fitted; the compare mode and the split position stay as they are.
+    function showPair(nextIndex) {
+        const target = clampBatchIndex(nextIndex, items.length);
+        if (target === index) {
+            return;
+        }
+        index = target;
+        loadPair();
+        fit();
+    }
 
     function getCanvasSize() {
         return {
@@ -786,7 +937,7 @@ function openCompareViewer(compare) {
     }
 
     function scheduleDraw() {
-        if (!state.raf) {
+        if (!state.raf && !closed) {
             state.raf = requestAnimationFrame(draw);
         }
     }
@@ -802,6 +953,10 @@ function openCompareViewer(compare) {
         scheduleDraw();
     };
 
+    const nav = items.length > 1 ? makeBatchNav(items.length, (delta) => showPair(index + delta)) : null;
+    if (nav) {
+        buttons.appendChild(nav.element);
+    }
     buttons.appendChild(makeButton("Fit", fit));
     buttons.appendChild(makeButton("100%", setHundredPercent));
     buttons.appendChild(makeButton("Slider", () => setMode("slider")));
@@ -833,6 +988,10 @@ function openCompareViewer(compare) {
     onMouseUp = () => {
         state.dragging = false;
         canvasWrap.style.cursor = "grab";
+        if (document.activeElement === splitInput) {
+            // A slider that was just dragged would keep the arrow keys; hand them back to the batch navigation.
+            splitInput.blur();
+        }
     };
     window.addEventListener("mousemove", onMouseMove);
     window.addEventListener("mouseup", onMouseUp);
@@ -849,15 +1008,28 @@ function openCompareViewer(compare) {
             closeViewer();
         }
     });
-    closeOnEscape = function (event) {
-        if (event.key === "Escape" && document.body.contains(overlay)) {
+    onKeyDown = function (event) {
+        if (!document.body.contains(overlay)) {
+            return;
+        }
+        if (event.key === "Escape") {
             closeViewer();
+            return;
+        }
+        const step = items.length > 1 ? batchStepForKey(event) : 0;
+        if (step) {
+            // The arrow keys belong to the viewer while it is open, not to the canvas behind it.
+            event.preventDefault();
+            event.stopPropagation();
+            showPair(index + step);
         }
     };
-    document.addEventListener("keydown", closeOnEscape);
+    document.addEventListener("keydown", onKeyDown);
     window.addEventListener("resize", resizeCanvas);
     resizeCanvas();
+    loadPair();
     setMode(state.mode);
+    overlay.focus({ preventScroll: true });
 }
 
 app.registerExtension({
