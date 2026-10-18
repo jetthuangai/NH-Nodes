@@ -84,6 +84,26 @@ def _candidate_context_score(candidate_path, source_context_paths):
     return best_score
 
 
+def _context_scores(paths, source_context_paths):
+    """Context score of each candidate, measured on its path below the folder all candidates share.
+
+    Ancestors every candidate has in common say nothing about which one fits the source. Counting them let a library
+    next to the source (D:/Photos/Library beside D:/Photos/Source/Nu) outvote the Nu/Nam context and pick Nam.
+    """
+    if not source_context_paths or not paths:
+        return {path: 0 for path in paths}
+    absolute = [os.path.abspath(path) for path in paths]
+    try:
+        base = os.path.commonpath(absolute) if len(absolute) > 1 else os.path.dirname(absolute[0])
+    except ValueError:  # candidates on different drives share nothing
+        base = ""
+    scores = {}
+    for path, absolute_path in zip(paths, absolute):
+        relative = os.path.relpath(absolute_path, base) if base else absolute_path
+        scores[path] = _candidate_context_score("" if relative == "." else relative, source_context_paths)
+    return scores
+
+
 def _source_segment_set(source_context_paths):
     segments = set()
     for path_value in source_context_paths or []:
@@ -246,7 +266,8 @@ def _context_root_candidates(root_path, source_context_paths, context_names=()):
     for twin_path in _context_twins(root_path, context_names, source_segments):
         _add_unique_path(candidates, twin_path)
 
-    candidates.sort(key=lambda item: (-_candidate_context_score(item, source_context_paths), natural_key(item)))
+    scores = _context_scores(candidates, source_context_paths)
+    candidates.sort(key=lambda item: (-scores[item], natural_key(item)))
     return candidates
 
 
@@ -279,10 +300,8 @@ def _resolve_matching_folder(root_path, match_text, match_mode, recursive, sourc
         raise _NoMatchError(f"No matching folder found for '{match_text}' under: {root_path}", match_text)
 
     if source_context_paths:
-        matches.sort(key=lambda item: (
-            -_candidate_context_score(item, source_context_paths),
-            natural_key(os.path.relpath(item, root_path)),
-        ))
+        scores = _context_scores(matches, source_context_paths)
+        matches.sort(key=lambda item: (-scores[item], natural_key(os.path.relpath(item, root_path))))
     else:
         matches.sort(key=lambda item: natural_key(os.path.relpath(item, root_path)))
     return matches[0]
@@ -321,7 +340,8 @@ def _resolve_best_matching_folder(root_path, match_text, match_mode, recursive, 
                 raise exc
         raise _NoMatchError(f"No matching folder found for '{match_text}' under: {root_path}", match_text)
 
-    matched_folders.sort(key=lambda item: (-_candidate_context_score(item, source_context_paths), natural_key(item)))
+    scores = _context_scores(matched_folders, source_context_paths)
+    matched_folders.sort(key=lambda item: (-scores[item], natural_key(item)))
     return matched_folders[0]
 
 
