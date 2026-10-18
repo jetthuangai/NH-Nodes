@@ -94,7 +94,8 @@ def _context_base(search_roots):
     if not absolute:
         return ""
     try:
-        return os.path.commonpath(absolute)
+        # The parent, so a search root that is itself the match keeps its name in the score.
+        return os.path.dirname(os.path.commonpath(absolute))
     except ValueError:  # roots on different drives share nothing
         return ""
 

@@ -81,3 +81,15 @@ def test_twin_root_with_shared_parents_follows_the_source_group(tmp_path):
         source_context_paths=[str(source)], context_names=("Nam", "Nu"),
     )
     assert os.path.relpath(picked, str(photos / "Library")).replace("\\", "/") == "Nu/subject_01"
+
+
+def test_a_root_that_is_itself_the_match_wins_over_its_same_named_child(tmp_path):
+    # matching_root_path = L/Nu/Anh, which also holds a sub-folder Anh: the root keeps its name in the score.
+    root = tmp_path / "L" / "Nu" / "Anh"
+    _tree(root, "Anh")
+    source = tmp_path / "Shoots" / "Nu" / "Anh"
+    _tree(source)
+    picked = folder_loaders._resolve_best_matching_folder(
+        str(root), "Anh", "exact", True, source_context_paths=[str(source)], context_names=("Nam", "Nu"),
+    )
+    assert os.path.normcase(picked) == os.path.normcase(str(root))
