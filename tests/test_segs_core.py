@@ -3,6 +3,7 @@
 import importlib
 import re
 
+import cv2
 import numpy as np
 import pytest
 import torch
@@ -382,3 +383,56 @@ def test_merge_segs_mixes_instances_of_the_same_pictures():
         segs.merge_segs(a, (_frame(height=20, width=20),))
     (mask,) = segs_nodes.NH_SegsCompose().compose(a, "person - dress", segs_2=b)
     assert int(mask.sum()) == 100 - 36
+
+
+def test_picture_prints_tell_photos_apart_but_not_edits_of_one():
+    rng = np.random.default_rng(3)
+    base = torch.from_numpy(cv2.GaussianBlur(rng.random((90, 120, 3)).astype(np.float32), (0, 0), 6))
+    other = torch.from_numpy(cv2.GaussianBlur(rng.random((90, 120, 3)).astype(np.float32), (0, 0), 6))
+    first = segs.picture_print(base)
+    assert first.shape == (segs.PRINT_SIDE, segs.PRINT_SIDE) and first.dtype == np.float32
+    for edited in (base * 1.3 + 0.1, base ** 2.0, base.mean(dim=2, keepdim=True).expand(-1, -1, 3),
+                   torch.cat([base, torch.ones(90, 120, 1)], dim=2)):  # brighter, darker, grey, with alpha
+        assert segs.same_picture(first, segs.picture_print(edited))
+    assert not segs.same_picture(first, segs.picture_print(other))
+    assert not segs.same_picture(first, segs.picture_print(base.flip(1)))  # a mirrored copy would not line up
+    flat = segs.picture_print(torch.full((90, 120, 3), 0.5))
+    assert segs.same_picture(flat, first) and segs.same_picture(first, flat)  # a blank picture tells nothing
+    # numpy pictures (uint8 or float) give the same print up to scale
+    assert segs.same_picture(first, segs.picture_print((base.numpy() * 255).astype(np.uint8)))
+
+
+def test_merge_segs_refuses_segs_of_different_photos_of_the_same_size():
+    rng = np.random.default_rng(4)
+    one, two = (torch.from_numpy(cv2.GaussianBlur(rng.random((40, 60, 3)).astype(np.float32), (0, 0), 4))[None]
+                for _ in range(2))
+    a = segs.stamped((_frame(_seg("person", 0.9, (0, 0, 10, 10))),), one)
+    b = segs.stamped((_frame(_seg("dress", 1.0, (2, 2, 8, 8))),), one * 0.8)  # the same photo, darker
+    c = segs.stamped((_frame(_seg("bag", 1.0, (4, 4, 6, 6))),), two)
+    assert a[0].picture is not None and a[0].with_segments([]).picture is a[0].picture
+    assert segs.scale_frame(a[0], 0.5).picture is a[0].picture
+    merged = segs.merge_segs(a, b, None)
+    assert [seg.label for seg in merged[0].segments] == ["person", "dress"]
+    with pytest.raises(ValueError, match="different photos of the same size"):
+        segs.merge_segs(a, b, c)
+    with pytest.raises(ValueError, match="different photos"):
+        segs_nodes.NH_SegsCompose().compose(a, "person - bag", segs_2=c)
+    # frames without a print (made by older nodes) are mixed on their size alone
+    assert len(segs.merge_segs((_frame(_seg("cat", 1.0, (0, 0, 2, 2))),), c)[0].segments) == 2
+    # batches: every image is checked, and the message says which one differs
+    batch_a = segs.stamped(a + a, torch.cat([one, two]))
+    batch_b = segs.stamped(b + b, torch.cat([one, one]))
+    with pytest.raises(ValueError, match="image 2 of the batch"):
+        segs.merge_segs(batch_a, batch_b)
+    batch_c = segs.stamped(c + c, torch.cat([one, two]))
+    merged = segs.merge_segs(batch_a, None, batch_c)
+    assert [len(frame.segments) for frame in merged] == [2, 2]
+
+
+def test_picture_prints_take_any_image_dtype_and_keep_every_frame():
+    picture = torch.rand(20, 30, 3)
+    first = segs.picture_print(picture)
+    for other in (picture.half(), picture.bfloat16(), picture.double().numpy(), picture.numpy().astype(np.float16)):
+        assert segs.same_picture(first, segs.picture_print(other))
+    frames = (_frame(height=20, width=30), _frame(height=20, width=30))
+    assert segs.stamped(frames, picture[None]) == frames  # one picture for two frames: left as they were

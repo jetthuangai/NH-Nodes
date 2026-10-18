@@ -1,6 +1,6 @@
 # Vendored from https://github.com/facebookresearch/sapiens2 (commit 7e5bae88456ac418ff0e58e74106c9fe192055d4),
 # file sapiens/backbones/standalone/sapiens2.py, under the Sapiens2 License (LICENSE.md in this folder).
-# Changes: this note, and the numpy import that the training-only coordinate jitter uses.
+# Modified by NH-Nodes: this note, and the numpy import that the training-only coordinate jitter uses.
 
 # Copyright (c) Meta Platforms, Inc. and affiliates.
 # All rights reserved.

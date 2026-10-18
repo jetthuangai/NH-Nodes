@@ -79,11 +79,14 @@ def test_background_vietnamese_and_unknown_words(monkeypatch):
     (mask, _, _, _, report), labels, _, _ = _run(monkeypatch, "background")
     assert (mask[0].numpy() > 0.5).tolist() == (labels == 0).tolist()
     assert "background = everything outside the people" in report
-    (mask, _, _, _, report), labels, _, _ = _run(monkeypatch, "da, tóc, răng, cánh")
+    (mask, _, _, _, report), labels, _, _ = _run(monkeypatch, "da, tóc, răng")
     wanted = np.isin(labels, list(bs.REGIONS["skin"] | bs.REGIONS["hair"]))
     assert (mask[0].numpy() > 0.5).tolist() == wanted.tolist()
     assert "da -> skin:" in report and "răng -> teeth: not in the picture" in report
-    assert "cánh: not a body region" in report
+    # "tay" and "chân" are the whole limb in Vietnamese, hand and foot included
+    (mask, _, _, _, report), labels, _, _ = _run(monkeypatch, "tay")
+    assert (mask[0].numpy() > 0.5).tolist() == np.isin(labels, list(bs.ARMS | bs.HANDS)).tolist()
+    assert "tay: the whole limb, hands included" in report
 
 
 def test_errors_and_preview(monkeypatch):
@@ -94,8 +97,9 @@ def test_errors_and_preview(monkeypatch):
     out, _, saved, _ = _run(monkeypatch, "hair", show_preview=True)
     assert set(out) == {"ui", "result"} and len(out["result"]) == 5 and len(saved) == 1
     assert saved[0].shape[1] == W and saved[0].shape[0] > H  # the picture plus the report below it
-    required = bs.NH_BodySegment.INPUT_TYPES()["required"]
-    assert list(required)[-1] == "show_preview" and required["model_size"][0] == ["0.4b", "0.8b", "1b"]
+    spec = bs.NH_BodySegment.INPUT_TYPES()
+    assert list(spec["optional"]) == ["show_preview"] and "show_preview" not in spec["required"]
+    assert spec["required"]["model_size"][0] == ["0.4b", "0.8b", "1b"]
 
 
 # --- backend without weights ---------------------------------------------------------
@@ -161,3 +165,105 @@ def test_real_sapiens2_smoke():
     labels = s2.predict_labels(bundle, np.full((200, 150, 3), 128, np.uint8))
     s2.offload(bundle)
     assert labels.shape == (200, 150) and labels.min() >= 0 and labels.max() < len(s2.CLASSES)
+
+
+@pytest.mark.parametrize("regions, message", [
+    ("cánh", "'cánh' is not in the Vietnamese word list"),
+    ("wings", "'wings' is not a body region; use skin, hair"),
+    ("skin, mắt", r"'mắt' \(eye\) is not a body region: eyes, eyebrows, nose and ears are part of 'face'"),
+    ("hat", "one class, 'accessories'"),
+    ("skin and hair", r"combine regions with \+ or a comma"),
+    ("hair*", "has a wildcard"),
+])
+def test_unknown_words_are_refused_before_the_model_loads(monkeypatch, regions, message):
+    monkeypatch.setattr(bs.sapiens2, "load", lambda size, device: pytest.fail("the model must not load"))
+    with pytest.raises(ValueError, match=message):
+        bs.NH_BodySegment().segment(torch.zeros(1, 8, 8, 3), regions, "0.4b", 0, 0, False, "cpu", False)
+
+
+def test_new_region_words():
+    for word, region in (("t-shirt", "top"), ("jacket", "top"), ("sunglasses", "glasses"), ("face skin", "face"),
+                         ("sneakers", "shoes"), ("ao dai", "dress")):
+        assert bs.REGIONS[word] == bs.REGIONS[region]
+    assert bs.REGIONS["head"] == bs.FACE | bs.HAIR
+    assert not set(bs.REGIONS) & set(bs.NOT_REGIONS)
+
+
+def test_report_explains_sides_shared_classes_and_tiny_shares():
+    counts = np.zeros(len(s2.CLASSES), np.int64)
+    counts[C["left_hand"]], counts[C["face_neck"]], counts[C["upper_clothing"]] = 5, 3000, 40000
+    lines = bs.describe(bs.parse_concepts("left hand, neck, dress"), counts, 100000)
+    assert "left hand: under 0.1% of the picture" in lines and "neck: 3.0% of the picture" in lines
+    assert "dress: 40.0% of the picture" in lines
+    assert bs._SIDES in lines and bs._FACE_CLASS in lines
+    assert "dress: Sapiens2 labels a dress as a top (upper clothes)" in lines
+    batch = bs.describe(bs.parse_concepts("hair"), counts, 100000, "pictures")
+    assert batch == ["hair: not in the pictures"]
+
+
+def test_preview_shows_only_the_parts_the_mask_keeps(monkeypatch):
+    drawn = []
+    monkeypatch.setattr(bs, "preview_picture",
+                        lambda picture, frame, notes, mask=None: drawn.append(frame) or np.zeros((4, 4, 3), np.uint8))
+    out, _, saved, _ = _run(monkeypatch, "skin - lips", show_preview=True)
+    assert {seg.label for seg in drawn[0].segments} == {"face", "arms"} and len(saved) == 1
+    drawn.clear()
+    _run(monkeypatch, "background", show_preview=True)
+    assert drawn[0].segments == ()  # nothing named: only the lit background
+
+
+def test_a_failed_preview_keeps_the_outputs(monkeypatch, capsys):
+    def broken(*args, **kwargs):
+        raise OSError("disk full")
+
+    monkeypatch.setattr(bs, "preview_picture", broken)
+    out, _, _, _ = _run(monkeypatch, "hair", show_preview=True)
+    assert len(out) == 5 and "could not show the preview" in capsys.readouterr().out
+
+
+def test_a_batch_gets_one_mask_and_frame_per_picture(monkeypatch):
+    monkeypatch.setattr(bs, "find_faces", lambda picture, second_look=True: [])
+    monkeypatch.setattr(bs.sapiens2, "load", lambda size, device: {"size": size})
+    monkeypatch.setattr(bs.sapiens2, "offload", lambda bundle: None)
+    monkeypatch.setattr(bs.sapiens2, "predict_labels", lambda bundle, picture, confidence=False: (
+        np.rint(picture[..., 0] / 8.0).astype(np.int64), np.full(picture.shape[:2], 0.9, np.float16)))
+    labels, image = _picture()
+    batch = torch.cat([image, torch.flip(image, dims=[2])])
+    mask, _, _, segs, report = bs.NH_BodySegment().segment(batch, "hair", "0.4b", 0, 0, False, "cpu", False)
+    assert mask.shape == (2, H, W) and len(segs) == 2 and "% of the pictures" in report
+    assert (mask[1].numpy() > 0.5).tolist() == np.fliplr(labels == C["hair"]).tolist()
+    assert all(frame.picture is not None for frame in segs)
+
+
+def test_a_damaged_checkpoint_is_refused_with_advice(monkeypatch, tmp_path):
+    path = tmp_path / "sapiens2_0.4b_seg.safetensors"
+    path.write_bytes(b"\x10\x00\x00\x00\x00\x00\x00\x00{\"a\":")  # cut short
+    monkeypatch.setattr(s2, "model_path", lambda size, download=True: str(path))
+    monkeypatch.setattr(s2, "_LOADED", {"0.8b": {"model": None}})
+    with pytest.raises(RuntimeError, match="cannot be read .* delete it so it is downloaded again"):
+        s2.load("0.4b", torch.device("cpu"))
+    assert "0.8b" not in s2._LOADED  # one size at a time
+
+
+def test_cpu_fallback_is_said_once_and_cpu_runs_in_float32(monkeypatch, capsys):
+    monkeypatch.setattr(s2.torch.cuda, "is_available", lambda: False)
+    monkeypatch.setattr(s2, "_said_cpu", False)
+    assert s2.torch_device("cuda").type == "cpu" and s2.torch_device("cuda").type == "cpu"
+    assert capsys.readouterr().out.count("CUDA not available") == 1
+    bundle = {"model": torch.nn.Linear(2, 2).to(torch.bfloat16), "device": torch.device("cpu")}
+    s2._ensure_on_device(bundle)
+    assert next(bundle["model"].parameters()).dtype == torch.float32
+
+
+def test_real_sapiens2_on_a_photo():
+    if s2.model_path("0.4b", download=False) is None:
+        pytest.skip("Sapiens2 0.4b weights not on disk")
+    data = pytest.importorskip("skimage.data")
+    picture = data.astronaut()  # a woman facing the camera, head and shoulders
+    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    bundle = s2.load("0.4b", device)
+    labels = bs.body_labels(bundle, picture)
+    s2.offload(bundle)
+    face, hair = labels == C["face_neck"], labels == C["hair"]
+    assert face.mean() > 0.03 and hair.mean() > 0.03
+    assert np.nonzero(face)[0].mean() < picture.shape[0] * 0.6  # the face is in the upper part

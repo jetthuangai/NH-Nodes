@@ -861,12 +861,12 @@ def as_mask(array):
 
 
 @functools.lru_cache(maxsize=None)
-def garment_run(part="upper_garment", attach_parts=True):
+def garment_run(part="upper_garment", attach_parts=True, model="fashn"):
     """The real Garment Segment node on the astronaut: (mask [H, W] float, cutout_rgba PIL RGBA)."""
-    require_segformer("segformer_fashion")
-    mask, cutout, _mask_image = run(
+    require_segformer({"fashn": "fashn_human_parser", "fashionpedia": "segformer_fashion"}[model])
+    mask, cutout, _mask_image, _segs = run(
         "NH_GarmentSegment", image=to_tensor(photo("astronaut")), part=part, attach_parts=attach_parts,
-        mask_expand=0, mask_blur=0, fill_holes=False, device="cpu",
+        mask_expand=0, mask_blur=0, fill_holes=False, device="cpu", model=model,
     )
     return mask_array(mask), to_pil(cutout)
 
@@ -979,20 +979,23 @@ def ex_mask_aspect():
 @example("garment-segment.jpg")
 def ex_garment_segment():
     image = photo("astronaut")
-    plain, _cutout = garment_run("upper_garment", False)
-    attached, cutout = garment_run("upper_garment", True)
+    garment, cutout = garment_run("upper_garment")  # the default model, fashn
+    # attach_parts only works with fashionpedia, which labels pockets, zips and patches apart from the garment
+    plain, _cutout = garment_run("upper_garment", False, "fashionpedia")
+    attached, _cutout = garment_run("upper_garment", True, "fashionpedia")
     merged = np.clip(attached - plain, 0.0, 1.0)
     on_layers = (Layer(attached, TEAL, 0.45, 0.0), Layer(plain, TEAL, 0.0, 2.0), Layer(merged, AMBER, 0.75, 0.0))
-    HERO["garment"] = overlay_masks(image, on_layers)
+    HERO["garment"] = overlay_masks(image, [Layer(garment, TEAL, 0.45)])
     tiles = [
         Tile(image, "image", "input photo"),
-        Tile(masked(image, Layer(plain, TEAL, 0.45)), "part = upper_garment", "attach_parts = off", aspect=1.0),
-        Tile(masked(image, *on_layers), "part = upper_garment", "attach_parts = on · amber = merged parts",
+        Tile(masked(image, Layer(garment, TEAL, 0.45)), "part = upper_garment", "model = fashn (default)",
              aspect=1.0),
-        Tile(over_checker(cutout), "cutout_rgba", "the mask as the alpha channel"),
+        Tile(masked(image, *on_layers), "model = fashionpedia", "attach_parts = on · amber = merged parts",
+             aspect=1.0),
+        Tile(over_checker(cutout), "cutout_rgba", "the fashn mask as the alpha channel"),
     ]
     return render_panel([Row([tiles[0], ARROW, *tiles[1:]])], "NH Garment Segment",
-                        "mask of the upper garment, lower garment, footwear or headwear of a person")
+                        "mask of a garment group or a part (dress, bag, belt...) of the people in a photo")
 
 
 SLATE = (148, 163, 184)
@@ -1015,8 +1018,8 @@ def ex_portrait_segment():
                if isinstance(value, tuple) and value[0] == "BOOLEAN" and name != "fill_holes"]
 
     def segment(**flags):
-        mask, cutout, _mask_image = run("NH_PortraitSegment", image=head_t, mask_expand=0, mask_blur=0,
-                                        fill_holes=True, device="cpu", **flags)
+        mask, cutout, _mask_image, _segs = run("NH_PortraitSegment", image=head_t, mask_expand=0, mask_blur=0,
+                                               fill_holes=True, device="cpu", **flags)
         return mask_array(mask), to_pil(cutout)
 
     default_mask, cutout = segment()  # the default toggles
