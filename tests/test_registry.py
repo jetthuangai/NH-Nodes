@@ -13,7 +13,7 @@ for path in (COMFY_ROOT, os.path.dirname(PACK_DIR)):
 
 pack = importlib.import_module("NH-Nodes")
 
-EXPECTED_NODE_COUNT = 75
+EXPECTED_NODE_COUNT = 76
 # Heavy libraries only some nodes need (VTON: onnxruntime, skimage; SAM 3: sam3, whose import also switches TF32
 # on process-wide); importing the pack must not load them.
 LAZY_ONLY = ("onnxruntime", "skimage", "sam3")

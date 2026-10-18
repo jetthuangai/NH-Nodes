@@ -23,6 +23,7 @@ from ...core.parse_crops import (
     visible,
 )
 from ...core.segformer_backend import load_segformer, offload, predict_labels
+from ...core.segs import SEGS_TYPE, SegsFrame, Segment
 
 try:
     from comfy.model_management import throw_exception_if_processing_interrupted
@@ -49,7 +50,36 @@ GARMENT_GROUPS = {
 # selected group only when their connected component touches that group.
 GARMENT_ATTACHED_PARTS = {33, 36, 37, 38, 39, 40, 41, 42, 43, 44, 45, 46}
 # Deliberately unassigned: 14 glasses, 18 glove, 19 watch, 25 bag/wallet, 27 umbrella.
-GARMENT_PART_CHOICES = list(GARMENT_GROUPS.keys()) + ["all_garments"]
+# Parts that only some outfits have, chosen on their own.
+FASHIONPEDIA_EXTRA = {"dress": {11, 12}, "bag": {25}, "belt": {20, 35}, "scarf": {26}, "glasses": {14}, "jewelry": set()}
+GARMENT_PART_CHOICES = list(GARMENT_GROUPS.keys()) + ["all_garments", *FASHIONPEDIA_EXTRA]
+
+# ---------------------------------------------------------------------------
+# FASHN Human Parser (18 classes) ids used by fashn-ai/fashn-human-parser
+# ---------------------------------------------------------------------------
+FASHN_PARTS = {
+    "upper_garment": {3, 4, 10},  # top, dress, scarf (a dress is an upper garment, as with Fashionpedia)
+    "lower_garment": {5, 6, 7},  # skirt, pants, belt
+    "footwear": {15},  # feet: FASHN has no shoe class, its "feet" are the feet with whatever they wear
+    "headwear": {9},  # hat
+    "all_garments": {3, 4, 5, 6, 7, 9, 10},  # every garment, not the feet
+    "dress": {4}, "bag": {8}, "belt": {7}, "scarf": {10}, "glasses": {11}, "jewelry": {17},
+}
+GARMENT_MODELS = {"fashn": "fashn_human_parser", "fashionpedia": "segformer_fashion"}
+
+# One instance per part in the segs outputs, named as people say them.
+FASHN_SEGS = {"face": {1}, "hair": {2}, "top": {3}, "dress": {4}, "skirt": {5}, "pants": {6}, "belt": {7},
+              "bag": {8}, "hat": {9}, "scarf": {10}, "glasses": {11}, "arms": {12}, "hands": {13}, "legs": {14},
+              "feet": {15}, "torso": {16}, "jewelry": {17}}
+FASHIONPEDIA_SEGS = {
+    "shirt": {1}, "top": {2}, "sweater": {3}, "cardigan": {4}, "jacket": {5}, "vest": {6}, "pants": {7},
+    "shorts": {8}, "skirt": {9}, "coat": {10}, "dress": {11}, "jumpsuit": {12}, "cape": {13}, "glasses": {14},
+    "hat": {15}, "headband": {16}, "tie": {17}, "glove": {18}, "watch": {19}, "belt": {20}, "leg warmer": {21},
+    "tights": {22}, "sock": {23}, "shoe": {24}, "bag": {25}, "scarf": {26}, "umbrella": {27}, "hood": {28},
+    "collar": {29}, "lapel": {30}, "epaulette": {31}, "sleeve": {32}, "pocket": {33}, "neckline": {34},
+    "buckle": {35}, "zipper": {36}, "applique": {37}, "bead": {38}, "bow": {39}, "flower": {40}, "fringe": {41},
+    "ribbon": {42}, "rivet": {43}, "ruffle": {44}, "sequin": {45}, "tassel": {46},
+}
 
 # ---------------------------------------------------------------------------
 # CelebAMask-HQ (19 classes) ids used by jonathandinu/face-parsing
@@ -67,6 +97,9 @@ PORTRAIT_REGIONS = {
     "mouth_interior": {10},
 }
 PORTRAIT_DEFAULT_ON = {"face", "neck", "hair", "eyes", "lips", "nose", "eyebrows", "ears"}
+PORTRAIT_SEGS = {"skin": {1}, "nose": {2}, "glasses": {3}, "eyes": {4, 5}, "eyebrows": {6, 7}, "ears": {8, 9},
+                 "mouth": {10}, "lips": {11, 12}, "hair": {13}, "hat": {14}, "earrings": {15}, "necklace": {16},
+                 "neck": {17}, "clothes": {18}}
 
 
 # ---------------------------------------------------------------------------
@@ -289,38 +322,77 @@ def garment_labels(bundle, image):
 WORK_SIDE = 4096  # label maps are worked out on a copy at most this long, then enlarged to the picture
 
 
-def labels_at_work_size(labeler, bundle, frame):
-    """Label map of the float HxWx3 ``frame`` at its size, worked out by ``labeler(bundle, uint8 RGB)`` on a copy at
-    most WORK_SIDE pixels long. The parsers look at 512 to 1024 px at a time, so their labels hold no finer detail
-    than that on an 8K photo, while merging crops at full size would take seconds."""
+def labels_at_work_size(labeler, bundle, frame, full=True):
+    """(label map of the float HxWx3 ``frame`` at its size, the map it was enlarged from), worked out by
+    ``labeler(bundle, uint8 RGB)`` on a copy at most WORK_SIDE pixels long. The parsers look at 512 to 1024 px at a
+    time, so their labels hold no finer detail than that on an 8K photo, while merging crops at full size would take
+    seconds. Both maps are the same when the frame is small enough; with ``full`` off the first one is None (a caller
+    that builds everything with parts_frame does not need it)."""
     height, width = frame.shape[:2]
     pixels = cv2.convertScaleAbs(frame, alpha=255.0)  # rounds and saturates in one pass
     scale = min(1.0, WORK_SIDE / max(height, width))
     if scale >= 1.0:
-        return labeler(bundle, pixels)
+        labels = labeler(bundle, pixels)
+        return labels, labels
     small = cv2.resize(pixels, (max(1, round(width * scale)), max(1, round(height * scale))),
                        interpolation=cv2.INTER_AREA)
-    labels = labeler(bundle, small)
-    return cv2.resize(labels.astype(np.int32), (width, height), interpolation=cv2.INTER_NEAREST).astype(np.int64)
+    work = labeler(bundle, small)
+    if not full:
+        return None, work
+    rows, cols = _nearest_index(height, work.shape[0]), _nearest_index(width, work.shape[1])
+    return work[np.ix_(rows, cols)], work
 
 
-def _run_batch(image, model_name, device, build_mask, expand, blur, holes, labeler):
-    """Shared per-image loop: label map via ``labeler(bundle, uint8 RGB)``, mask via ``build_mask``, refine, pack."""
+def _nearest_index(size, work_size, start=0, stop=None):
+    """Index into a ``work_size`` map of each of the ``size`` pixels in [start, stop) it is enlarged to."""
+    stop = size if stop is None else stop
+    return np.minimum((np.arange(start, stop) * work_size) // size, work_size - 1)
+
+
+def parts_frame(work, parts, size):
+    """SegsFrame of a picture of ``size`` (height, width) with one instance per part of ``parts`` (name -> class
+    ids) present in the label map ``work``, enlarged to the picture the same way as the mask: each instance is cut
+    from the small map and only its own box is enlarged, so this costs little even on an 8K photo."""
+    height, width = size
+    small_h, small_w = work.shape
+    segments = []
+    for name, ids in parts.items():
+        if not ids:
+            continue
+        found = np.isin(work, list(ids))
+        rows, cols = np.nonzero(found.any(axis=1))[0], np.nonzero(found.any(axis=0))[0]
+        if rows.size == 0:
+            continue
+        # the picture's pixels whose nearest map pixel lies in the part's box, and the map pixels they take
+        y1, y2 = -(-int(rows[0]) * height // small_h), -(-(int(rows[-1]) + 1) * height // small_h)
+        x1, x2 = -(-int(cols[0]) * width // small_w), -(-(int(cols[-1]) + 1) * width // small_w)
+        crop = found[np.ix_(_nearest_index(height, small_h, y1, min(height, y2)),
+                            _nearest_index(width, small_w, x1, min(width, x2)))]
+        if crop.any():
+            segments.append(Segment(name, 1.0, (x1, y1, x1 + crop.shape[1], y1 + crop.shape[0]),
+                                    torch.from_numpy(np.ascontiguousarray(crop)), source="parser"))
+    return SegsFrame(height, width, tuple(segments))
+
+
+def _run_batch(image, model_name, device, build_mask, expand, blur, holes, labeler, parts):
+    """Shared per-image loop: label map via ``labeler(bundle, uint8 RGB)``, mask via ``build_mask``, refine, pack;
+    plus NH_SEGS with one instance per part of ``parts`` found."""
     bundle = load_segformer(model_name, device)
-    masks, cutouts, mask_images = [], [], []
+    masks, cutouts, mask_images, frames_out = [], [], [], []
     frames = _image_batch_to_numpy(image)
     try:
         for frame in frames:
             throw_exception_if_processing_interrupted()
-            labels = labels_at_work_size(labeler, bundle, frame)
+            labels, work = labels_at_work_size(labeler, bundle, frame)
             mask = refine_mask(build_mask(labels), expand, blur, holes)
             mask_t, rgba_t, mask_img_t = pack_outputs(frame, mask)
             masks.append(mask_t)
             cutouts.append(rgba_t)
             mask_images.append(mask_img_t)
+            frames_out.append(parts_frame(work, parts, labels.shape))
     finally:
         offload(bundle)
-    return torch.cat(masks, 0), torch.cat(cutouts, 0), torch.cat(mask_images, 0)
+    return torch.cat(masks, 0), torch.cat(cutouts, 0), torch.cat(mask_images, 0), tuple(frames_out)
 
 
 def _refine_inputs(fill_holes_default):
@@ -345,35 +417,68 @@ class NH_GarmentSegment:
     def INPUT_TYPES(cls):
         required = {
             "image": ("IMAGE",),
-            "part": (GARMENT_PART_CHOICES, {"default": "upper_garment",
-                                            "tooltip": "all_garments combines upper/lower garments, footwear and headwear."}),
-            "attach_parts": ("BOOLEAN", {"default": True,
-                                         "tooltip": "Merge pockets, zippers, bows, ruffles... that touch the selected garment."}),
+            "part": (GARMENT_PART_CHOICES, {
+                "default": "upper_garment",
+                "tooltip": "all_garments combines upper/lower garments, footwear and headwear. With fashn, footwear "
+                           "is the feet with whatever they wear, and jewelry is found; fashionpedia has shoes and "
+                           "socks but no jewelry.",
+            }),
+            "attach_parts": ("BOOLEAN", {
+                "default": True,
+                "tooltip": "fashionpedia only: merge pockets, zippers, bows, ruffles... that touch the selected "
+                           "garment (fashn counts them as part of the garment).",
+            }),
         }
         required.update(_refine_inputs(fill_holes_default=False))
-        return {"required": required}
+        return {
+            "required": required,
+            # optional, so prompts saved before it existed still validate (and get the better model)
+            "optional": {
+                "model": (list(GARMENT_MODELS), {
+                    "default": "fashn",
+                    "tooltip": "fashn: FASHN Human Parser (2025), clean tops, dresses, skirts, pants, bags, hats, "
+                               "scarves, glasses and jewelry, 256 MB. fashionpedia: the older model, with shoes, "
+                               "socks and small parts (sleeves, collars, pockets) in segs. Both are non-commercial "
+                               "(NVIDIA SegFormer licence).",
+                }),
+            },
+        }
 
-    RETURN_TYPES = ("MASK", "IMAGE", "IMAGE")
-    RETURN_NAMES = ("mask", "cutout_rgba", "mask_image")
+    RETURN_TYPES = ("MASK", "IMAGE", "IMAGE", SEGS_TYPE)
+    RETURN_NAMES = ("mask", "cutout_rgba", "mask_image", "segs")
     FUNCTION = "segment"
     CATEGORY = "NH-Nodes/Vision"
-    SEARCH_ALIASES = ["garment segment", "clothes mask", "upper garment", "lower garment", "footwear", "headwear", "all garments"]
+    DESCRIPTION = (
+        "Mask a garment group (upper, lower, footwear, headwear, all) or a single part (dress, bag, belt, scarf, "
+        "glasses, jewelry) of the people in a photo. Each person is parsed close up at the model's full resolution. "
+        "segs holds every part found, for Segs Compose."
+    )
+    SEARCH_ALIASES = ["garment segment", "clothes mask", "upper garment", "lower garment", "footwear", "headwear",
+                      "all garments", "dress mask", "bag mask", "fashn"]
 
     @staticmethod
-    def build_mask(labels, part, attach_parts=True):
+    def build_mask(labels, part, attach_parts=True, model="fashionpedia"):
+        if model == "fashn":
+            return labels_to_mask(labels, FASHN_PARTS.get(part, set()))
+        if part in FASHIONPEDIA_EXTRA:
+            return labels_to_mask(labels, FASHIONPEDIA_EXTRA[part])
         class_ids = set().union(*GARMENT_GROUPS.values()) if part == "all_garments" else GARMENT_GROUPS[part]
         mask = labels_to_mask(labels, class_ids)
         if attach_parts:
             mask = absorb_touching_parts(mask, labels_to_mask(labels, GARMENT_ATTACHED_PARTS))
         return mask
 
-    def segment(self, image, part, attach_parts, mask_expand, mask_blur, fill_holes, device):
+    def segment(self, image, part, attach_parts, mask_expand, mask_blur, fill_holes, device, model="fashn"):
         if part not in GARMENT_PART_CHOICES:
             part = GARMENT_PART_CHOICES[0]
+        model = model if model in GARMENT_MODELS else "fashn"
+        if model == "fashionpedia" and part == "jewelry":
+            print("[NH-Nodes] Garment Segment: fashionpedia has no jewelry class; choose model fashn for jewelry")
         return _run_batch(
-            image, "segformer_fashion", device,
-            lambda labels: self.build_mask(labels, part, attach_parts),
+            image, GARMENT_MODELS[model], device,
+            lambda labels: self.build_mask(labels, part, attach_parts, model),
             mask_expand, mask_blur, fill_holes, garment_labels,
+            FASHN_SEGS if model == "fashn" else FASHIONPEDIA_SEGS,
         )
 
 
@@ -388,10 +493,14 @@ class NH_PortraitSegment:
         required.update(_refine_inputs(fill_holes_default=True))
         return {"required": required}
 
-    RETURN_TYPES = ("MASK", "IMAGE", "IMAGE")
-    RETURN_NAMES = ("mask", "cutout_rgba", "mask_image")
+    RETURN_TYPES = ("MASK", "IMAGE", "IMAGE", SEGS_TYPE)
+    RETURN_NAMES = ("mask", "cutout_rgba", "mask_image", "segs")
     FUNCTION = "segment"
     CATEGORY = "NH-Nodes/Vision"
+    DESCRIPTION = (
+        "Mask face, hair, neck and facial features (eyes, eyebrows, nose, lips, ears) of every face in a photo, each "
+        "face parsed close up. segs holds every part found (skin, eyes, lips, hair, earrings...), for Segs Compose."
+    )
     SEARCH_ALIASES = ["portrait segment", "face parsing", "face mask", "hair mask", "skin mask"]
 
     @staticmethod
@@ -406,7 +515,7 @@ class NH_PortraitSegment:
         return _run_batch(
             image, "face_parsing", device,
             lambda labels: self.build_mask(labels, selected),
-            mask_expand, mask_blur, fill_holes, portrait_labels,
+            mask_expand, mask_blur, fill_holes, portrait_labels, PORTRAIT_SEGS,
         )
 
 
