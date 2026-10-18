@@ -3,6 +3,13 @@
 All notable changes to NH-Nodes. Versions follow the Comfy Registry releases.
 "Behaviour change" marks fixes that can change the output of an existing workflow.
 
+## 1.6.2 — Load images matching picks the right group
+
+- `Load images matching`: when the source and the matching library share parent folders (for example
+  `D:/Photos/Source/Nu/…` and `D:/Photos/Library/{Nam,Nu}/…`), the shared folders no longer outweigh the source's
+  group, so a source in `Nu` picks `Nu/<match>` instead of the first folder in alphabetical order. Same-drive and
+  cross-drive setups now rank identically.
+
 ## 1.6.1 — Cleanup and hardening
 
 - Internal restructuring with no change to node ids, inputs or outputs: the large image-tools module is split into one
