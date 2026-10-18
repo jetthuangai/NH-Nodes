@@ -10,7 +10,7 @@ Plain torch/numpy, no model: the select, compose, preview and convert nodes and 
 import fnmatch
 import functools
 from collections import namedtuple
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 
 import cv2
 import numpy as np
@@ -50,14 +50,16 @@ class Segment:
 
 @dataclass(frozen=True, eq=False)
 class SegsFrame:
-    """The instances found in one image of ``height`` x ``width`` pixels, in the order they were found."""
+    """The instances found in one image of ``height`` x ``width`` pixels, in the order they were found. ``picture`` is
+    a small grey print of that image (see picture_print), or None when the node that found them kept none."""
 
     height: int
     width: int
     segments: tuple = ()
+    picture: object = None
 
     def with_segments(self, segments):
-        return SegsFrame(self.height, self.width, tuple(segments))
+        return SegsFrame(self.height, self.width, tuple(segments), self.picture)
 
     def _comfy_cache_tensors(self):
         """The tensors this frame holds, so ComfyUI's RAM-pressure cache can size it."""
@@ -133,15 +135,57 @@ def instance_masks(segs):
     return masks, labels
 
 
+PRINT_SIDE = 32  # a frame keeps a PRINT_SIDE x PRINT_SIDE grey print of its picture
+# Least correlation between two prints of one picture. Tone, colour and blur edits keep it high (a strong
+# brightening that clips the highlights: 0.64, contrast 0.85, blur 0.87, on 230 photos); most other photos of the
+# same size fall below it, a mirrored or shifted copy too (the masks would not line up).
+SAME_PICTURE = 0.5
+
+
+def picture_print(image):
+    """PRINT_SIDE x PRINT_SIDE float32 grey print of one picture (a ComfyUI [H, W, C] image or an HxWxC array): what
+    a frame keeps to tell two photos of the same size apart."""
+    pixels = image.detach().cpu().float().numpy() if torch.is_tensor(image) else np.asarray(image)
+    if pixels.dtype not in (np.uint8, np.uint16, np.float32):
+        pixels = pixels.astype(np.float32)  # cv2 has no half precision
+    small = cv2.resize(np.ascontiguousarray(pixels), (PRINT_SIDE, PRINT_SIDE), interpolation=cv2.INTER_AREA)
+    small = small.astype(np.float32)
+    return small[..., :3].mean(axis=2) if small.ndim == 3 else small
+
+
+def same_picture(a, b):
+    """Whether two picture prints come from the same photo (see SAME_PICTURE). A flat print (a blank picture) tells
+    nothing, so it never refuses (flat up to the rounding of the area averaging)."""
+    if any(float(p.std()) <= 1e-4 * float(np.abs(p).max()) for p in (a, b)):
+        return True
+    a, b = a - a.mean(), b - b.mean()
+    return float((a * b).sum()) / float(np.sqrt((a * a).sum() * (b * b).sum())) >= SAME_PICTURE
+
+
+def stamped(segs, image):
+    """``segs`` with each frame keeping the print of its picture of the batch ``image`` (left as they are when the
+    counts differ, so no frame is ever lost)."""
+    if len(segs) != len(image):
+        return tuple(segs)
+    return tuple(replace(frame, picture=picture_print(picture)) for frame, picture in zip(segs, image))
+
+
 def merge_segs(*all_segs):
     """One NH_SEGS from several of the same pictures (None entries are skipped): each frame gets the instances of
-    all of them, in order. Raises when they do not belong to the same pictures."""
+    all of them, in order. Raises when they do not belong to the same pictures: another count or size of images, or
+    the prints of different photos."""
     present = [segs for segs in all_segs if segs is not None]
     first = present[0]
     for other in present[1:]:
         if len(other) != len(first) or any((a.height, a.width) != (b.height, b.width) for a, b in zip(first, other)):
             raise ValueError("[NH-Nodes] The segs to mix come from different pictures: connect segs found on the same "
                              "image batch.")
+    for index in range(len(first)):
+        prints = [segs[index].picture for segs in present if segs[index].picture is not None]
+        if not all(same_picture(prints[0], other) for other in prints[1:]):
+            which = f" (image {index + 1} of the batch)" if len(first) > 1 else ""
+            raise ValueError(f"[NH-Nodes] The segs to mix come from different photos of the same size{which}: "
+                             "connect segs found on the same image.")
     if len(present) == 1:
         return first
     return tuple(frame.with_segments([seg for segs in present for seg in segs[index].segments])
@@ -628,7 +672,7 @@ def scale_frame(frame, scale):
         if not small.any():
             small[small.shape[0] // 2, small.shape[1] // 2] = True
         segments.append(make_segment(seg.label, seg.score, small, (nx1, ny1), seg.source))
-    return SegsFrame(height, width, tuple(segments))
+    return SegsFrame(height, width, tuple(segments), frame.picture)
 
 
 def _caption(picture, notes):

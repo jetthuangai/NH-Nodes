@@ -420,6 +420,7 @@ def _run_node(monkeypatch, concepts, misses=None, show_preview=False, frame=None
 def test_segment_node_lists_formulas_and_background(monkeypatch):
     (result, mask, count, report), calls, _ = _run_node(monkeypatch, "cat, dog\ncat")
     assert calls == [["cat", "dog"]] and count == 1 and int(mask.sum()) == 4  # a plain list: the union, as before
+    assert result[0].picture.shape == (32, 32)  # the print Segs Compose checks segs_2 and segs_3 against
     assert sam3_nodes.NH_SAM3Segment.RETURN_NAMES == ("segs", "mask", "count", "report")
     (_, mask, _, _), calls, _ = _run_node(monkeypatch, "person - bag")
     assert calls == [["person", "bag"]] and int(mask.sum()) == 40 - 4

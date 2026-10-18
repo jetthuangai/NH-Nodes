@@ -16,6 +16,7 @@ from ...core.segs import (
     normalize_label,
     parse_concepts,
     preview_picture,
+    stamped,
     uses_keyword,
 )
 from ...core.ui_preview import MAX_PREVIEWS, save_temp_previews
@@ -139,6 +140,7 @@ class NH_SAM3Segment:
             progress=(lambda done, total: bar.update_absolute(done, total)) if bar is not None else None,
             misses=misses,
         )
+        segs = stamped(segs, image)
         count = count_segments(segs)
         lines = describe_request(tree, segs, threshold, misses, added)
         report = "\n".join([f"SAM3 Segment: {count} instance(s) in {len(segs)} image(s)", *lines])

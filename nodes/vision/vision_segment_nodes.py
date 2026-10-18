@@ -23,7 +23,7 @@ from ...core.parse_crops import (
     visible,
 )
 from ...core.segformer_backend import load_segformer, offload, predict_labels
-from ...core.segs import SEGS_TYPE, SegsFrame, Segment
+from ...core.segs import SEGS_TYPE, SegsFrame, Segment, stamped
 
 try:
     from comfy.model_management import throw_exception_if_processing_interrupted
@@ -62,7 +62,7 @@ FASHN_PARTS = {
     "lower_garment": {5, 6, 7},  # skirt, pants, belt
     "footwear": {15},  # feet: FASHN has no shoe class, its "feet" are the feet with whatever they wear
     "headwear": {9},  # hat
-    "all_garments": {3, 4, 5, 6, 7, 9, 10},  # every garment, not the feet
+    "all_garments": {3, 4, 5, 6, 7, 9, 10, 15},  # the groups above, as with Fashionpedia (bare feet too)
     "dress": {4}, "bag": {8}, "belt": {7}, "scarf": {10}, "glasses": {11}, "jewelry": {17},
 }
 GARMENT_MODELS = {"fashn": "fashn_human_parser", "fashionpedia": "segformer_fashion"}
@@ -221,8 +221,8 @@ def find_faces(image, second_look=True):
         return found
     except Exception as exc:  # noqa: BLE001 - any failure of the optional detector falls back to whole frames
         _detection_failed = True
-        print(f"[NH-Nodes] Portrait Segment: the face detector is not available ({exc}); whole frames are parsed "
-              "instead. Restart ComfyUI to try again.")
+        print(f"[NH-Nodes] The face detector is not available ({exc}); Portrait, Garment and Body Segment parse "
+              "whole frames instead. Restart ComfyUI to try again.")
         return []
 
 
@@ -326,8 +326,8 @@ def labels_at_work_size(labeler, bundle, frame, full=True):
     """(label map of the float HxWx3 ``frame`` at its size, the map it was enlarged from), worked out by
     ``labeler(bundle, uint8 RGB)`` on a copy at most WORK_SIDE pixels long. The parsers look at 512 to 1024 px at a
     time, so their labels hold no finer detail than that on an 8K photo, while merging crops at full size would take
-    seconds. Both maps are the same when the frame is small enough; with ``full`` off the first one is None (a caller
-    that builds everything with parts_frame does not need it)."""
+    seconds. Both maps are the same when the frame is small enough; otherwise, with ``full`` off, the first one is
+    None (a caller that builds everything with parts_frame does not need it)."""
     height, width = frame.shape[:2]
     pixels = cv2.convertScaleAbs(frame, alpha=255.0)  # rounds and saturates in one pass
     scale = min(1.0, WORK_SIDE / max(height, width))
@@ -355,11 +355,19 @@ def parts_frame(work, parts, size):
     from the small map and only its own box is enlarged, so this costs little even on an 8K photo."""
     height, width = size
     small_h, small_w = work.shape
+    # one table lookup per part instead of a comparison per class: the label maps have well under 256 classes
+    codes = work.astype(np.uint8) if work.size and 0 <= work.min() and work.max() < 256 else None
+    lookup = np.zeros(256, bool)
     segments = []
     for name, ids in parts.items():
         if not ids:
             continue
-        found = np.isin(work, list(ids))
+        if codes is None:
+            found = np.isin(work, list(ids))
+        else:
+            lookup[:] = False
+            lookup[[i for i in ids if 0 <= i < 256]] = True
+            found = lookup[codes]
         rows, cols = np.nonzero(found.any(axis=1))[0], np.nonzero(found.any(axis=0))[0]
         if rows.size == 0:
             continue
@@ -392,17 +400,16 @@ def _run_batch(image, model_name, device, build_mask, expand, blur, holes, label
             frames_out.append(parts_frame(work, parts, labels.shape))
     finally:
         offload(bundle)
-    return torch.cat(masks, 0), torch.cat(cutouts, 0), torch.cat(mask_images, 0), tuple(frames_out)
+    return torch.cat(masks, 0), torch.cat(cutouts, 0), torch.cat(mask_images, 0), stamped(frames_out, image)
 
 
-def _refine_inputs(fill_holes_default):
+def _refine_inputs(fill_holes_default, fill_holes_tip):
     return {
         "mask_expand": ("INT", {"default": 0, "min": -64, "max": 64, "step": 1,
                                 "tooltip": "Grow (+) or shrink (-) the mask by N pixels."}),
         "mask_blur": ("INT", {"default": 0, "min": 0, "max": 64, "step": 1,
                               "tooltip": "Feather the mask edge by N pixels."}),
-        "fill_holes": ("BOOLEAN", {"default": fill_holes_default,
-                                   "tooltip": "Fill enclosed holes. Off for garments by default: an arm across the torso would be filled in."}),
+        "fill_holes": ("BOOLEAN", {"default": fill_holes_default, "tooltip": fill_holes_tip}),
         "device": (DEVICES, {"default": "cuda"}),
     }
 
@@ -420,8 +427,8 @@ class NH_GarmentSegment:
             "part": (GARMENT_PART_CHOICES, {
                 "default": "upper_garment",
                 "tooltip": "all_garments combines upper/lower garments, footwear and headwear. With fashn, footwear "
-                           "is the feet with whatever they wear, and jewelry is found; fashionpedia has shoes and "
-                           "socks but no jewelry.",
+                           "is the feet with whatever they wear (bare feet too), and jewelry is found; fashionpedia "
+                           "has shoes and socks but no jewelry.",
             }),
             "attach_parts": ("BOOLEAN", {
                 "default": True,
@@ -429,7 +436,8 @@ class NH_GarmentSegment:
                            "garment (fashn counts them as part of the garment).",
             }),
         }
-        required.update(_refine_inputs(fill_holes_default=False))
+        required.update(_refine_inputs(False, "Fill enclosed holes. Off by default: an arm across the torso would "
+                                              "be filled in."))
         return {
             "required": required,
             # optional, so prompts saved before it existed still validate (and get the better model)
@@ -437,9 +445,10 @@ class NH_GarmentSegment:
                 "model": (list(GARMENT_MODELS), {
                     "default": "fashn",
                     "tooltip": "fashn: FASHN Human Parser (2025), clean tops, dresses, skirts, pants, bags, hats, "
-                               "scarves, glasses and jewelry, 256 MB. fashionpedia: the older model, with shoes, "
-                               "socks and small parts (sleeves, collars, pockets) in segs. Both are non-commercial "
-                               "(NVIDIA SegFormer licence).",
+                               "scarves, glasses and jewelry, 256 MB. fashionpedia: the model of 1.8.0 and before, "
+                               "with shoes, socks, headbands and small parts (sleeves, collars, pockets) in segs. Both "
+                               "are built on NVIDIA's SegFormer, whose licence allows non-commercial use only "
+                               "(research or evaluation).",
                 }),
             },
         }
@@ -457,7 +466,7 @@ class NH_GarmentSegment:
                       "all garments", "dress mask", "bag mask", "fashn"]
 
     @staticmethod
-    def build_mask(labels, part, attach_parts=True, model="fashionpedia"):
+    def build_mask(labels, part, attach_parts=True, model="fashn"):
         if model == "fashn":
             return labels_to_mask(labels, FASHN_PARTS.get(part, set()))
         if part in FASHIONPEDIA_EXTRA:
@@ -490,7 +499,9 @@ class NH_PortraitSegment:
         required = {"image": ("IMAGE",)}
         for region in PORTRAIT_REGIONS:
             required[region] = ("BOOLEAN", {"default": region in PORTRAIT_DEFAULT_ON})
-        required.update(_refine_inputs(fill_holes_default=True))
+        required.update(_refine_inputs(True, "Fill enclosed holes. On by default, so a face stays solid where "
+                                             "glasses, earrings or a strand of hair cut into it; off keeps only the "
+                                             "ticked parts (lips without the open mouth)."))
         return {"required": required}
 
     RETURN_TYPES = ("MASK", "IMAGE", "IMAGE", SEGS_TYPE)

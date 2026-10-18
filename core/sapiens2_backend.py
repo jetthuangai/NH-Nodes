@@ -2,9 +2,10 @@
 
 The model labels every pixel of a person with one of 28 body parts and clothes (plus background), predicted at
 1024 x 768. The model code is Meta's standalone file, vendored in core/sapiens2/ with its licence (the Sapiens2
-License: royalty-free, commercial use allowed, not for biometric processing or surveillance). The weights download
-once from Hugging Face, pinned to a fixed revision, into the ``nh_nodes`` model folder
-(models/NH-Nodes/sapiens2-seg-<size>/ by default), like the SegFormer parsers.
+License: royalty-free and commercial use allowed, with prohibited uses that include surveillance, biometric processing,
+identifying people, deepfakes and inferring sensitive data; see LICENSE.md there and THIRD_PARTY_NOTICES.md). The
+weights download once from Hugging Face, pinned to a fixed revision, into the ``nh_nodes`` model folder
+(models/NH-Nodes/sapiens2-seg-<size>/ by default), like the SegFormer parsers. It needs PyTorch 2.4 or newer.
 """
 
 import os
@@ -38,6 +39,7 @@ _STD = (58.395, 57.12, 57.375)
 _MAX_LOGIT_SIDE = 2048  # logits are resized at most to this size before argmax, like the SegFormer parsers
 
 _LOADED = {}
+_said_cpu = False
 
 
 class SegHead(nn.Module):
@@ -95,39 +97,57 @@ def model_path(size, download=True):
 
 
 def torch_device(name):
-    """The torch device for the node's ``device`` choice; "cuda" without a CUDA GPU falls back to the CPU."""
+    """The torch device for the node's ``device`` choice; "cuda" without a CUDA GPU falls back to the CPU (said once)."""
+    global _said_cpu
     if name == "cuda" and torch.cuda.is_available():
         return torch.device("cuda")
-    if name == "cuda":
+    if name == "cuda" and not _said_cpu:
+        _said_cpu = True
         print("[NH-Nodes] CUDA not available, Body Segment runs on the CPU (slow)")
     return torch.device("cpu")
 
 
 def _native_bf16(device):
-    return device.type == "cuda" and torch.cuda.is_bf16_supported(including_emulation=False)
+    if device.type != "cuda":
+        return False
+    try:
+        return torch.cuda.is_bf16_supported(including_emulation=False)
+    except TypeError:  # PyTorch before 2.3 has no including_emulation
+        return torch.cuda.get_device_capability(device)[0] >= 8
 
 
 def load(size, device):
     """The model for ``size`` ("0.4b", "0.8b" or "1b") with the device it runs on; read from disk once and kept in
-    system memory. Built without random initialisation: the layers are created empty and take the checkpoint's
-    tensors, which a mismatching file fails loudly."""
+    system memory, one size at a time. Built without random initialisation: the layers are created empty and take the
+    checkpoint's tensors, which a mismatching file fails loudly."""
     from safetensors.torch import load_file
 
+    if not hasattr(nn, "RMSNorm"):
+        raise RuntimeError(f"[NH-Nodes] Body Segment needs PyTorch 2.4 or newer (this is {torch.__version__}).")
     bundle = _LOADED.get(size)
     if bundle is None:
+        _LOADED.clear()  # the 1b alone keeps 3 to 6 GB of system memory
         spec = MODELS[size]
         path = model_path(size)
         print(f"[NH-Nodes] Loading Sapiens2 {size} from {path}")
+        try:
+            state = load_file(path)
+        except Exception as exc:  # noqa: BLE001 - a damaged or cut-short download
+            raise RuntimeError(f"[NH-Nodes] {path} cannot be read ({exc}); delete it so it is downloaded again.") \
+                from None
+        # own copies, in bfloat16 on GPUs that compute it natively (what it runs in there; half the system memory):
+        # a tensor left on the file's memory map keeps the file open, and Windows then cannot replace or delete it
+        dtype = torch.bfloat16 if _native_bf16(device) else None
+        state = {name: tensor.to(dtype) if dtype is not None and tensor.is_floating_point() and tensor.dtype != dtype
+                 else tensor.clone() for name, tensor in state.items()}
         with torch.device("meta"):
             model = Sapiens2Seg(spec["arch"], spec["dims"])
         try:
-            model.load_state_dict(load_file(path), strict=True, assign=True)
+            model.load_state_dict(state, strict=True, assign=True)
         except RuntimeError as exc:
             raise RuntimeError(f"[NH-Nodes] {path} is not the Sapiens2 {size} segmentation checkpoint; delete it so "
                                f"the right one is downloaded.\n{exc}") from None
         model.eval().requires_grad_(False)
-        if _native_bf16(device):
-            model.to(torch.bfloat16)  # what it runs in on such a GPU; halves the system memory it keeps
         bundle = {"model": model, "size": size}
         _LOADED[size] = bundle
     bundle["device"] = device

@@ -64,16 +64,16 @@ def test_garment_build_mask_respects_attach_parts_flag():
     labels[2:10, 2:18] = 1  # shirt
     labels[10:12, 4:8] = 33  # pocket touching shirt
     labels[16:19, 16:19] = 36  # zipper elsewhere
-    with_parts = vs.NH_GarmentSegment.build_mask(labels, "upper_garment", True)
-    without_parts = vs.NH_GarmentSegment.build_mask(labels, "upper_garment", False)
+    with_parts = vs.NH_GarmentSegment.build_mask(labels, "upper_garment", True, model="fashionpedia")
+    without_parts = vs.NH_GarmentSegment.build_mask(labels, "upper_garment", False, model="fashionpedia")
     assert with_parts[10:12, 4:8].all() and with_parts[16:19, 16:19].sum() == 0
     assert without_parts[10:12, 4:8].sum() == 0
-    assert vs.NH_GarmentSegment.build_mask(labels, "footwear").sum() == 0
+    assert vs.NH_GarmentSegment.build_mask(labels, "footwear", model="fashionpedia").sum() == 0
 
 
 def test_all_garments_includes_clothing_groups_and_excludes_unassigned_accessories():
     labels = np.arange(47).reshape(1, 47)
-    mask = vs.NH_GarmentSegment.build_mask(labels, "all_garments", False)
+    mask = vs.NH_GarmentSegment.build_mask(labels, "all_garments", False, model="fashionpedia")
     expected_ids = set(range(1, 14)) | {15, 16, 17, 20, 21, 22, 23, 24, 26, 28, 29, 30, 31, 32, 34, 35}
     assert set(np.flatnonzero(mask)) == expected_ids
 
@@ -82,7 +82,7 @@ def test_all_garments_combines_shirt_and_pants_in_mask_and_cutout():
     labels = np.zeros((8, 8), np.int64)
     labels[1:3, 2:6] = 1  # shirt
     labels[4:7, 2:6] = 7  # pants
-    mask = vs.NH_GarmentSegment.build_mask(labels, "all_garments", False)
+    mask = vs.NH_GarmentSegment.build_mask(labels, "all_garments", False, model="fashionpedia")
     assert np.array_equal(mask, (labels != 0).astype(np.uint8))
     image = np.full((8, 8, 3), 0.5, np.float32)
     mask_t, rgba, mask_image = vs.pack_outputs(image, mask)
@@ -99,7 +99,7 @@ def test_all_garments_attaches_parts_to_upper_and_lower_only_when_enabled(attach
     labels[6:8, 2:4] = 33  # pocket touching shirt
     labels[16:18, 2:4] = 36  # zipper touching pants
     labels[10:12, 24:26] = 38  # detached decoration
-    mask = vs.NH_GarmentSegment.build_mask(labels, "all_garments", attach_parts)
+    mask = vs.NH_GarmentSegment.build_mask(labels, "all_garments", attach_parts, model="fashionpedia")
     assert mask[2:6, 2:6].all() and mask[12:16, 2:6].all()
     assert bool(mask[6:8, 2:4].all()) == attach_parts
     assert bool(mask[16:18, 2:4].all()) == attach_parts
@@ -195,6 +195,9 @@ def test_nodes_end_to_end_with_stub_backend(monkeypatch):
     assert mask.shape == (2, 8, 8) and rgba.shape == (2, 8, 8, 4) and mask_img.shape == (2, 8, 8, 3)
     assert mask[0, 4:, :].all() and mask[0, :4, :].sum() == 0
     assert [seg.label for seg in segs[0].segments] == ["top", "pants"] and len(segs) == 2  # Fashionpedia names
+    # each frame keeps a print of its own picture, so Segs Compose can refuse segs of another photo
+    assert all(frame.picture.shape == (32, 32) for frame in segs)
+    assert not importlib.import_module("NH-Nodes.core.segs").same_picture(segs[0].picture, segs[1].picture)
 
     mask, rgba, mask_img, _ = vs.NH_GarmentSegment().segment(image, "all_garments", True, 0, 0, False, "cpu",
                                                              "fashionpedia")
@@ -345,7 +348,7 @@ def test_input_types_expose_expected_widgets():
 
 
 # --- real model smoke test (skipped without weights) -------------------------
-@pytest.mark.parametrize("model_name", ["segformer_fashion", "face_parsing"])
+@pytest.mark.parametrize("model_name", ["segformer_fashion", "face_parsing", "fashn_human_parser"])
 def test_real_model_smoke(model_name):
     if backend.resolve_model_dir(model_name, download=False) is None:
         pytest.skip(f"{model_name} weights not on disk")
@@ -382,14 +385,16 @@ def test_fashn_parts_map_to_its_classes():
     build = vs.NH_GarmentSegment.build_mask
     assert build(labels, "upper_garment", model="fashn").tolist() == [[1, 1, 0, 0], [0, 0, 0, 1], [0, 0, 0, 0]]
     assert build(labels, "lower_garment", model="fashn").tolist() == [[0, 0, 1, 1], [1, 0, 0, 0], [0, 0, 0, 0]]
-    assert build(labels, "footwear", model="fashn")[2, 1] == 1 and build(labels, "all_garments", model="fashn")[2, 1] == 0
+    # footwear is FASHN's feet, and all_garments has it, as with Fashionpedia's shoes
+    assert build(labels, "footwear", model="fashn")[2, 1] == 1 and build(labels, "all_garments", model="fashn")[2, 1] == 1
+    assert build(labels, "all_garments").tolist() == build(labels, "all_garments", model="fashn").tolist()  # default
     for part, value in (("dress", 4), ("bag", 8), ("headwear", 9), ("glasses", 11), ("jewelry", 17)):
         assert build(labels, part, model="fashn").sum() == 1 and build(labels, part, model="fashn")[labels == value].all()
     # the same parts on Fashionpedia ids; it has no jewelry class
     fashionpedia = np.array([[11, 25, 20, 26], [14, 12, 35, 1]])
-    assert build(fashionpedia, "dress").tolist() == [[1, 0, 0, 0], [0, 1, 0, 0]]
-    assert build(fashionpedia, "belt").tolist() == [[0, 0, 1, 0], [0, 0, 1, 0]]
-    assert not build(fashionpedia, "jewelry").any()
+    assert build(fashionpedia, "dress", model="fashionpedia").tolist() == [[1, 0, 0, 0], [0, 1, 0, 0]]
+    assert build(fashionpedia, "belt", model="fashionpedia").tolist() == [[0, 0, 1, 0], [0, 0, 1, 0]]
+    assert not build(fashionpedia, "jewelry", model="fashionpedia").any()
 
 
 def test_parts_frame_matches_the_enlarged_label_map_pixel_for_pixel():
@@ -430,3 +435,57 @@ def test_garment_jewelry_with_fashionpedia_says_why_it_is_empty(monkeypatch, cap
     mask, _, _, _ = vs.NH_GarmentSegment().segment(torch.rand(1, 8, 8, 3), "jewelry", True, 0, 0, False, "cpu",
                                                    "fashionpedia")
     assert not mask.any() and "no jewelry class" in capsys.readouterr().out
+
+
+def test_parts_frame_is_exact_for_small_and_border_parts():
+    rng = np.random.default_rng(1)
+    parts = {"a": {1}, "b": {2, 3}, "corner": {5}, "other corner": {6}, "missing": {9}}
+    for small_h, small_w, height, width in ((13, 17, 50, 61), (9, 7, 9, 7), (20, 30, 41, 33), (5, 8, 160, 97)):
+        work = np.zeros((small_h, small_w), np.int64)
+        work[rng.integers(0, small_h, 4), rng.integers(0, small_w, 4)] = rng.integers(1, 4, 4)
+        work[0, -1], work[-1, 0] = 5, 6  # one pixel each, on the border
+        full = work[np.ix_(vs._nearest_index(height, small_h), vs._nearest_index(width, small_w))]
+        frame = vs.parts_frame(work, parts, (height, width))
+        assert [seg.label for seg in frame.segments] == [
+            name for name, ids in parts.items() if np.isin(work, list(ids)).any()]
+        for seg in frame.segments:
+            wanted = np.isin(full, list(parts[seg.label]))
+            canvas = np.zeros((height, width), bool)
+            x1, y1, x2, y2 = seg.box
+            canvas[y1:y2, x1:x2] = seg.mask.numpy()
+            ys, xs = np.nonzero(wanted)
+            assert (canvas == wanted).all() and seg.box == (xs.min(), ys.min(), xs.max() + 1, ys.max() + 1)
+    # class ids past a byte take the slower comparison, with the same result
+    work = np.array([[0, 300], [7, 300]])
+    (seg,) = vs.parts_frame(work, {"big": {300}}, (4, 4)).segments
+    assert seg.box == (2, 0, 4, 4) and seg.mask.all()
+
+
+def test_fashn_gets_the_area_resize_it_was_trained_with(monkeypatch):
+    shown = []
+
+    class _Logits:
+        def __init__(self, t):
+            self.logits = t
+
+    class _Model:
+        device = torch.device("cpu")
+
+        def __call__(self, **kw):
+            return _Logits(torch.zeros(1, 3, 8, 8))
+
+    class _Processor:
+        def __init__(self, height, width):
+            self.size = {"height": height, "width": width}
+
+        def __call__(self, images, return_tensors):
+            shown.append(images.shape[:2])
+            return {"pixel_values": torch.zeros(1)}
+
+    monkeypatch.setattr(backend, "_ensure_on_device", lambda b: None)
+    fashn = {"processor": _Processor(576, 384), "model": _Model(), "name": "fashn_human_parser"}
+    backend.predict_labels(fashn, np.zeros((800, 500, 3), np.uint8))  # between 1x and 2x its size
+    backend.predict_labels(fashn, np.zeros((300, 200, 3), np.uint8))  # smaller than its size
+    face = {"processor": _Processor(512, 512), "model": _Model(), "name": "face_parsing"}
+    backend.predict_labels(face, np.zeros((700, 700, 3), np.uint8))  # under 2x: the processor resizes it
+    assert shown == [(576, 384), (576, 384), (700, 700)]

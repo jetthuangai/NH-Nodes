@@ -222,3 +222,22 @@ def test_model_path_finds_existing_weights_before_downloading(monkeypatch, tmp_p
     assert path.endswith(faces.YUNET["file"]) and downloads[0][1] == faces.YUNET["revision"]
     assert "LICENSE" in downloads[0][2]
     assert faces.model_path() == path and len(downloads) == 1  # found on disk the second time
+
+
+def test_people_labels_with_a_floor_finds_nobody_where_the_parser_is_unsure():
+    image = np.zeros((60, 80, 3), np.uint8)
+    image[10:50, 20:40, 0] = 3 * 8  # the class id is written into the red channel, so any crop parses the same
+    confidence = [0.3]
+
+    def predict(picture):
+        labels = np.rint(picture[..., 0] / 8.0).astype(np.int64)
+        labels[labels != 3] = 0  # the grey padding of a crop is background
+        return labels, np.full(picture.shape[:2], confidence[0], np.float16)
+
+    assert crops.people_labels(predict, image, 0.75)[10:50, 20:40].all()  # without a floor: kept as it was
+    assert not crops.people_labels(predict, image, 0.75, floor=0.5).any()
+    with_face = crops.people_labels(predict, image, 0.75, people=[(22, 12, 30, 20)], floor=0.5)
+    assert with_face[10:50, 20:40].all()  # a face found: the people are there
+    confidence[0] = 0.9
+    assert crops.people_labels(predict, image, 0.75, floor=0.5)[10:50, 20:40].all()  # sure without a face: a back
+    assert not crops.people_labels(predict, np.zeros_like(image), 0.75, floor=0.5).any()  # nothing labelled

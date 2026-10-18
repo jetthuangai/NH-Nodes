@@ -219,7 +219,7 @@ def person_box(face, image_size):
             min(width, int(np.ceil(centre + 2.5 * face_w))), min(height, int(np.ceil(y1 + 8.0 * face_h))))
 
 
-def people_labels(predict, image, aspect, margin=0.08, people=()):
+def people_labels(predict, image, aspect, margin=0.08, people=(), floor=None):
     """Label map of the people in the uint8 RGB ``image``, from ``predict`` (picture -> (label map with 0 for
     background, confidence map)), a parser trained on pictures of the shape ``aspect`` (width / height).
 
@@ -230,9 +230,18 @@ def people_labels(predict, image, aspect, margin=0.08, people=()):
     surer and away from the region's cut edges, for the parts of it that lie on people already found (see anchored)
     and for background near them; so nothing is invented on an empty backdrop and overlapping regions meet where their
     answers do, not along a straight line.
+
+    With ``floor`` and no ``people`` boxes, a first look whose median confidence over what it labels is under
+    ``floor`` means nobody is there, and the map is all background: a parser trained on people sees them in a picture
+    without any, but unsure of all of them (a facade or a cafe's shelves come out as faint arms and clothes), and its
+    crops of such a picture would find more.
     """
     height, width = image.shape[:2]
     coarse, trust = predict(image)
+    if floor is not None and not len(people):
+        found = coarse != 0
+        if not found.any() or float(np.median(trust[found])) < floor:
+            return np.zeros_like(coarse)
     regions = [region for box in foreground_clusters(coarse, extra=people)
                for region in cover_box(box, aspect, margin, (height, width))]
     if not regions or regions == [(0, 0, width, height)]:

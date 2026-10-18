@@ -56,6 +56,7 @@ MODEL_SPECS = {
         "revision": "1f80c34dbab321c5730dda5c3fea279fd3e97498",
         "legacy_dirs": (),
         "signature": {3: "top", 8: "bag", 17: "jewelry"},
+        "area_resize": True,  # trained on pictures brought to 384 x 576 with cv2.INTER_AREA
     },
 }
 
@@ -148,7 +149,7 @@ def load_segformer(model_name, device="cuda"):
             param.requires_grad = False
         id2label = {int(k): v for k, v in model.config.id2label.items()}
         _check_signature(model_name, id2label)
-        bundle = {"processor": processor, "model": model, "id2label": id2label}
+        bundle = {"processor": processor, "model": model, "id2label": id2label, "name": model_name}
         _LOADED[model_name] = bundle
     bundle["device"] = target_device
     return bundle
@@ -190,11 +191,14 @@ def predict_labels(bundle, image_uint8, confidence=False):
     logit_size = (max(1, round(height * scale)), max(1, round(width * scale)))
 
     # The processor squeezes the picture to its fixed size anyway; doing that here first, with area averaging, is
-    # many times faster on a big photo than its own resize and keeps fine detail from aliasing.
+    # many times faster on a big photo than its own resize and keeps fine detail from aliasing. A model trained on
+    # area-averaged pictures gets them at every size.
     size = getattr(processor, "size", None)
-    if isinstance(size, dict) and "height" in size and "width" in size and (
-            height > 2 * size["height"] or width > 2 * size["width"]):
-        image_uint8 = cv2.resize(image_uint8, (size["width"], size["height"]), interpolation=cv2.INTER_AREA)
+    if isinstance(size, dict) and "height" in size and "width" in size:
+        target = (size["width"], size["height"])
+        area = MODEL_SPECS.get(bundle.get("name"), {}).get("area_resize") and (width, height) != target
+        if area or height > 2 * size["height"] or width > 2 * size["width"]:
+            image_uint8 = cv2.resize(image_uint8, target, interpolation=cv2.INTER_AREA)
     inputs = processor(images=image_uint8, return_tensors="pt")
     inputs = {k: v.to(model.device) for k, v in inputs.items()}
     with torch.no_grad():
