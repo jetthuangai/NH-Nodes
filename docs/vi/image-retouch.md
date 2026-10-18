@@ -12,7 +12,7 @@ Ba node làm việc với mask. Một node đổi kích thước ảnh về đú
 | [NH Agnostic Image Generator](#nh-agnostic-image-generator) | Xóa vùng mask bằng màu xám, nhiễu hoặc làm mờ |
 | [NH Simple Face Paste](#nh-simple-face-paste) | Dán khuôn mặt trong mask của ảnh này lên vùng mask của ảnh khác |
 
-Một `MASK` có màu trắng (`1`) ở nơi node cần làm việc và màu đen (`0`) ở những chỗ còn lại. Bạn lấy mask từ một node phân đoạn như [SAM3 Segment (NH)](./vision.md#sam3-segment-nh) (mọi vật thể gọi được tên, ghép lại bằng [Segs Compose (NH)](./vision.md#segs-compose-nh)), [Garment Segment (NH)](./vision.md#garment-segment-nh) hoặc [Portrait Segment (NH)](./vision.md#portrait-segment-nh), hoặc từ bất kỳ công cụ mask nào trong ComfyUI.
+Một `MASK` có màu trắng (`1`) ở nơi node cần làm việc và màu đen (`0`) ở những chỗ còn lại. Bạn lấy mask từ một node phân đoạn như [SAM3 Segment (NH)](./vision.md#sam3-segment-nh) (mọi vật thể gọi được tên, hoặc một công thức như `person - bag` hay `background`), [Garment Segment (NH)](./vision.md#garment-segment-nh) hoặc [Portrait Segment (NH)](./vision.md#portrait-segment-nh), hoặc từ bất kỳ công cụ mask nào trong ComfyUI.
 
 ---
 
@@ -172,6 +172,7 @@ Portrait Segment (NH) trên ảnh đích → NH Simple Face Paste.dest_mask
 
 - Dùng các mask mà hộp bao quanh có tỉ lệ rất khác nhau. Khuôn mặt trông bị bẹp hoặc bị kéo dài.
 - Đưa vào mask có kích thước khác ảnh của nó.
+- Dùng mask của [Portrait Segment (NH)](./vision.md#portrait-segment-nh) trên một ảnh có nhiều khuôn mặt. Mask chứa mọi khuôn mặt, nên hộp bao quanh nó phủ cả chúng.
 - Đặt `feathering` rất cao cho một khuôn mặt nhỏ. Phép làm mờ có thể nuốt mất cả hình dạng.
 
 > **Mẹo:** Hãy làm `dest_mask` lớn hơn một chút so với khuôn mặt bạn thay, và giữ `source_mask` sát khuôn mặt. Khi đó biên mềm của mask nguồn hòa vào ảnh đích.

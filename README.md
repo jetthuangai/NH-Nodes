@@ -13,8 +13,9 @@
 
 **75 production-focused nodes** for ComfyUI: load and save image sets with their metadata, tile and composite large
 images, pick the right resolution for current models and put results back into the original frame, refine masks,
-segment garments and faces, find every person, window or sky by name with SAM 3, build VTON masks, route workflows
-with lazy switches, generate prompts, and test many LoRAs or models from one node.
+segment garments and faces (also in half-body and group photos), get the mask of anything you name with SAM 3 from a
+short formula such as `person - bag` or `background`, build VTON masks, route workflows with lazy switches, generate
+prompts, and test many LoRAs or models from one node.
 
 Every node is documented with a visual card, its inputs and outputs, and examples — in
 [English](docs/en/README.md) and [Vietnamese](docs/vi/README.md).
@@ -32,9 +33,10 @@ Every node is documented with a visual card, its inputs and outputs, and example
   </tr>
   <tr>
     <td><a href="docs/en/vision.md"><img src="docs/assets/examples/garment-segment.jpg" alt="Garment segmentation"></a><br>
-      <b>Segmentation</b> — name what you want (people, windows, the sky) and SAM 3 returns every instance as its own
-      mask, with crisp edges on small and medium objects even in 4K–8K photos; garment and face-part masks from
-      SegFormer models; VTON garment masks with pose and parsing.</td>
+      <b>Segmentation</b> — name what you want (people, windows, the sky) or write a formula such as
+      <code>person - bag</code> or <code>background</code>, and SAM 3 returns the mask, with crisp edges on small and
+      medium objects even in 4K–8K photos, and shows it on the node; garment and face-part masks from SegFormer models
+      that parse faces and people close up; VTON garment masks with pose and parsing.</td>
     <td><a href="docs/en/mask.md"><img src="docs/assets/examples/mask-morphology.jpg" alt="Mask morphology"></a><br>
       <b>Mask tools</b> — fast grow / shrink on the CPU or the GPU, hole filling, soft edges, bounding boxes and
       aspect-ratio matching.</td>
@@ -76,12 +78,13 @@ more requirements, listed below.
   existing GPU build). Install one of them into ComfyUI's Python:
   `python -m pip install onnxruntime-gpu` (NVIDIA) or `python -m pip install onnxruntime` (CPU).
 - **Garment Segment**, **Portrait Segment** and **VTON** download their models from Hugging Face on first use (pinned
-  revisions, only the needed files). To keep models elsewhere, add these keys to `extra_model_paths.yaml`:
+  revisions, only the needed files). Garment Segment and Portrait Segment also fetch YuNet, a 230 KB face detector
+  (MIT) that runs on the CPU. To keep models elsewhere, add these keys to `extra_model_paths.yaml`:
 
   ```yaml
   my_models:
       base_path: D:/ai-models/
-      nh_nodes: NH-Nodes/            # SegFormer models (garment, face parsing)
+      nh_nodes: NH-Nodes/            # SegFormer models (garment, face parsing) and the YuNet face detector
       vton_mask: ComfyUI-Vton-Mask/  # VTON pose + parsing ONNX models
       sam3: sam3/                    # SAM 3 checkpoint (you download sam3.pt yourself)
   ```
@@ -97,7 +100,7 @@ more requirements, listed below.
 | Upscale or refine a huge image piece by piece | Load Image → **Image Tile** → your sampler/upscaler per tile → **Image Untile** | [image-compose](docs/en/image-compose.md#image-tile-nh) |
 | Generate at the model's native size, then restore the original framing | Load Image → **NH Smart Ratio Image Resize** → edit → **NH Restore Image Geometry** | [resolution](docs/en/resolution.md) |
 | Inpaint only the clothes | Load Image → **Garment Segment** → **Mask Morphology** (grow) → inpaint | [vision](docs/en/vision.md) |
-| Mask every person, window or the sky in a large photo | Load Image → **SAM3 Segment** → **Segs Select** or **Segs Compose** → mask → edit or inpaint | [vision](docs/en/vision.md#sam-3-workflows) |
+| Mask every person, window or the sky in a large photo, or everything except the person | Load Image → **SAM3 Segment** (`concepts`: `window`, `person - bag` or `background`) → mask → edit or inpaint; add **Segs Select** to pick single instances | [vision](docs/en/vision.md#sam-3-workflows) |
 | Compare many LoRAs, one per queue | **Counter** → **Load LoRA Model Index** (index) → sampler → **Image Label** (prints the LoRA name) → Save Image | [loaders](docs/en/loaders.md) |
 | Run one of two branches without executing the other | condition → **If/Else** (lazy) → … | [logic](docs/en/logic.md#ifelse-nh) |
 

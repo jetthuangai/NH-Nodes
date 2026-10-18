@@ -5,8 +5,8 @@
 # NH-Nodes guide
 
 NH-Nodes adds **75 nodes** to ComfyUI for photo and production work: loading and saving image sets, tiling and compositing,
-resolution management for current models, mask tools, garment and portrait segmentation, SAM 3 instance masks for
-anything you can name, VTON masks, logic routing, prompt and text tools, batch helpers and indexed model loaders.
+resolution management for current models, mask tools, garment and portrait segmentation, SAM 3 masks for anything you
+can name from a short formula, VTON masks, logic routing, prompt and text tools, batch helpers and indexed model loaders.
 
 This guide explains every node — what it is for, each input and output, and how it behaves in the details that matter.
 Installation and a quick start are on the [project page](../../README.md#installation).

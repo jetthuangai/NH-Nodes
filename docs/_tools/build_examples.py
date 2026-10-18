@@ -1062,8 +1062,8 @@ def ex_vton_masks():
 SAM3_CONCEPTS = "person, helmet, face"
 
 
-@example("sam3-segment.jpg")
-def ex_sam3_segment():
+def require_sam3():
+    """Skip the SAM 3 examples unless they can run here: --gpu, the sam3 package and models/sam3/sam3.pt."""
     if not GPU or not torch.cuda.is_available():
         raise Skip("SAM 3 needs a CUDA GPU: run with --gpu")
     if importlib.util.find_spec("sam3") is None:
@@ -1072,10 +1072,15 @@ def ex_sam3_segment():
         importlib.import_module("NH-Nodes.core.sam3_backend").resolve_checkpoint("sam3.pt")
     except RuntimeError:
         raise Skip("models/sam3/sam3.pt is missing") from None
+
+
+@example("sam3-segment.jpg")
+def ex_sam3_segment():
+    require_sam3()
     image = photo("astronaut")
-    segs, _mask, count = run("NH_SAM3Segment", image=to_tensor(image), concepts=SAM3_CONCEPTS, threshold=0.5,
-                             detail_level="balanced", max_per_concept=0, checkpoint="sam3.pt",
-                             keep_model_loaded=False)
+    segs, _mask, count, _report = run("NH_SAM3Segment", image=to_tensor(image), concepts=SAM3_CONCEPTS,
+                                      threshold=0.5, detail_level="balanced", max_per_concept=0,
+                                      checkpoint="sam3.pt", keep_model_loaded=False, show_preview=False)
     (preview,) = run("NH_SegsPreview", image=to_tensor(image), segs=segs)
 
     def compose(expression):
@@ -1100,6 +1105,48 @@ def ex_sam3_segment():
          Tile(masked(image, Layer(compose("helmet"), TEAL, 0.0, 1.6), Layer(mask_array(biggest_mask), AMBER, 0.5, 2.2)),
               "Segs Select", "labels helmet · sort_by area · count 1: the biggest helmet", aspect=1.0)],
         "Segs Compose and Segs Select (NH)", "masks from the labels", max_h=330,
+    )
+    return render_panel([top, bottom])
+
+
+@example("sam3-formula.jpg")
+def ex_sam3_formula():
+    """What SAM3 Segment shows on the node itself: the picture its ui images hold, for three formulas."""
+    require_sam3()
+    import tempfile
+
+    import folder_paths
+
+    image = photo("astronaut")
+    formulas = ("background", "person - face", "hair, face", "~(person + helmet)")
+    shown = {}
+    with tempfile.TemporaryDirectory() as folder:
+        previous = folder_paths.get_temp_directory()
+        folder_paths.set_temp_directory(folder)  # the node saves its preview into ComfyUI's temp folder: use ours
+        try:
+            for index, concepts in enumerate(formulas):
+                result = run("NH_SAM3Segment", image=to_tensor(image), concepts=concepts, threshold=0.5,
+                             detail_level="balanced", max_per_concept=0, checkpoint="sam3.pt",
+                             keep_model_loaded=index < len(formulas) - 1, show_preview=True)
+                with Image.open(Path(folder) / result["ui"]["images"][0]["filename"]) as picture:
+                    shown[concepts] = picture.convert("RGB")
+        finally:
+            folder_paths.set_temp_directory(previous)
+
+    def picture_only(concepts):  # the report is written on a strip under the picture: keep the picture
+        return shown[concepts].crop((0, 0, image.width, image.height))
+
+    top = Row(
+        [Tile(image, "image", "input photo"), ARROW,
+         Tile(shown["background"], "concepts: background", "everything outside the person; the report is under the picture")],
+        "SAM3 Segment (NH)", "what the node shows on itself: the mask is bright, the rest darkened", max_h=470,
+    )
+    bottom = Row(
+        [Tile(picture_only("person - face"), "person - face", "the person without the face", aspect=1.0),
+         Tile(picture_only("hair, face"), "hair, face", "a list: the hair and the face together", aspect=1.0),
+         Tile(picture_only("~(person + helmet)"), "~(person + helmet)", "everything except the person and the helmets",
+              aspect=1.0)],
+        "More formulas", "one SAM3 Segment (NH) each; the bright part is its mask output", max_h=330,
     )
     return render_panel([top, bottom])
 

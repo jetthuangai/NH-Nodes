@@ -7,6 +7,7 @@ skipped unless all three are present.
 import contextlib
 import importlib
 import os
+import re
 import sys
 import types
 
@@ -130,6 +131,13 @@ class FakeProcessor:
             # best instance, an exact duplicate with a lower score, and a second distinct one
             maps = [_prob_map(SQUARE), _prob_map(SQUARE), _prob_map((50, 40, 60, 60))]
             scores = [0.9, 0.6, 0.7]
+        elif prompt == "floor":
+            # runs off the bottom of the picture; like SAM 3, the outermost row fades to "not sure"
+            floor = _prob_map((0, 48, 64, 64))
+            floor[63, :] = 0.45
+            maps, scores = [floor], [0.8]
+        elif prompt == "faint":
+            maps, scores = [_prob_map((4, 4, 12, 12))], [0.3]
         else:
             maps, scores = [], []
         masks = torch.stack(maps)[:, None] if maps else torch.zeros((0, 1, 64, 64))
@@ -137,12 +145,14 @@ class FakeProcessor:
 
 
 class FakeModel(torch.nn.Module):
-    """predict_inst answers with a mask filling the box prompt (or the opposite corner when ``stray``)."""
+    """predict_inst answers with a mask filling the box prompt (or the opposite corner when ``stray``); with
+    ``fade`` the outer 2 rows and columns of the close-up are "not sure", as SAM 3's are."""
 
-    def __init__(self, stray=False):
+    def __init__(self, stray=False, fade=False):
         super().__init__()
         self.weight = torch.nn.Parameter(torch.zeros(1))
         self.stray = stray
+        self.fade = fade
         self.prompts = []
 
     def predict_inst(self, state, box=None, mask_input=None, multimask_output=True, return_logits=False):
@@ -154,6 +164,8 @@ class FakeModel(torch.nn.Module):
         else:
             x1, y1, x2, y2 = np.round(box).astype(int)
             logits[0, y1:y2, x1:x2] = 10.0
+        if self.fade:
+            logits[0, :2, :] = logits[0, -2:, :] = logits[0, :, :2] = logits[0, :, -2:] = -0.5
         return logits, np.array([0.9]), np.zeros((1, 288, 288), np.float32)
 
 
@@ -171,6 +183,23 @@ def _run(detail, model=None, concepts=("square", "nothing"), **kwargs):
     return frames, processors, model
 
 
+def test_extend_to_border_lifts_the_faded_band_and_never_lowers_it():
+    logits = torch.full((7, 7), -0.3)  # the fade: unsure everywhere near the border
+    logits[:5, 2:5] = 4.0  # an object reaching down to row 4 (inside the band of 2)
+    logits[5, 0] = -6.0  # a sure "no" inside the band
+    logits[6, 5] = 2.0  # higher than the row inside: kept
+    out = backend.extend_to_border(logits, 2, 1, edges=("bottom",))
+    assert (out[5:, 2:5] == 4.0).all()  # the object reaches the edge
+    assert float(out[5, 0]) == -6.0 and float(out[6, 5]) == 2.0  # sure values and higher ones stay
+    assert float(out[6, 1]) == pytest.approx(-0.3)  # nothing inside to lift it to
+    assert torch.equal(logits[:5], out[:5])  # outside the band nothing changes
+    both = backend.extend_to_border(logits.numpy(), 2, 2)
+    assert isinstance(both, np.ndarray) and (both[5:, 2:5] == 4.0).all()
+    assert backend.extend_to_border(torch.zeros(2, 2), 9, 9).shape == (2, 2)  # a band wider than the map is cut
+    assert backend.border_band(1008) == 3 and backend.border_band(64) == 1 and backend.border_band(7360) == 22
+    assert backend.border_band(2400, cells=2) == 5  # a close-up fades over about 2 rows of its view
+
+
 def test_find_instances_drops_duplicates_and_honours_the_cap():
     processor = FakeProcessor()
     state = processor.set_image(torch.zeros(3, 64, 64))
@@ -182,6 +211,28 @@ def test_find_instances_drops_duplicates_and_honours_the_cap():
     assert processor.calls.count(("reset",)) == 3  # every prompt starts from a clean state
 
 
+def test_find_instances_keeps_the_best_score_under_the_threshold_as_a_near_miss():
+    processor = FakeProcessor()
+    state = processor.set_image(torch.zeros(3, 64, 64))
+    misses = {}
+    found = backend.find_instances(processor, state, "square", threshold=0.65, misses=misses)
+    assert [round(score, 2) for score, _, _ in found] == [0.9, 0.7] and misses == {"square": pytest.approx(0.6)}
+    # SAM 3 keeps scores above the threshold: one exactly on it is a miss, as before
+    on_it = backend.find_instances(processor, state, "square", threshold=0.7, misses=misses)
+    assert [round(score, 2) for score, _, _ in on_it] == [0.9]
+    assert backend.find_instances(processor, state, "faint", threshold=0.5, misses=misses) == []
+    assert misses["faint"] == pytest.approx(0.3)
+
+
+def test_instances_running_off_the_picture_reach_its_edge():
+    for detail in ("fast", "balanced"):
+        frames, _, _ = _run(detail, model=FakeModel(fade=True), concepts=("floor",))
+        floor = frames[0].segments[0]
+        x1, y1, x2, y2 = floor.box
+        assert (x1, x2, y2) == (0, 600, 300), detail  # the full width, down to the last row
+        assert bool(floor.mask[-1].all()) and bool(floor.mask[:, 0].all()), detail
+
+
 def test_fast_pass_maps_instances_to_full_resolution():
     frames, processors, model = _run("fast")
     assert len(frames) == 2 and (frames[0].height, frames[0].width) == (300, 600)
@@ -190,7 +241,8 @@ def test_fast_pass_maps_instances_to_full_resolution():
     # model box (16..48, 16..32) of a 64 px square view -> (150..450, 75..150) in the 600 x 300 image
     assert all(abs(a - b) <= 2 for a, b in zip(first.box, (150, 75, 450, 150)))
     assert len(frames[0].segments) == 2 and model.prompts == []
-    assert processors[0].threshold == 0.4 and processors[0].calls[0] == ("image", (3, 64, 64))
+    # candidates are asked for down to NEAR_MISS so that the node can report how close the misses came
+    assert processors[0].threshold == backend.NEAR_MISS and processors[0].calls[0] == ("image", (3, 64, 64))
 
 
 def test_balanced_pass_replaces_masks_with_the_close_up_result():
@@ -339,23 +391,92 @@ def test_checkpoint_list_always_has_an_entry(monkeypatch, tmp_path):
 
 
 # --- node ----------------------------------------------------------------------
-def test_segment_node_outputs(monkeypatch):
-    frame = segs.SegsFrame(8, 10, (segs.make_segment("cat", 0.8, torch.ones((2, 3), dtype=torch.bool), (1, 1)),))
-    calls = []
+def _node_frame():
+    """10 x 8 picture: a person filling columns 0-4, a bag inside it (columns 3-4, rows 2-3), a cat at columns 7-8."""
+    def seg(label, score, x1, y1, x2, y2):
+        return segs.make_segment(label, score, torch.ones((y2 - y1, x2 - x1), dtype=torch.bool), (x1, y1))
 
-    def fake_segment(images, concepts, *args, **kwargs):
-        calls.append(concepts)
-        return (frame,)
+    return segs.SegsFrame(8, 10, (seg("person", 0.9, 0, 0, 5, 8), seg("bag", 0.8, 3, 2, 5, 4),
+                                  seg("cat", 0.7, 7, 1, 9, 3)))
+
+
+def _run_node(monkeypatch, concepts, misses=None, show_preview=False, frame=None):
+    calls, saved = [], []
+
+    def fake_segment(images, names, *args, **kwargs):
+        calls.append(names)
+        kwargs["misses"].update(misses or {})
+        frames = frame or _node_frame()
+        return tuple(frames.with_segments([s for s in frames.segments if s.label in names]) for _ in images)
 
     monkeypatch.setattr(sam3_nodes.sam3, "segment", fake_segment)
+    monkeypatch.setattr(sam3_nodes, "save_temp_previews",
+                        lambda pictures, prefix: saved.extend(pictures) or [{"filename": "x.jpg", "type": "temp"}])
+    out = sam3_nodes.NH_SAM3Segment().segment(torch.full((1, 8, 10, 3), 0.8), concepts, 0.5, "fast", 0, "sam3.pt",
+                                              False, show_preview)
+    return out, calls, saved
+
+
+def test_segment_node_lists_formulas_and_background(monkeypatch):
+    (result, mask, count, report), calls, _ = _run_node(monkeypatch, "cat, dog\ncat")
+    assert calls == [["cat", "dog"]] and count == 1 and int(mask.sum()) == 4  # a plain list: the union, as before
+    assert sam3_nodes.NH_SAM3Segment.RETURN_NAMES == ("segs", "mask", "count", "report")
+    (_, mask, _, _), calls, _ = _run_node(monkeypatch, "person - bag")
+    assert calls == [["person", "bag"]] and int(mask.sum()) == 40 - 4
+    (_, mask, _, report), calls, _ = _run_node(monkeypatch, "background")
+    # background needs the subject: person is searched for on its own, and the report says so
+    assert calls == [["person"]] and int(mask.sum()) == 80 - 40
+    assert "background = everything outside person" in report and "person (searched for background)" in report
+    (_, mask, _, report), calls, _ = _run_node(monkeypatch, "nền - mèo, túi")
+    assert calls == [["cat", "bag", "person"]] and int(mask.sum()) == 80 - 40 - 4 + 4
+    assert "mèo -> cat: 1 found (best 0.70)" in report and "túi -> bag: 1 found (best 0.80)" in report
+
+
+def test_segment_node_reports_what_it_could_not_find(monkeypatch):
+    (_, mask, count, report), _, _ = _run_node(monkeypatch, "dog, giraffe, áo xanh", misses={"dog": 0.31})
+    assert count == 0 and int(mask.sum()) == 0
+    assert "dog: none at threshold 0.50; the best candidate scored 0.31, lower the threshold" in report
+    assert "giraffe: none found; try another English word" in report
+    assert "áo xanh: not understood; write it in English" in report
+
+
+@pytest.mark.parametrize("concepts, message", [
+    (" ,\n# none", "at least one concept"), ("all", "at least one concept"), ("*shirt", "wildcard"),
+    ("person - (bag", "not closed"),
+])
+def test_segment_node_errors(monkeypatch, concepts, message):
+    with pytest.raises(ValueError, match=re.escape(message)):
+        _run_node(monkeypatch, concepts)
+
+
+def test_segment_node_shows_a_small_preview_with_the_report(monkeypatch):
+    out, _, saved = _run_node(monkeypatch, "cat, dog", show_preview=True)
+    assert set(out) == {"ui", "result"} and out["ui"]["images"] == [{"filename": "x.jpg", "type": "temp"}]
+    assert len(out["result"]) == 4 and len(saved) == 1
+    picture = saved[0]
+    assert picture.dtype == np.uint8 and picture.shape[1] == 10 and picture.shape[0] > 8  # a caption strip below
+
+    assert sam3_nodes.NH_SAM3Segment.OUTPUT_NODE is True
+    spec = sam3_nodes.NH_SAM3Segment.INPUT_TYPES()
+    # optional, so an API prompt saved before 1.8 (without it) still validates; the editor still shows it
+    assert "show_preview" not in spec["required"] and spec["optional"]["show_preview"][1]["default"] is True
+    assert spec["required"]["checkpoint"][0]
+
+
+def test_segment_node_runs_without_show_preview_and_survives_a_failed_preview(monkeypatch, capsys):
+    frame = _node_frame()
+    monkeypatch.setattr(sam3_nodes.sam3, "segment", lambda images, names, *a, **k: (frame,))
     node = sam3_nodes.NH_SAM3Segment()
-    result, mask, count = node.segment(torch.rand(1, 8, 10, 3), "cat, dog\ncat", 0.5, "fast", 0, "sam3.pt", False)
-    assert calls == [["cat", "dog"]] and result == (frame,) and count == 1
-    assert mask.shape == (1, 8, 10) and int(mask.sum()) == 6
-    assert sam3_nodes.NH_SAM3Segment.RETURN_NAMES == ("segs", "mask", "count")
-    with pytest.raises(ValueError, match="at least one concept"):
-        node.segment(torch.rand(1, 8, 10, 3), " ,\n# none", 0.5, "fast", 0, "sam3.pt", False)
-    assert sam3_nodes.NH_SAM3Segment.INPUT_TYPES()["required"]["checkpoint"][0]
+    out = node.segment(torch.full((1, 8, 10, 3), 0.8), "cat", 0.5, "fast", 0, "sam3.pt", False)  # as a 1.7 prompt
+    assert set(out) == {"ui", "result"} or len(out) == 4
+
+    def broken(pictures, prefix):
+        raise OSError("disk full")
+
+    monkeypatch.setattr(sam3_nodes, "save_temp_previews", broken)
+    result = node.segment(torch.full((1, 8, 10, 3), 0.8), "cat", 0.5, "fast", 0, "sam3.pt", False, True)
+    assert isinstance(result, tuple) and len(result) == 4 and int(result[1].sum()) == 4
+    assert "could not show the preview" in capsys.readouterr().out
 
 
 # --- real model ----------------------------------------------------------------

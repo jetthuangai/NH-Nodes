@@ -10,7 +10,9 @@ Run from the ComfyUI root:
 import importlib
 import os
 import sys
+import types
 
+import cv2
 import numpy as np
 import pytest
 import torch
@@ -176,8 +178,16 @@ def test_nodes_end_to_end_with_stub_backend(monkeypatch):
     labels[0:4, :] = 2  # top
     labels[4:8, :] = 7  # pants
     monkeypatch.setattr(vs, "load_segformer", lambda name, device: {"name": name})
-    monkeypatch.setattr(vs, "predict_labels", lambda bundle, img: labels)
+    # the label map scaled to whatever picture (whole frame or crop) the parser is shown
+
+    def parser(bundle, img, confidence=False):
+        scaled = cv2.resize(labels.astype(np.int32), (img.shape[1], img.shape[0]),
+                            interpolation=cv2.INTER_NEAREST).astype(np.int64)
+        return (scaled, np.full(img.shape[:2], 0.9, np.float16)) if confidence else scaled
+
+    monkeypatch.setattr(vs, "predict_labels", parser)
     monkeypatch.setattr(vs, "offload", lambda bundle: None)
+    monkeypatch.setattr(vs, "detect_faces", lambda img: [])  # no face: Portrait Segment parses the whole frame
     image = torch.rand(2, 8, 8, 3)
 
     mask, rgba, mask_img = vs.NH_GarmentSegment().segment(image, "lower_garment", True, 0, 0, True, "cpu")
@@ -190,6 +200,124 @@ def test_nodes_end_to_end_with_stub_backend(monkeypatch):
     mask, _, _ = vs.NH_PortraitSegment().segment(image, 0, 0, False, "cpu", nose=True, face=False)
     assert mask.shape == (2, 8, 8)
     assert mask[0, :4, :].all() and mask[0, 4:, :].sum() == 0  # label 2 is nose in the face model
+
+
+def _centre_marker(bundle, img):
+    """Stub parser: skin (1) everywhere and a 4 x 4 nose (2) at the centre of the picture it is shown."""
+    labels = np.ones(img.shape[:2], np.int64)
+    h, w = labels.shape
+    labels[h // 2 - 2:h // 2 + 2, w // 2 - 2:w // 2 + 2] = 2
+    return labels
+
+
+def _face_parser(shown):
+    """Stub face parser: hair (13) everywhere on the whole frame (the first call); on a crop, a face in its middle
+    (skin 1 with a nose 2 and lips 11 at the centre) and hair around it."""
+    def parser(bundle, img):
+        shown.append(img.shape[:2])
+        labels = np.full(img.shape[:2], 13, np.int64)
+        if len(shown) > 1:
+            h, w = labels.shape
+            labels[h // 4:3 * h // 4, w // 4:3 * w // 4] = 1
+            labels[h // 2 - 2:h // 2 + 2, w // 2 - 2:w // 2 + 2] = 2
+            labels[h // 2 + 3:h // 2 + 5, w // 2 - 2:w // 2 + 2] = 11
+        return labels
+    return parser
+
+
+def test_portrait_labels_refine_the_whole_frame_around_each_face(monkeypatch):
+    shown = []
+    monkeypatch.setattr(vs, "predict_labels", _face_parser(shown))
+    monkeypatch.setattr(vs, "detect_faces", lambda img: [(40, 40, 60, 60, 0.9), (140, 40, 160, 60, 0.9)])
+    canvas = vs.portrait_labels({}, np.zeros((100, 200, 3), np.uint8))
+    # the whole frame first (a padded square), then a tight crop per face to confirm it, then a wide one per face
+    assert shown == [(200, 200), (44, 44), (44, 44), (72, 72), (72, 72)]
+    assert canvas[47, 50] == 2 and canvas[47, 150] == 2  # each face has its nose (tight crops, moved up a little)
+    assert canvas[95, 100] == 13 and canvas[50, 100] == 13  # outside the crops the whole-frame parse stays
+
+
+def test_portrait_labels_ignore_boxes_that_are_not_faces(monkeypatch):
+    shown = []
+    monkeypatch.setattr(vs, "predict_labels", lambda bundle, img: shown.append(img.shape[:2]) or np.full(
+        img.shape[:2], 13, np.int64))  # the parser sees only hair in the "face" box (a hand, a pattern)
+    monkeypatch.setattr(vs, "detect_faces", lambda img: [(40, 40, 60, 60, 0.61)])
+    canvas = vs.portrait_labels({}, np.zeros((100, 200, 3), np.uint8))
+    assert shown == [(200, 200), (44, 44)] and (canvas == 13).all()  # turned down: no wide crop, nothing pasted
+
+
+def test_portrait_labels_parse_a_face_filling_the_frame_whole(monkeypatch):
+    shown = []
+    monkeypatch.setattr(vs, "predict_labels", _face_parser(shown))
+    monkeypatch.setattr(vs, "detect_faces", lambda img: [(20, 10, 180, 190, 0.95)])  # a close-up
+    vs.portrait_labels({}, np.zeros((200, 200, 3), np.uint8))
+    assert shown == [(200, 200)]  # the same as the whole-frame parse
+
+
+def test_face_detector_failure_falls_back_to_whole_frames(monkeypatch, capsys):
+    monkeypatch.setattr(vs, "_detection_failed", False)
+
+    def broken(img):
+        raise RuntimeError("Downloading opencv/face_detection_yunet failed")
+
+    monkeypatch.setattr(vs, "detect_faces", broken)
+    assert vs.find_faces(np.zeros((50, 50, 3), np.uint8)) == []
+    assert "face detector is not available" in capsys.readouterr().out
+    assert vs.find_faces(np.zeros((50, 50, 3), np.uint8)) == []  # not tried again, said once
+    assert capsys.readouterr().out == ""
+
+
+def test_portrait_labels_without_a_face_parse_the_whole_frame(monkeypatch):
+    shown = []
+    monkeypatch.setattr(vs, "predict_labels", lambda bundle, img: shown.append(img.shape[:2]) or _centre_marker(
+        bundle, img))
+    looked = []
+    monkeypatch.setattr(vs, "detect_faces", lambda img: looked.append(img.shape[:2]) or [])
+    canvas = vs.portrait_labels({}, np.zeros((100, 200, 3), np.uint8))
+    assert looked == [(100, 200), (166, 332)]  # a second look with a grey margin, for a face cut by the frame
+    # the whole frame, as a padded square (the parser learnt on square faces), nose at the centre of the frame
+    assert shown == [(200, 200)] and canvas.shape == (100, 200) and canvas[50, 100] == 2
+
+
+def test_find_faces_takes_a_second_look_with_a_margin_for_faces_cut_by_the_frame(monkeypatch):
+    calls = []
+
+    def detector(img):
+        calls.append(img.shape[:2])
+        return [] if len(calls) == 1 else [(30.0, 40.0, 120.0, 150.0, 0.7)]  # found on the padded copy
+
+    monkeypatch.setattr(vs, "detect_faces", detector)
+    faces = vs.find_faces(np.zeros((90, 120, 3), np.uint8))
+    assert calls == [(90, 120), (150, 200)] and faces == [(0.0, 10.0, 80.0, 90.0, 0.7)]  # mapped back, clipped
+    monkeypatch.setattr(vs, "detect_faces", lambda img: [(1.0, 2.0, 3.0, 4.0, 0.9)])
+    assert vs.find_faces(np.zeros((90, 120, 3), np.uint8)) == [(1.0, 2.0, 3.0, 4.0, 0.9)]
+
+
+def test_garment_labels_refine_a_crop_of_the_model_shape_around_the_clothes(monkeypatch):
+    shown = []
+
+    def parser(bundle, img, confidence=False):
+        shown.append(img.shape[:2])
+        labels = np.zeros(img.shape[:2], np.int64)
+        if len(shown) == 1:  # the first look at the whole picture: the clothes, under another label, unsure
+            labels[50:150, 120:180] = 3
+            return labels, np.full(img.shape[:2], 0.5, np.float16)
+        labels[np.asarray(img)[..., 0] == 9] = 5  # the close look
+        return labels, np.full(img.shape[:2], 0.9, np.float16)
+
+    monkeypatch.setattr(vs, "predict_labels", parser)
+    monkeypatch.setattr(vs, "detect_faces", lambda img: [])
+    bundle = {"processor": types.SimpleNamespace(size={"height": 576, "width": 384})}
+    image = np.zeros((200, 300, 3), np.uint8)
+    image[50:150, 120:180, 0] = 9
+    canvas = vs.garment_labels(bundle, image)
+    crop_h, crop_w = shown[1]
+    assert shown[0] == (200, 300) and abs(crop_w / crop_h - 384 / 576) < 0.02  # the model's 2:3, not squeezed
+    assert (canvas[50:150, 120:180] == 5).all() and set(np.unique(canvas)) == {0, 5}
+
+    shown.clear()
+    monkeypatch.setattr(vs, "predict_labels", lambda bundle, img, confidence=False: shown.append(1) or (
+        np.zeros(img.shape[:2], np.int64), np.ones(img.shape[:2], np.float16)))
+    assert not vs.garment_labels(bundle, np.zeros((200, 300, 3), np.uint8)).any() and shown == [1]  # no clothes
 
 
 def test_input_types_expose_expected_widgets():

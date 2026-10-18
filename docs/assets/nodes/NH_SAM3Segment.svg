@@ -1,7 +1,7 @@
-<svg xmlns="http://www.w3.org/2000/svg" width="360" height="338" viewBox="0 0 360 338" font-family="Inter, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif" role="img" aria-label="SAM3 Segment (NH) node">
-<rect x="0.5" y="0.5" width="359" height="337" rx="10" fill="#26282c" stroke="#45484f"/>
+<svg xmlns="http://www.w3.org/2000/svg" width="360" height="389" viewBox="0 0 360 389" font-family="Inter, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif" role="img" aria-label="SAM3 Segment (NH) node">
+<rect x="0.5" y="0.5" width="359" height="388" rx="10" fill="#26282c" stroke="#45484f"/>
 <path d="M0.5 10.5 a10 10 0 0 1 10 -10 h339 a10 10 0 0 1 10 10 v36 h-359 z" fill="#34373d"/>
-<circle cx="17" cy="17" r="4.5" fill="#8FD18F"/>
+<circle cx="17" cy="17" r="4.5" fill="#F6AD55"/>
 <text x="28" y="22" font-size="14" font-weight="600" fill="#EEF0F3">SAM3 Segment (NH)</text>
 <text x="28" y="38" font-size="10.5" fill="#9AA0A8" font-family="'JetBrains Mono', Consolas, 'Courier New', monospace">NH_SAM3Segment · Vision</text>
 <circle cx="12" cy="67.0" r="5" fill="#64B5F6" stroke="#1b1c1f" stroke-width="1.5"/>
@@ -12,31 +12,37 @@
 <circle cx="348" cy="89.0" r="5" fill="#81C784" stroke="#1b1c1f" stroke-width="1.5"/>
 <text x="336" y="115.0" font-size="12" fill="#D7DADF" text-anchor="end">count</text>
 <circle cx="348" cy="111.0" r="5" fill="#9CC2E5" stroke="#1b1c1f" stroke-width="1.5"/>
-<rect x="12" y="130" width="336" height="46" rx="7" fill="#1d1f22" stroke="#3a3d43"/>
-<text x="22" y="146" font-size="11.5" fill="#9AA0A8">concepts</text>
-<text x="22" y="166" font-size="11.5" fill="#E6E8EB" font-family="'JetBrains Mono', Consolas, 'Courier New', monospace">person</text>
-<rect x="12" y="181" width="336" height="24" rx="7" fill="#1d1f22" stroke="#3a3d43"/>
-<text x="20" y="197" font-size="10" fill="#6f747c">◀</text>
-<text x="332" y="197" font-size="10" fill="#6f747c">▶</text>
-<text x="34" y="197" font-size="11.5" fill="#9AA0A8">threshold</text>
-<text x="326" y="197" font-size="11.5" fill="#E6E8EB" text-anchor="end">0.50</text>
-<rect x="12" y="210" width="336" height="24" rx="7" fill="#1d1f22" stroke="#3a3d43"/>
-<text x="20" y="226" font-size="10" fill="#6f747c">◀</text>
-<text x="332" y="226" font-size="10" fill="#6f747c">▶</text>
-<text x="34" y="226" font-size="11.5" fill="#9AA0A8">detail_level</text>
-<text x="326" y="226" font-size="11.5" fill="#E6E8EB" text-anchor="end">balanced</text>
-<rect x="12" y="239" width="336" height="24" rx="7" fill="#1d1f22" stroke="#3a3d43"/>
-<text x="20" y="255" font-size="10" fill="#6f747c">◀</text>
-<text x="332" y="255" font-size="10" fill="#6f747c">▶</text>
-<text x="34" y="255" font-size="11.5" fill="#9AA0A8">max_per_concept</text>
-<text x="326" y="255" font-size="11.5" fill="#E6E8EB" text-anchor="end">0</text>
-<rect x="12" y="268" width="336" height="24" rx="7" fill="#1d1f22" stroke="#3a3d43"/>
-<text x="20" y="284" font-size="10" fill="#6f747c">◀</text>
-<text x="332" y="284" font-size="10" fill="#6f747c">▶</text>
-<text x="34" y="284" font-size="11.5" fill="#9AA0A8">checkpoint</text>
-<text x="326" y="284" font-size="11.5" fill="#E6E8EB" text-anchor="end">(choose a file)</text>
-<rect x="12" y="297" width="336" height="24" rx="7" fill="#1d1f22" stroke="#3a3d43"/>
-<text x="22" y="313" font-size="11.5" fill="#9AA0A8">keep_model_loaded</text>
-<rect x="308" y="303" width="30" height="13" rx="6.5" fill="#4a4d53"/>
-<circle cx="315" cy="309.5" r="5" fill="#F5F6F7"/>
+<text x="336" y="137.0" font-size="12" fill="#D7DADF" text-anchor="end">report</text>
+<circle cx="348" cy="133.0" r="5" fill="#C5E1A5" stroke="#1b1c1f" stroke-width="1.5"/>
+<rect x="12" y="152" width="336" height="46" rx="7" fill="#1d1f22" stroke="#3a3d43"/>
+<text x="22" y="168" font-size="11.5" fill="#9AA0A8">concepts</text>
+<text x="22" y="188" font-size="11.5" fill="#E6E8EB" font-family="'JetBrains Mono', Consolas, 'Courier New', monospace">person</text>
+<rect x="12" y="203" width="336" height="24" rx="7" fill="#1d1f22" stroke="#3a3d43"/>
+<text x="20" y="219" font-size="10" fill="#6f747c">◀</text>
+<text x="332" y="219" font-size="10" fill="#6f747c">▶</text>
+<text x="34" y="219" font-size="11.5" fill="#9AA0A8">threshold</text>
+<text x="326" y="219" font-size="11.5" fill="#E6E8EB" text-anchor="end">0.50</text>
+<rect x="12" y="232" width="336" height="24" rx="7" fill="#1d1f22" stroke="#3a3d43"/>
+<text x="20" y="248" font-size="10" fill="#6f747c">◀</text>
+<text x="332" y="248" font-size="10" fill="#6f747c">▶</text>
+<text x="34" y="248" font-size="11.5" fill="#9AA0A8">detail_level</text>
+<text x="326" y="248" font-size="11.5" fill="#E6E8EB" text-anchor="end">balanced</text>
+<rect x="12" y="261" width="336" height="24" rx="7" fill="#1d1f22" stroke="#3a3d43"/>
+<text x="20" y="277" font-size="10" fill="#6f747c">◀</text>
+<text x="332" y="277" font-size="10" fill="#6f747c">▶</text>
+<text x="34" y="277" font-size="11.5" fill="#9AA0A8">max_per_concept</text>
+<text x="326" y="277" font-size="11.5" fill="#E6E8EB" text-anchor="end">0</text>
+<rect x="12" y="290" width="336" height="24" rx="7" fill="#1d1f22" stroke="#3a3d43"/>
+<text x="20" y="306" font-size="10" fill="#6f747c">◀</text>
+<text x="332" y="306" font-size="10" fill="#6f747c">▶</text>
+<text x="34" y="306" font-size="11.5" fill="#9AA0A8">checkpoint</text>
+<text x="326" y="306" font-size="11.5" fill="#E6E8EB" text-anchor="end">(choose a file)</text>
+<rect x="12" y="319" width="336" height="24" rx="7" fill="#1d1f22" stroke="#3a3d43"/>
+<text x="22" y="335" font-size="11.5" fill="#9AA0A8">keep_model_loaded</text>
+<rect x="308" y="325" width="30" height="13" rx="6.5" fill="#4a4d53"/>
+<circle cx="315" cy="331.5" r="5" fill="#F5F6F7"/>
+<rect x="12" y="348" width="336" height="24" rx="7" fill="#1d1f22" stroke="#3a3d43"/>
+<text x="22" y="364" font-size="11.5" fill="#9AA0A8">show_preview <tspan fill="#6f747c" font-style="italic">opt</tspan></text>
+<rect x="308" y="354" width="30" height="13" rx="6.5" fill="#4C8BF5"/>
+<circle cx="331" cy="360.5" r="5" fill="#F5F6F7"/>
 </svg>

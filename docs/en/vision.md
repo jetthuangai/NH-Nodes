@@ -2,13 +2,14 @@
 
 # Vision
 
-Eight nodes that cut parts out of a photo. Two use SegFormer models that know people: clothing with Garment Segment, and face, hair and neck with Portrait Segment. Each returns a mask at the size of the input image, a cutout with transparency and a mask preview. The other six work with SAM 3, Meta's segmentation model: SAM3 Segment finds every instance of anything you can name in plain English (people, a wine glass, windows, the sky), and five Segs nodes pick, combine, preview and convert what it found. Find them under **NH-Nodes → Vision**.
+Eight nodes that cut parts out of a photo. Two use SegFormer models that know people: clothing with Garment Segment, and face, hair and neck with Portrait Segment. Each returns a mask at the size of the input image, a cutout with transparency and a mask preview. The other six work with SAM 3, Meta's segmentation model: you type what you want into SAM3 Segment (people, a wine glass, windows, the sky, or a formula such as `person - bag` or `background`) and it returns the mask and shows it on the node. It also keeps every instance it found, and five Segs nodes pick, combine, preview and convert them. Find them under **NH-Nodes → Vision**.
 
 **On this page**
 
 - [Which node do I need?](#which-node-do-i-need) — the SegFormer nodes or SAM 3
 - **SegFormer nodes: garments and portraits**
-  - [Before you start](#before-you-start) — models, first run, licences, memory
+  - [Before you start](#before-you-start) — models, the face detector, first run, licences, memory
+  - [How the SegFormer nodes look at a photo](#how-the-segformer-nodes-look-at-a-photo) — why small faces and people get close-ups
   - [Refining the mask](#refining-the-mask) — the options both nodes share
   - [Garment Segment (NH)](#garment-segment-nh) — mask upper garments, lower garments, footwear or headwear
   - [Portrait Segment (NH)](#portrait-segment-nh) — mask face, hair, neck and facial features
@@ -16,7 +17,8 @@ Eight nodes that cut parts out of a photo. Two use SegFormer models that know pe
   - [Before you start with SAM 3](#before-you-start-with-sam-3) — GPU, package, checkpoint, memory, licence
   - [How the two passes work](#how-the-two-passes-work) — what `balanced` does on 4K to 8K photos, and where it stops
   - [Instances: the NH_SEGS type](#instances-the-nh_segs-type) — what flows between the nodes
-  - [SAM3 Segment (NH)](#sam3-segment-nh) — find every instance of the concepts you name
+  - [Writing a formula](#writing-a-formula) — what `concepts` and `expression` accept: lists, `-`, `&`, `~`, `background`, Vietnamese words
+  - [SAM3 Segment (NH)](#sam3-segment-nh) — type what you want, get its mask and see it on the node
   - [Segs Select (NH)](#segs-select-nh) — keep instances by label, score, size and position
   - [Segs Compose (NH)](#segs-compose-nh) — build a mask from labels with `|`, `-`, `&` and `~`
   - [Segs To Masks (NH)](#segs-to-masks-nh) — one mask per instance, the union and the labels
@@ -29,9 +31,9 @@ Eight nodes that cut parts out of a photo. Two use SegFormer models that know pe
 
 | You want | Use | What it needs |
 |---|---|---|
-| The clothing of one person: shirt, trousers, shoes, hat | [Garment Segment](#garment-segment-nh) | A SegFormer model that downloads itself on the first run. Runs on the CPU or the GPU. |
-| The face, hair, neck and facial features of a portrait | [Portrait Segment](#portrait-segment-nh) | The same. |
-| Anything you can name (people, objects, sky, walls, windows), every instance on its own, also on 4K to 8K photos | [SAM3 Segment](#sam3-segment-nh) and the Segs nodes | An NVIDIA GPU, Meta's `sam3` package and a checkpoint that you install and download yourself. See [Before you start with SAM 3](#before-you-start-with-sam-3). |
+| The clothing of one person or of a group: shirt, trousers, shoes, hat | [Garment Segment](#garment-segment-nh) | A SegFormer model and a small face detector that download themselves on the first run. Runs on the CPU or the GPU. |
+| The face, hair, neck and facial features of a portrait, a half-body shot or every face of a group photo | [Portrait Segment](#portrait-segment-nh) | The same. |
+| Anything you can name (people, objects, sky, walls, windows) as a mask from a short formula (`person - bag`, `background`), or every instance on its own, also on 4K to 8K photos | [SAM3 Segment](#sam3-segment-nh) and the Segs nodes | An NVIDIA GPU, Meta's `sam3` package and a checkpoint that you install and download yourself. See [Before you start with SAM 3](#before-you-start-with-sam-3). |
 
 You can ask SAM3 Segment for `dress` or `hair` too. The SegFormer nodes stay the easier choice for their fixed sets of clothing and face parts: they set themselves up and also run without a GPU.
 
@@ -46,13 +48,27 @@ This section is about Garment Segment and Portrait Segment. SAM3 Segment and the
 | Download | about 190 MB | about 340 MB |
 | Licence | The uploader declares none | Non-commercial research and education only |
 
-**First run.** The first time a node runs, it downloads its model from Hugging Face. Each download is pinned to a fixed revision of the repository, so a later change upstream cannot alter what you get. The files go to `ComfyUI/models/NH-Nodes/`, one sub-folder per model. A complete copy that already exists is used instead: in `models/RMBG/segformer_fashion` for the garment model, in `models/face_parsing` or `models/RMBG/segformer_face` for the face model, or in any folder you add under the `nh_nodes` key in `extra_model_paths.yaml` (see [Installation](../../README.md#installation) for an example). If a download is interrupted, run the node again: finished files are kept.
+**First run.** The first time a node runs, it downloads its model from Hugging Face, together with the face detector described below. Each download is pinned to a fixed revision of the repository, so a later change upstream cannot alter what you get. The files go to `ComfyUI/models/NH-Nodes/`, one sub-folder per model. A complete copy that already exists is used instead: in `models/RMBG/segformer_fashion` for the garment model, in `models/face_parsing` or `models/RMBG/segformer_face` for the face model, or in any folder you add under the `nh_nodes` key in `extra_model_paths.yaml` (see [Installation](../../README.md#installation) for an example). If a download is interrupted, run the node again: finished files are kept.
+
+**Face detector.** Both nodes also use YuNet, a small face detector (about 230 KB, MIT licence, from OpenCV Zoo), to find where the people are before they parse a picture. It is downloaded once, pinned to a fixed revision of `opencv/face_detection_yunet`, into `ComfyUI/models/NH-Nodes/yunet/`. It runs on the CPU with the OpenCV that NH-Nodes already needs, so it takes no VRAM. A copy that already sits in a `yunet` sub-folder of any `nh_nodes` folder (`models/NH-Nodes/`, or one you add in `extra_model_paths.yaml`) is used instead; to run offline, put `face_detection_yunet_2023mar.onnx` there yourself. If the detector cannot be loaded (offline on the first run, or an OpenCV that cannot run it), the node prints one warning in the console and parses whole pictures, without the close-ups described in [How the SegFormer nodes look at a photo](#how-the-segformer-nodes-look-at-a-photo). Restart ComfyUI to try again.
 
 **Memory.** A model is read from disk once and kept in system memory. It moves to the GPU only while a node runs, and goes back to system memory afterwards, so it does not hold VRAM between runs. Before it moves to the GPU, the node asks ComfyUI to unload some of its own models if VRAM is tight.
 
 > **Note:** If a node reports unexpected labels, a different checkpoint sits in one of the folders it searches. Remove that copy and the right model is downloaded.
 
-> **Licence:** The model behind Portrait Segment may only be used for non-commercial research and education. The model behind Garment Segment declares no licence, so its terms are unclear. NH-Nodes' own code is MIT. Read [THIRD_PARTY_NOTICES.md](../../THIRD_PARTY_NOTICES.md) before you use either node commercially.
+> **Licence:** The model behind Portrait Segment may only be used for non-commercial research and education. The model behind Garment Segment declares no licence, so its terms are unclear. NH-Nodes' own code is MIT. The YuNet face detector is MIT-licensed and changes none of this. Read [THIRD_PARTY_NOTICES.md](../../THIRD_PARTY_NOTICES.md) before you use either node commercially.
+
+## How the SegFormer nodes look at a photo
+
+Both models look at a 512 × 512 picture. On a 6000 px photo, a face that is 600 px wide is only about 50 px wide to the model, so the nodes do not hand it the photo in one piece.
+
+1. **The whole picture first.** A picture with a side longer than twice the model's 512 px is shrunk with area averaging, which is faster than the model's own resize and keeps fine detail clean, and then parsed. This first answer is kept wherever nothing better is found, so whatever the later steps miss keeps at least this result.
+2. **People are found.** The face detector looks for faces on two sizes of the picture. Garment Segment also takes the people that the first parse found.
+3. **Close-ups refine the answer.** Each face (Portrait Segment) or group of people (Garment Segment) is parsed again on a crop that the model sees at its full 512 px. The crop's labels go into the first answer, but not along the crop's cut edges, where the model sees things cut off, so no straight edge shows in hair or clothes. How far a crop is trusted differs by node, as the Garment Segment and Portrait Segment sections describe.
+
+On a photo longer than 4096 px, all of this is worked out on a copy 4096 px long and the label map is enlarged to the photo at the end: the model sees 512 px at a time, so its labels hold no finer detail, and merging crops at full 8K size would take seconds.
+
+What each node does with this is in its own section: [Garment Segment](#garment-segment-nh) and [Portrait Segment](#portrait-segment-nh).
 
 ## Refining the mask
 
@@ -81,13 +97,13 @@ Batches work: every image is segmented in turn and the outputs keep the batch or
 
 <p align="center"><img src="../assets/nodes/NH_GarmentSegment.svg" alt="Garment Segment (NH) node" width="360"></p>
 
-Masks one group of clothing, or all groups together, on a person in the image.
+Masks one group of clothing, or all groups together, on the people in the image.
 
 **Use it when** you want a clean mask of a shirt, trousers, shoes or a hat for inpainting, recolouring or a try-on workflow.
 
 | Input | Type | Default | Description |
 |---|---|---|---|
-| `image` | IMAGE | — | A photo of a person. |
+| `image` | IMAGE | — | A photo of a person or of a group of people. |
 | `part` | COMBO | `upper_garment` | `upper_garment`, `lower_garment`, `footwear`, `headwear` or `all_garments`. See the table below. |
 | `attach_parts` | BOOLEAN | `true` | Merges pockets, zippers, bows, ruffles and similar decorations that touch the selected garment. |
 | `mask_expand` | INT | `0` | Range -64 to 64. Grows (+) or shrinks (-) the mask by N pixels. |
@@ -116,6 +132,8 @@ Masks one group of clothing, or all groups together, on a person in the image.
 - **Dresses and jumpsuits** belong to `upper_garment`. There is no separate dress option. For a shirt and trousers together, or a dress and shoes, choose `all_garments`.
 - **Attached parts** are pockets, zippers, appliqués, beads, bows, flowers, fringe, ribbons, rivets, ruffles, sequins and tassels. With `attach_parts` on, a piece is added only when it touches the selected garment (within a few pixels). A pocket on a jacket joins an `upper_garment` mask, but a bow on a bag does not.
 - **Never selected:** glasses, gloves, watches, bags, wallets and umbrellas have no `part`.
+- **Close-ups of people.** The node parses the whole picture first and keeps that answer. It then finds the people (in that parse and with the face detector) and cuts square crops, the model's own input shape, around each group of them: a row of overlapping crops for a wide group, one crop for a person or a tight group. Each crop is parsed at the model's full 512 px, and a crop grows when people run past one of its edges. This helps people who are small in a large photo. See [How the SegFormer nodes look at a photo](#how-the-segformer-nodes-look-at-a-photo).
+- **A crop only refines.** Its labels replace the first answer only where the model is surer, away from the crop's cut edges, and only for parts on people already found. Nothing is invented on an empty backdrop, and no straight crop edge cuts through a garment.
 
 <p align="center"><img src="../assets/examples/garment-segment.jpg" alt="Garment Segment masks overlaid on a sample photo" width="720"><br><em>Garment Segment on a sample photo: the coloured areas are the masks of the selected parts.</em></p>
 
@@ -127,6 +145,8 @@ Load Image → Garment Segment (NH, upper_garment) → mask → Mask Morphology 
 
 Grow the mask a few pixels with [Mask Morphology (NH)](./mask.md#mask-morphology-nh) so the inpainted garment can overlap the old outline.
 
+> **Note:** The Fashionpedia model misses some tops, for example a blouse under a big hat. A better garment model is planned.
+
 > **Licence:** the garment model declares no licence. See [Before you start](#before-you-start).
 
 ---
@@ -135,13 +155,13 @@ Grow the mask a few pixels with [Mask Morphology (NH)](./mask.md#mask-morphology
 
 <p align="center"><img src="../assets/nodes/NH_PortraitSegment.svg" alt="Portrait Segment (NH) node" width="360"></p>
 
-Masks the face, hair, neck and facial features of a portrait. You tick the regions you want.
+Masks the face, hair, neck and facial features of a portrait, or of every face in a group photo. You tick the regions you want.
 
 **Use it when** you want to retouch or recolour hair, work on skin and facial features, or protect the face while you edit the rest of the picture.
 
 | Input | Type | Default | Description |
 |---|---|---|---|
-| `image` | IMAGE | — | A portrait photo. |
+| `image` | IMAGE | — | A portrait, a half-body shot or a group photo. |
 | `face` | BOOLEAN | `true` | The solid face region: skin, nose, eyes, eyebrows, eyeglasses, lips and the inside of the mouth. |
 | `neck` | BOOLEAN | `true` | The neck. |
 | `hair` | BOOLEAN | `true` | The hair. |
@@ -158,7 +178,7 @@ Masks the face, hair, neck and facial features of a portrait. You tick the regio
 
 | Output | Type | Description |
 |---|---|---|
-| `mask` | MASK | The combined mask of every ticked region. |
+| `mask` | MASK | The combined mask of every ticked region, of every face found. |
 | `cutout_rgba` | IMAGE | The input with the mask as alpha. |
 | `mask_image` | IMAGE | The mask as a grey RGB preview. |
 
@@ -167,6 +187,10 @@ Masks the face, hair, neck and facial features of a portrait. You tick the regio
 - The ticked regions are combined into one mask. With nothing ticked, the mask is empty.
 - `face` already contains eyes, eyebrows, nose, lips and the inside of the mouth. Those options change the result only when `face` is off.
 - Hats, earrings, necklaces and clothing exist in the model, but the node does not offer them.
+- **The whole picture first.** It is parsed as a padded square (it keeps its proportions, grey fills the rest) instead of being squeezed into the model's square. This answer stays wherever the crops below do not reach, so a picture in which no face is found, or in which the detector is not available, keeps it as the result. Once faces are found, the face parts (skin, eyes, eyebrows, nose, lips, ears) that this answer shows far from all of them are dropped as mistakes, such as a reflection or a pattern; its hair, neck and clothes stay.
+- **Faces.** The face detector finds the faces (at most 32, the largest ones). When it finds none, the picture gets a grey margin and is searched once more, which finds a face that the frame cuts. The parser then checks each face on a tight crop: a hand or a pattern that the detector took for a face is turned down and changes nothing.
+- **Two crops per face.** A wide crop shows hair and neck whole. A tight crop, framed like the photos the model learnt on, gives eyes, eyebrows, nose and lips. The wide crop refines what is inside it away from its cut edges, and the tight crop decides only inside an ellipse around the face, so no straight crop edge shows in long hair. Where the crops of two faces overlap, each pixel goes to the nearer face. In a group photo the mask therefore holds the ticked regions of every person.
+- **Large faces.** A face that already fills a large part of the frame is left to the whole-picture parse, which shows it large enough. See [How the SegFormer nodes look at a photo](#how-the-segformer-nodes-look-at-a-photo).
 
 <p align="center"><img src="../assets/examples/portrait-segment.jpg" alt="Portrait Segment masks overlaid on a sample photo" width="720"><br><em>Portrait Segment on a sample photo: the coloured areas are the masks of the ticked regions.</em></p>
 
@@ -178,7 +202,7 @@ Load Image → Portrait Segment (NH) → mask → recolour or inpaint
 
 Switch off every region except `hair`. With the defaults you get face, ears, neck and hair together in one mask.
 
-> **Tip:** The model was fine-tuned on CelebAMask-HQ, a set of close-up face photos. It works best when the face fills a good part of the frame. For a small face in a large photo, crop around the face first.
+> **Tip:** The model was fine-tuned on CelebAMask-HQ, a set of close-up face photos, so the node parses each face it finds on a close-up crop. A small face in a large photo, a half-body shot or a group photo needs no cropping first. A face the detector misses (very small, hidden or turned away) keeps the whole-picture parse, which is coarser: crop around it yourself when you need its finest detail.
 
 > **Licence:** the face-parsing model is for non-commercial research and education only. See [Before you start](#before-you-start).
 
@@ -209,7 +233,7 @@ my_models:
 
 Only the PyTorch checkpoint `sam3.pt` works. The safetensors export on Hugging Face is made for the transformers library and uses other weight names.
 
-**Memory.** The weights are read from disk once and kept in system memory (about 3.6 GB). They move to the GPU while SAM3 Segment runs and go back afterwards, so ComfyUI gets its VRAM back. Before they move, the node asks ComfyUI to unload some of its own models if VRAM is tight. Turn on `keep_model_loaded` to leave them on the GPU when you run the node again and again.
+**Memory.** The weights are read from disk once and kept in system memory (about 3.6 GB). They move to the GPU while SAM3 Segment runs and go back afterwards, so ComfyUI gets its VRAM back. Before they move, the node asks ComfyUI to unload some of its own models if VRAM is tight. Turn on `keep_model_loaded` to leave them on the GPU when you run the node again and again. While it is on, ComfyUI's **Unload Models** button does not release them: turn `keep_model_loaded` off and run the node once, or restart ComfyUI.
 
 > **Licence:** SAM 3 is released under Meta's SAM License. It is royalty-free and has no non-commercial clause, but it forbids uses that fall under ITAR or that trade controls prohibit, including military or warfare, nuclear, espionage, and guns or illegal weapons. NH-Nodes' own code is MIT, and it contains neither the model nor the `sam3` package. Read [THIRD_PARTY_NOTICES.md](../../THIRD_PARTY_NOTICES.md) before you use the node commercially.
 
@@ -236,11 +260,62 @@ SAM 3 looks at a picture of about 1000 px. On a 6000 px photo that is a sixth of
 
 ## Instances: the NH_SEGS type
 
-`NH_SEGS` is the data that SAM3 Segment hands to the Segs nodes. For every image of a batch it holds a list of instances. Each instance keeps its **label** (the concept you wrote), its **score**, a tight **box** and the mask **only inside that box**. A full-size mask is built only when a node outputs a `MASK`, so dozens of instances on an 8K photo stay light.
+`NH_SEGS` is the data that SAM3 Segment hands to the Segs nodes. For every image of a batch it holds a list of instances. Each instance keeps its **label** (the English words SAM 3 was asked for: `áo đỏ` is stored as `red top`), its **score**, a tight **box** and the mask **only inside that box**. A full-size mask is built only when a node outputs a `MASK`, so dozens of instances on an 8K photo stay light.
 
-- Instances come in the order of your concepts, and by score within a concept.
+- Instances come in the order the labels appear in your concepts, and by score within a label.
 - The Segs nodes treat every image of a batch separately.
 - ComfyUI's own nodes do not read `NH_SEGS`. To get masks out, use the `mask` outputs, [Segs Compose](#segs-compose-nh) or [Segs To Masks](#segs-to-masks-nh). To use Impact Pack's detailers, convert with [Segs To Impact SEGS](#segs-to-impact-segs-nh).
+
+---
+
+## Writing a formula
+
+SAM3 Segment's `concepts` and Segs Compose's `expression` read the same small language. You name the things you want, combine them with operators, and the result is one mask per image. In SAM3 Segment the words you write are also what SAM 3 looks for. In Segs Compose they pick instances that were found already.
+
+| Write | Meaning |
+|---|---|
+| `person` | A label: the instances with that name. Case does not matter. |
+| `red car`, `women's dress` | Several words in a row are one label, with no quotes. A hyphen between two letters or digits belongs to the label (`t-shirt`, `x-ray`), and so does an apostrophe inside a word. |
+| `person, hair` | A list: the union of its items. A new line works like a comma. A list is read after every other operator, so `person - hair, dress` is `person - hair` plus `dress`. Empty items are skipped. |
+| `a + b`, `a \| b` | Union: everything in a or in b. |
+| `a - b` | a without b. Put spaces around the minus: `person-hair` is read as one label. |
+| `a & b` | Overlap: only where a and b both are. |
+| `~a`, `!a` | Everything except a: the whole picture minus a. |
+| `( … )` | Grouping. |
+| `background` | Everything outside every instance that was found. The same as `~all`. |
+| `all` | Every instance that was found. |
+| `image` | The whole picture. |
+| `none` | An empty mask. |
+| `# …` | A comment, to the end of the line. It starts where a word could start; inside a word, as in `car#2`, the `#` belongs to the word. |
+| `"salt & pepper"` | Quotes keep together a label that contains operator characters. A quoted `all`, `image`, `none` or `background` is an ordinary label. |
+
+`~` binds first, then `&`, then `+`, `|` and `-` together, left to right, and last the list: `a - b + c` is `(a - b) + c`. When in doubt, add parentheses.
+
+**Line breaks.** A line break lists, like a comma. It joins instead when it is next to an operator (the line before ends with one, other than `)`, or the next line starts with `+`, `|`, `-`, `&` or `)`), so a long formula can be laid out over several lines:
+
+```text
+(wall + ceiling)
+  - window
+```
+
+**Vietnamese words.** SAM 3 reads English only, so the nodes translate the common Vietnamese words you type: `tóc` is `hair`, `váy` is `dress`, `cửa sổ` is `window`. The list covers people, body, clothes, accessories, nature, rooms and buildings, vehicles, food and animals. The full list is in `core/vi_words.py`.
+
+- A thing followed by colours or sizes is put into English order: `áo đỏ` is `red top`, `tóc dài` is `long hair`, `ghế sofa lớn` is `large sofa`. `màu` (colour) may stand between them: `áo màu đỏ`. `tóc vàng` is `blonde hair`.
+- `xanh` after a thing means blue or green, so it is not guessed. Write `xanh dương` (blue) or `xanh lá` (green), as in `áo xanh dương`, or write the English word.
+- `các`, `những`, `mấy`, `cái`, `chiếc` and `con` in front of a thing are skipped when the phrase is not in the list as written: `những chiếc xe` is `vehicle`.
+- `nền`, `phông`, `phông nền` and `hậu cảnh` are the keyword `background`, also with a colour (`nền trắng`). `tất cả` is `all`, and `toàn ảnh` and `cả ảnh` are `image`.
+- Write Vietnamese with its accents. Text without Vietnamese accents is taken as English (a few short words, such as `xe`, are in the list as written).
+- A Vietnamese phrase that is not in the list is searched for as written, and SAM 3 usually finds nothing. The report then says that it was not understood. The labels of the instances are always the English words.
+- Quotes do not stop the translation. A quoted `nền` is the label `background`, not the keyword.
+
+**Where the two nodes differ**
+
+| | SAM3 Segment, `concepts` | Segs Compose, `expression` |
+|---|---|---|
+| `or`, `and`, `not` | Plain words, so a phrase such as `black and white dog` reaches SAM 3 as written. | Operators: `a or b`, `a and b`, `not a`. |
+| Wildcards `*` and `?` | Refused: SAM 3 needs plain words. | Match labels (`*shirt`). |
+| What a label does | It is what SAM 3 is asked to find. | It picks the instances that have that label. A label that no instance has gives an empty part. |
+| An empty field | Stops with a message to write at least one concept. A field with only comments, or only `all`, `image` or `none`, counts as empty. | Stops with a message to use `all` for every instance. |
 
 ---
 
@@ -248,43 +323,61 @@ SAM 3 looks at a picture of about 1000 px. On a 6000 px photo that is a sixth of
 
 <p align="center"><img src="../assets/nodes/NH_SAM3Segment.svg" alt="SAM3 Segment (NH) node" width="360"></p>
 
-Finds every instance of the things you name and returns them as `NH_SEGS`, together with their combined mask and a count. To see what it found, connect [Segs Preview](#segs-preview-nh).
+Type what you want to cut out and get its mask: one word (`person`), a list (`hair, face`) or a formula (`person - bag`, `background`). SAM 3 finds every instance of the things you name. The node returns the mask of your formula, the instances as `NH_SEGS`, a count and a report of what was and was not found, and it shows what it found on itself.
 
-**Use it when** you want masks of "all the people", "every window", "the sky" or "the wine glasses" in a photo, also a 4K to 8K one, without painting anything. Then use the [Segs nodes](#segs-select-nh) to pick instances, subtract one from another, or turn them into plain masks.
+**Use it when** you want masks of "all the people", "every window", "the sky", "the background" or "the person without the bag" in a photo, also a 4K to 8K one, without painting anything. For finer picks (the second person from the left, the biggest object), or to make several masks from one run, connect `segs` to the [Segs nodes](#segs-select-nh).
 
 Combo inputs without a stated default start on their first option.
 
 | Input | Type | Default | Description |
 |---|---|---|---|
 | `image` | IMAGE | — | The picture. Colour (RGB) is used and any alpha is dropped. Every image of a batch is processed in turn. |
-| `concepts` | STRING | `person` | What to find: short English noun phrases, one per line or separated by commas (`person, red car, window, sky`). Lines that start with `#` are ignored. Each phrase becomes the label of the instances it finds. Write at least one. |
-| `threshold` | FLOAT | `0.5` | Range 0.05 to 0.95. The minimum confidence. Lower finds more instances and more mistakes; higher keeps only the sure ones. |
+| `concepts` | STRING | `person` | What to find and which mask to return, written as a formula (see [Writing a formula](#writing-a-formula)): short English words (`person`, `red car`, `window`), commas or new lines to list several, and `+`, `-`, `&`, `~`, parentheses and `background` to combine them (`person - bag`). Common Vietnamese words work too (`tóc`, `áo đỏ`, `nền`). Write at least one word. |
+| `threshold` | FLOAT | `0.5` | Range 0.05 to 0.95. The minimum confidence. Lower finds more instances and more mistakes; higher keeps only the sure ones. A score exactly at the threshold is not kept. When a concept finds nothing, the report says how close the best candidate came. |
 | `detail_level` | COMBO | `balanced` | `balanced` or `fast`. `balanced` segments every instance a second time on a close-up of the full-resolution image, for crisp edges on small and medium objects. `fast` keeps the first, whole-image pass. See [How the two passes work](#how-the-two-passes-work). |
 | `max_per_concept` | INT | `0` | Range 0 to 200. Keep at most this many instances of each concept, best score first. `0` keeps all. |
 | `checkpoint` | COMBO | — | A SAM 3 `.pt` or `.pth` file from `models/sam3` or another folder registered as `sam3`. Other SAM 3 packs use the same folder. When it holds no file, the list shows `sam3.pt` and the node tells you where to get it when you run it. |
-| `keep_model_loaded` | BOOLEAN | `false` | Off: after the run the weights go back to system memory and ComfyUI gets the VRAM back. On: they stay on the GPU (about 3.6 GB), which is faster when the node runs again, but ComfyUI cannot use that VRAM meanwhile. |
+| `keep_model_loaded` | BOOLEAN | `false` | Off: after the run the weights go back to system memory and ComfyUI gets the VRAM back. On: they stay on the GPU (about 3.6 GB), which is faster when the node runs again, but ComfyUI cannot use that VRAM meanwhile, and its **Unload Models** button does not release it (turn this off and run the node once, or restart ComfyUI). |
+| `show_preview` | BOOLEAN | `true` | Optional. Shows the result on the node: the mask bright and the rest darkened, the instances outlined and labelled, and the report lines below. At most 1536 px on the longer side, and the first 16 pictures of a batch. Off: nothing is drawn, and the node still runs (see below). |
 
 | Output | Type | Description |
 |---|---|---|
-| `segs` | NH_SEGS | The instances of every image, each with its label, score, box and mask. Connect it to the Segs nodes. |
-| `mask` | MASK | The union of every instance, one mask per image, at the size of the image. |
-| `count` | INT | The number of instances found, over the whole batch. |
+| `segs` | NH_SEGS | The instances of every image, each with its label, score, box and mask. The labels are the English words SAM 3 was asked for. When the formula uses `background`, they include the `person` instances that were searched for it. Connect it to the Segs nodes. |
+| `mask` | MASK | The mask of your formula, one per image, at the size of the image. A plain list of words gives the union of every instance. |
+| `count` | INT | The number of instances found, over the whole batch, including the `person` instances that `background` searched for. |
+| `report` | STRING | What the request found, one line per word: counts and best scores, translations, near misses, words that were not understood, and what `background` meant. See below. |
 
-<p align="center"><img src="../assets/examples/sam3-segment.jpg" alt="SAM3 Segment instances drawn by Segs Preview, and three masks built from them on a sample photo" width="720"><br><em>SAM3 Segment on a sample photo with the concepts "person, helmet, face", drawn by Segs Preview, then three masks made from the instances with Segs Compose and Segs Select.</em></p>
+<p align="center"><img src="../assets/examples/sam3-formula.jpg" alt="What SAM3 Segment shows on the node for four formulas on a sample photo: background, person - face, hair and face, and everything except the person and the helmets" width="720"><br><em>SAM3 Segment on a sample photo, as the node shows it. Top: "background" lights up everything outside the person, and the report is under the picture. Bottom: three more formulas; the bright part is each one's mask output.</em></p>
+
+**The report.** The first line of `report` gives the totals. Each line after it (they are also written under the preview) starts with what you wrote:
+
+| Line | Meaning |
+|---|---|
+| `person: 2 found (best 0.91)` | The number of instances found and the best score. |
+| `áo đỏ -> red top: 1 found (best 0.64)` | What a Vietnamese phrase was translated to. |
+| `hair: none at threshold 0.50; the best candidate scored 0.31, lower the threshold to keep it` | Nothing passed `threshold`, but a candidate came close. Lower `threshold` below its score to keep it. |
+| `bag: none found; try another English word` | No candidate scored even 0.1. |
+| `áo xanh: not understood; write it in English (SAM 3 reads English only)` | A Vietnamese phrase that is not in the list and found nothing. |
+| `background = everything outside person, red top` | What `background` meant: everything outside the instances of these labels. |
+| `person (searched for background): 2 found` | The `person` search that the node added because the formula uses `background` and does not name `person`. |
 
 **How it works**
 
-- **Labels.** The concept you wrote is the label of its instances. The Segs nodes ignore case when they match labels, so spelling is not a problem.
-- **Order and duplicates.** Instances come in the order of your concepts, best score first within a concept. Two instances of the same concept whose masks overlap almost completely (90% or more) count as one, and the better score stays. `max_per_concept` then keeps the best of what is left.
-- **Seeing the result.** Connect `segs` and the same picture to [Segs Preview](#segs-preview-nh): every instance is tinted, outlined and labelled with its label and score.
-- **Nothing found** is not an error: you get no instances, an empty mask and a `count` of 0.
+- **Labels.** The English words SAM 3 was asked for are the labels of the instances: `áo đỏ` is looked for as `red top`, and its instances are labelled `red top`. The Segs nodes ignore case when they match labels, so spelling is not a problem.
+- **The mask.** `mask` is the result of the formula. For `person - bag`, SAM 3 looks for `person` and for `bag`, `mask` is the people without the bags, and `segs` still holds both kinds of instance.
+- **`background`.** It is everything outside every instance that was found, so the node needs to know where the subject is. When the formula uses it and does not name `person`, SAM 3 also looks for `person`; those instances are part of `segs` and `count` and are outlined in the preview. To keep other things out of the background too, name them: `~(person + wine glass + chair)`. A list is a union, so `person, background` is the whole picture.
+- **Order and duplicates.** Instances come in the order the labels appear in your formula (the `person` that `background` added comes last), best score first within a label. Two instances of the same label whose masks overlap almost completely (90% or more) count as one, and the better score stays. `max_per_concept` then keeps the best of what is left. Instances with exactly equal scores keep the order SAM 3 gave them.
+- **Seeing the result.** With `show_preview` on, the node draws the preview itself: no other node is needed. To see the picture at full size (the preview is at most 1536 px), or to see what Segs Select works with, connect `segs` and the same picture to [Segs Preview](#segs-preview-nh).
+- **It runs on its own.** SAM3 Segment is an output node (the dot on its card is orange): ComfyUI runs it even when nothing is connected to its outputs. A copy that you no longer need therefore keeps running SAM 3 whenever its inputs change, and turning `show_preview` off does not stop it. Mute or delete it. While its inputs stay the same, ComfyUI reuses the last result.
+- **Nothing found** is not an error: you get no instances and a `count` of 0. The mask is empty for a plain list, and the whole picture for a formula such as `background` or `~person`, because nothing was found to leave out.
 - **Batches.** Every image is processed in turn and has its own list of instances. A progress bar counts the concepts, and you can cancel the run between concepts and between close-ups.
+- **Things cut by the frame.** SAM 3 fades its masks over a band along the border of the square view it works in, about 0.3% of the picture's side wide. The mask of a thing that runs off the picture still reaches the image edge: the band is lifted where the object reaches it from inside. The price is that a thing which ends within that band just above the edge is drawn down to the edge.
 - **Very wide or tall pictures.** SAM 3 first sees the whole picture squeezed into a square. On a picture wider or taller than 4:1 (a panorama), it can miss small things, and the console says so. Split such a picture into tiles with [Image Tile (NH)](./image-compose.md#image-tile-nh) and run the tiles.
 - **Setup problems** stop the node with a message that says what to do: a missing package, a missing checkpoint, no CUDA GPU. See [If something goes wrong with SAM 3](#if-something-goes-wrong-with-sam-3).
 
-> **Tip:** Write simple English nouns: `window`, `wine glass`, `red car`. If a concept finds nothing, try another word (an unusual building may answer to `structure` or `monument` rather than `building`) or lower `threshold`.
+> **Tip:** Write simple English nouns: `window`, `wine glass`, `red car`. If a concept finds nothing, try another word (an unusual building may answer to `structure` or `monument` rather than `building`) or lower `threshold`. The report says which case it is: nothing found, a candidate that came close, or a word that was not understood.
 
-> **Tip:** Ask for a whole and its parts together (`person, hair, face, dress`), then take them apart with [Segs Compose](#segs-compose-nh): `person - hair`.
+> **Tip:** Ask for a whole and its parts in one formula: `person - hair`. The node looks for both and `mask` is the difference. `segs` still holds both, so [Segs Compose](#segs-compose-nh) can make other masks from the same run.
 
 > **Licence:** SAM 3 is under Meta's SAM License. See [Before you start with SAM 3](#before-you-start-with-sam-3).
 
@@ -301,7 +394,7 @@ Keeps the instances you want, by label, score, size and position, in the order y
 | Input | Type | Default | Description |
 |---|---|---|---|
 | `segs` | NH_SEGS | — | The instances, from SAM3 Segment or another Segs node. |
-| `labels` | STRING | empty | The labels to keep, separated by commas. `*` stands for any run of characters and `?` for one character (`*shirt`). Case does not matter, and `_` counts as a space (`red_car` finds `red car`). Labels with spaces need no quotes here: `wine glass, red car`. Empty keeps every label. |
+| `labels` | STRING | empty | The labels to keep, separated by commas. `*` stands for any run of characters and `?` for one character (`*shirt`). Case does not matter, and `_` counts as a space (`red_car` finds `red car`). Labels with spaces need no quotes here: `wine glass, red car`. Common Vietnamese words are translated (`tóc` finds `hair`); the formula words `nền` and `tất cả` are not labels here. Empty keeps every label. |
 | `min_score` | FLOAT | `0.0` | Range 0 to 1. Drops instances with a lower score. |
 | `min_area` | FLOAT | `0.0` | Range 0 to 1. Drops instances smaller than this fraction of the image (`0.01` is 1%). |
 | `max_area` | FLOAT | `1.0` | Range 0 to 1. Drops instances larger than this fraction of the image. |
@@ -345,50 +438,43 @@ Keeps the instances you want, by label, score, size and position, in the order y
 
 <p align="center"><img src="../assets/nodes/NH_SegsCompose.svg" alt="Segs Compose (NH) node" width="360"></p>
 
-Builds one mask from the labels of the instances with a small formula: union, minus, overlap and "everything except".
+Builds one mask from the labels of the instances, with the same small formula as SAM3 Segment's `concepts`: union, minus, overlap and "everything except".
 
-**Use it when** you want "the background", "the person without the hair", "the wall without the windows", or any other combination of the things SAM3 Segment found.
+**Use it when** you already have instances and want "the background", "the person without the hair", "the wall without the windows", or another combination of what SAM3 Segment found: after [Segs Select](#segs-select-nh), or to make several masks from one SAM 3 run. For a single mask you can also write the same formula straight into SAM3 Segment's `concepts`.
 
 | Input | Type | Default | Description |
 |---|---|---|---|
 | `segs` | NH_SEGS | — | The instances, from SAM3 Segment or Segs Select. |
-| `expression` | STRING | `all` | The formula. See below. The field has several lines, and a line break counts as a space. |
+| `expression` | STRING | `all` | The formula. See [Writing a formula](#writing-a-formula). The field has several lines: a line break lists, like a comma, and joins when it is next to an operator. |
 
 | Output | Type | Description |
 |---|---|---|
 | `mask` | MASK | The result of the formula, one mask per image, at the size of the image. |
 
-**What you can write**
+**What is different here.** The language is the one in [Writing a formula](#writing-a-formula), with these differences from SAM3 Segment:
 
-| Write | Meaning |
-|---|---|
-| `person` | A label: the union of every instance with that label. Case does not matter, `_` counts as a space, and `*` and `?` are wildcards (`*shirt`). |
-| `"red car"` | Put a label that contains spaces or an operator character in quotes, `"` or `'`, or write the space as `_` (`red_car`). Without quotes, `red car` is an error. Quotes also turn a word such as `all` or `image` into an ordinary label. |
-| `t-shirt` | A hyphen between two letters or digits belongs to the label, so `t-shirt` and `x-ray` need no quotes. An apostrophe inside a word is fine too (`women's`). A label with a space needs quotes, and double quotes when it also has an apostrophe: `"women's dress"`. |
-| `a \| b`, `a + b`, `a or b` | Union: everything in a or in b. |
-| `a - b` | a without b. Put spaces around the minus: `person-hair` is read as one label. When both `person` and `hair` were found, the node stops with an error that shows `person - hair`; otherwise the unknown label gives an empty part and the console names it. |
-| `a & b`, `a and b` | Overlap: only where a and b both are. |
-| `~a`, `!a`, `not a` | Everything except a: the whole picture minus a. |
-| `( … )` | Grouping. |
-| `all` | Every instance in the segs. |
-| `image` | The whole picture. |
-| `none` | An empty mask. |
-
-`~` binds first, then `&`, then `|` and `-` together, left to right: `a - b | c` is `(a - b) | c`. When in doubt, add parentheses.
+- `or`, `and` and `not` are operators: `a or b` is `a | b`, `a and b` is `a & b`, `not a` is `~a`.
+- A label picks the instances that have it. Case does not matter, `_` counts as a space (`red_car` finds `red car`), and `*` and `?` are wildcards (`*shirt`).
+- Put a label that contains an operator character in quotes, `"` or `'` (`"salt & pepper"`), and use double quotes when it also has an apostrophe. Several words in a row need no quotes.
+- Vietnamese labels are translated (`tóc` finds `hair`), also inside quotes. `nền` is the keyword `background`.
 
 | Expression | You get |
 |---|---|
 | `person - hair` | The people without their hair (ask SAM3 Segment for `person, hair`). |
-| `~person` | Everything except the people: the background. |
+| `~person` | Everything except the people. |
+| `background` | Everything outside every instance in the segs. Unlike `~person`, it also leaves out windows, chairs or anything else that was found. |
 | `(wall \| ceiling) - window` | The walls and the ceiling with the window openings cut out. |
-| `"wine glass" \| person` | The glasses and the people together. |
+| `wine glass, person` | The glasses and the people together (a list, the same as `wine glass \| person`). |
 | `all - person` | Everything that was found except the people. Unlike `~person`, it leaves out the background that nothing found. |
 
 **How it works**
 
 - **A label that no instance has** gives an empty part, and the console says so (`no instance is labelled 'x'; those parts are empty`). A typo in `~persn` therefore gives the whole picture: check the console when a mask looks wrong.
+- **Words in a row are one label.** When no instance has that label but each word is the label of an instance (`person hair`), the node stops with an error that suggests `person + hair`. The same goes for a hyphen: when both `person` and `hair` were found, `person-hair` stops with an error that shows `person - hair`.
 - **Every image** of a batch gets its own mask, built from its own instances.
-- **A formula that cannot be read** stops the node with a message that gives the position of the problem, for example `unexpected 'car' at position 5`.
+- **A formula that cannot be read** stops the node with a message that gives the position of the problem, for example `unexpected '(' at position 8` for `person (adult)`.
+
+<p align="center"><img src="../assets/examples/sam3-segment.jpg" alt="SAM3 Segment instances drawn by Segs Preview, and three masks built from them with Segs Compose and Segs Select on a sample photo" width="720"><br><em>The instances of "person, helmet, face" on a sample photo, drawn by Segs Preview, then three masks made from them with Segs Compose and Segs Select.</em></p>
 
 ---
 
@@ -446,7 +532,7 @@ Converts the instances of one image to Impact Pack's `SEGS`, so that its detaile
 
 Draws the instances on their picture: each one tinted in its own colour, outlined and labelled with its label and score.
 
-**Use it when** you want to see what SAM3 Segment found, or what Segs Select or Segs Compose works with. Put it after SAM3 Segment to see everything, or after Segs Select to see only the selection.
+**Use it when** you want to see the instances at the full size of your picture, or to see what Segs Select picked. SAM3 Segment already shows a small preview on itself (at most 1536 px, with its report). Put this node after SAM3 Segment to see everything, or after Segs Select to see only the selection.
 
 | Input | Type | Default | Description |
 |---|---|---|---|
@@ -463,18 +549,17 @@ The colours follow the order of the instances, each label sits above the highest
 
 ## SAM 3 workflows
 
-In each of these, check what SAM3 Segment found before you edit anything. Connect the same picture and the `segs` to [Segs Preview (NH)](#segs-preview-nh): every instance you want should have an outline and a label. If one is missing, lower `threshold` (for example to 0.3) or try another word for the concept.
+In each of these, check what SAM3 Segment found before you edit anything. Its preview on the node shows every instance with an outline and a label, and its report says what was not found. If an instance you want is missing, lower `threshold` (for example to 0.3) or try another word for the concept.
 
 ### The background behind people
 
 ```text
-Load Image → SAM3 Segment (concepts: person)
-           → Segs Compose (expression: ~person)
+Load Image → SAM3 Segment (concepts: background)
            → Mask Morphology (NH)
            → edit the background
 ```
 
-`~person` is the whole picture except the people. Add what people hold or sit on to both fields, for example the concepts `person, wine glass, chair` and the expression `~(person | "wine glass" | chair)`. Move the edge of the mask a few pixels with [Mask Morphology (NH)](./mask.md#mask-morphology-nh): grow it so that the edit covers the old outline, or shrink it if the edit eats into the people. Then use the mask to blur, relight, recolour or inpaint the background.
+`background` is everything outside the people that SAM 3 found: the node looks for `person` on its own. When people hold or sit on things, name those too, so that they stay out of the background, for example the concepts `~(person + wine glass + chair)`. Move the edge of the mask a few pixels with [Mask Morphology (NH)](./mask.md#mask-morphology-nh): grow it so that the edit covers the old outline, or shrink it if the edit eats into the people. Then use the mask to blur, relight, recolour or inpaint the background.
 
 ### The biggest object, inpainted
 
@@ -490,12 +575,11 @@ With `labels` empty, Segs Select picks the biggest of everything you asked for. 
 ### Architecture: a facade without windows
 
 ```text
-Load Image → SAM3 Segment (concepts: building, window, door)
-           → Segs Compose (expression: building - (window | door))
+Load Image → SAM3 Segment (concepts: building - (window + door))
            → recolour, restyle or inpaint the wall
 ```
 
-`building` covers the whole facade with its windows and doors; the formula cuts them out and leaves the wall. For a room, ask for `wall, ceiling, window` and use `(wall | ceiling) - window`. If `building` finds nothing on an unusual building, try `structure` or `monument` and change the formula to match. On a 4K to 8K photo, keep `balanced`: every window is segmented again on a close-up of the original pixels. The outline of a facade that fills the whole frame is accurate to about 1/300 of its width (see [How the two passes work](#how-the-two-passes-work)), so check the roofline in Segs Preview.
+`building` covers the whole facade with its windows and doors; the formula cuts them out and leaves the wall. For a room, use `(wall + ceiling) - window`. If `building` finds nothing on an unusual building, try `structure` or `monument` and change the formula to match. On a 4K to 8K photo, keep `balanced`: every window is segmented again on a close-up of the original pixels. The outline of a facade that fills the whole frame is accurate to about 1/300 of its width (see [How the two passes work](#how-the-two-passes-work)), so check the roofline in the preview.
 
 ---
 
@@ -509,15 +593,22 @@ Load Image → SAM3 Segment (concepts: building, window, door)
 | An error that a file is not a SAM 3 `.pt` checkpoint | Use `sam3.pt`. The safetensors files on Hugging Face do not work with this node. |
 | An error that a file cannot be read as a SAM 3 checkpoint, or is not one | The file in the `sam3` folder is an incomplete download or another model's `.pt`. Download `sam3.pt` again as in [Before you start with SAM 3](#before-you-start-with-sam-3). |
 | An error that SAM 3 needs an NVIDIA GPU with CUDA | ComfyUI is running on the CPU or on another kind of GPU. SAM3 Segment has no CPU mode. |
-| An error that you must write at least one concept | `concepts` is empty or holds only comments. Write a word such as `person`. |
-| `count` is 0, or an instance is missing | Lower `threshold`, try another word for the concept, and look at the result with Segs Preview. |
+| An error that you must write at least one concept | `concepts` is empty, holds only comments, or holds only the keywords `all`, `image` or `none`. Write a word such as `person`. |
+| An error that a concept has a wildcard | Remove the `*` or `?`: SAM 3 needs plain words. Wildcards work in Segs Select and Segs Compose. |
+| An error from SAM3 Segment that gives a position, such as `unexpected '(' at position 8` | Check the formula at that position. A bracket in a label is read as grouping. See [Writing a formula](#writing-a-formula). |
+| `count` is 0, or an instance is missing | Read the report: it says whether the word found nothing, a candidate came close (lower `threshold` to its score), or the word was not understood (write it in English). The preview on the node shows what was found. |
+| The report says a word was not understood | It is a Vietnamese phrase that is not in the list. Write it in English. After a thing, `xanh` is ambiguous: write `xanh dương` (blue) or `xanh lá` (green). |
+| The mask is the whole picture, or not what you expected | A list is a union: `person, background` is the person plus everything outside it. Write `background` alone, or a formula such as `person - bag`, and look at the preview: the bright part is the mask. |
+| SAM3 Segment runs although nothing is connected to it | It is an output node. Mute or delete it when you do not need it; turning `show_preview` off does not stop it. |
 | The console says it kept the first-pass mask for some instances | Their close-up did not match the first pass, so those instances keep the first pass's edges. Nothing is wrong. |
 | An error from Segs Preview about sizes or the number of images | Connect the picture that the segs were found in. |
-| An error from Segs Compose that gives a position | Check the formula at that position. Put labels with spaces in quotes: `"red car"`. |
+| An error from Segs Compose that gives a position | Check the formula at that position. See [Writing a formula](#writing-a-formula). |
+| An error from Segs Compose that no instance is labelled `person hair`, but `person` and `hair` are | Words in a row are one label. Join them: `person + hair`. |
 | A Segs Compose mask is empty, and the console says no instance has a label | Check the spelling of the label. Put spaces around a minus: `person - hair`, not `person-hair`. |
 | An error from Segs To Masks that the full-size instance masks would need more memory than is free | There are too many instances for the size of the picture. Use Segs Select to keep only the ones you need, or Segs Compose to get one mask. |
 | The console says that SAM 3 sees the picture squeezed into a square and can miss small things | The picture is wider or taller than 4:1. Split it into tiles with Image Tile (NH) and run the tiles. |
 | ComfyUI runs out of VRAM after the node | Leave `keep_model_loaded` off, so the weights leave the GPU after each run. |
+| ComfyUI's Unload Models button does not free the VRAM of SAM 3 | `keep_model_loaded` is on. Turn it off and run the node once, or restart ComfyUI. |
 
 ---
 
