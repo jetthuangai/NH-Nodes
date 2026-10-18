@@ -1,8 +1,12 @@
 """Indexed loader nodes for LoRA and diffusion models."""
 
+import os
+import weakref
+
 import torch
 
 import folder_paths
+from comfy.cli_args import args
 from comfy_execution.graph_utils import ExecutionBlocker
 
 
@@ -39,6 +43,62 @@ def _selected_name(kwargs, prefix, count, index):
 
     selected = str(selected)
     return selected or None
+
+
+def _file_stamp(path):
+    """(size, mtime) of a model file, so a file replaced under the same name is not taken for the one already loaded."""
+    try:
+        stat = os.stat(path)
+    except OSError:
+        return None
+    return (stat.st_size, stat.st_mtime_ns)
+
+
+def _keeps_strong_reference():
+    """True when ComfyUI runs with --cache-classic (--high-ram implies it)."""
+    return bool(getattr(args, "cache_classic", False))
+
+
+class _LoadedObjectCache:
+    """Remembers the last object a loader node built, under a key of everything that decides what gets loaded.
+
+    ComfyUI keeps one instance per graph node, but the node's cache key holds every one of its 64 slot widgets, so
+    editing a slot nobody selected runs the node again. Handing back the object that is already in memory then saves
+    reading it from disk again.
+
+    The object is held by a weak reference. While ComfyUI's own output cache holds it, the next run gets it back; when
+    that cache evicts it (the default RAM-pressure cache does, under memory pressure) nothing here keeps it alive, so
+    it can be freed. A strong reference would defeat that eviction. Only with --cache-classic, which drops an output as
+    soon as the prompt stops using it, the node holds the object itself: otherwise there would be nothing to reuse.
+    An object that cannot be weakly referenced is not remembered at all and is loaded again each time.
+
+    One object only: choosing another file drops the old one before the new one loads, so two big models never sit in
+    memory together, and "Free model and node cache" (which throws the instance away) frees it as well.
+    """
+
+    def __init__(self):
+        self._loaded = None  # None, or (key, a callable that returns the object - None once it has been freed)
+
+    def _load_cached(self, key, load):
+        remembered, self._loaded = self._loaded, None  # whatever happens below, the node lets go of the old object
+        if remembered is not None and remembered[0] == key:
+            obj = remembered[1]()
+            if obj is not None:
+                self._loaded = remembered
+                return obj
+        del remembered  # the old object must be gone before the next one loads
+        obj = load()
+        self._loaded = self._remember(key, obj)
+        return obj
+
+    @staticmethod
+    def _remember(key, obj):
+        if _keeps_strong_reference():
+            return (key, lambda: obj)
+        try:
+            return (key, weakref.ref(obj))
+        except TypeError:  # e.g. a __slots__ class without __weakref__: loading it again beats keeping it for good
+            return None
 
 
 class _IndexedLoraBase:
@@ -180,7 +240,7 @@ class NH_LoraClipIndex(_IndexedLoraBase):
         return (model_lora, clip_lora, lora_name, final_index)
 
 
-class NH_DiffusionModelIndex:
+class NH_DiffusionModelIndex(_LoadedObjectCache):
     """Load one diffusion model by 1-based index."""
 
     @classmethod
@@ -240,11 +300,14 @@ class NH_DiffusionModelIndex:
             model_options["dtype"] = torch.float8_e5m2
 
         model_path = folder_paths.get_full_path_or_raise("diffusion_models", model_name)
-        model = comfy.sd.load_diffusion_model(model_path, model_options=model_options)
+        model = self._load_cached(
+            (model_path, weight_dtype, _file_stamp(model_path)),
+            lambda: comfy.sd.load_diffusion_model(model_path, model_options=model_options),
+        )
         return (model, model_name, final_index)
 
 
-class NH_VAEIndex:
+class NH_VAEIndex(_LoadedObjectCache):
     """Load one VAE by 1-based index."""
 
     @classmethod
@@ -288,16 +351,26 @@ class NH_VAEIndex:
         if vae_name is None:
             return (_block(), "", -1)
 
-        import folder_paths
         import comfy.sd
         import comfy.utils
 
         vae_path = folder_paths.get_full_path_or_raise("vae", vae_name)
-        vae = comfy.sd.VAE(sd=comfy.utils.load_torch_file(vae_path))
+
+        def load():
+            # Like the core VAE loader: the file's metadata goes to the VAE as well (it can hold the VAE's config).
+            sd, metadata = comfy.utils.load_torch_file(vae_path, return_metadata=True)
+            vae = comfy.sd.VAE(sd=sd, metadata=metadata)
+            # The core VAE loader does this too: a file with no usable VAE fails here, not in the sampler's decode.
+            check = getattr(vae, "throw_exception_if_invalid", None)
+            if check is not None:
+                check()
+            return vae
+
+        vae = self._load_cached((vae_path, _file_stamp(vae_path)), load)
         return (vae, vae_name, final_index)
 
 
-class NH_ClipIndex:
+class NH_ClipIndex(_LoadedObjectCache):
     """Load one CLIP by 1-based index."""
 
     @classmethod
@@ -342,11 +415,13 @@ class NH_ClipIndex:
         if clip_name is None:
             return (_block(), "", -1)
 
-        import folder_paths
         import comfy.sd
         clip_path = folder_paths.get_full_path_or_raise("clip", clip_name)
         clip_type = getattr(comfy.sd.CLIPType, type.upper(), comfy.sd.CLIPType.STABLE_DIFFUSION)
-        clip = comfy.sd.load_clip(ckpt_paths=[clip_path], embedding_directory=folder_paths.get_folder_paths("embeddings"), clip_type=clip_type)
+        clip = self._load_cached(
+            (clip_path, clip_type, _file_stamp(clip_path)),
+            lambda: comfy.sd.load_clip(ckpt_paths=[clip_path], embedding_directory=folder_paths.get_folder_paths("embeddings"), clip_type=clip_type),
+        )
         return (clip, clip_name, final_index)
 
 

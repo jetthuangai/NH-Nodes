@@ -44,14 +44,16 @@ example, ONNX Runtime sessions in the vendored code are created through
 ## Models downloaded at runtime
 
 These files are **not** stored in this repository. The nodes download them from
-Hugging Face on first use.
+Hugging Face on first use, pinned to the revisions below (only the files the nodes need).
+They are looked up first in the folders registered as `vton_mask` and `nh_nodes`
+(configurable in `extra_model_paths.yaml`).
 
 | Node | Hugging Face repository | Contents | Terms |
 |------|-------------------------|----------|-------|
-| VTON Ultimate Processor | [`kg-09/kg-vton-mask`](https://huggingface.co/kg-09/kg-vton-mask) | `dwpose/yolox_l.onnx`, `dwpose/dw-ll_ucoco_384.onnx` | DWPose / YOLOX weights, Apache-2.0 upstream |
+| VTON Ultimate Processor | [`kg-09/kg-vton-mask`](https://huggingface.co/kg-09/kg-vton-mask) @ `4648778` | `dwpose/yolox_l.onnx`, `dwpose/dw-ll_ucoco_384.onnx` | DWPose / YOLOX weights, Apache-2.0 upstream |
 | VTON Ultimate Processor | same | `humanparsing/parsing_atr.onnx`, `humanparsing/parsing_lip.onnx` | From the OOTDiffusion/FitDiT checkpoints (CC BY-NC-SA 4.0); trained on the ATR and LIP datasets, which are distributed for research use |
-| Portrait Segment | [`jonathandinu/face-parsing`](https://huggingface.co/jonathandinu/face-parsing) | SegFormer fine-tuned on CelebAMask-HQ | Model card: "non-commercial research and educational purposes" |
-| Garment Segment | [`1038lab/segformer_fashion`](https://huggingface.co/1038lab/segformer_fashion) | SegFormer trained for Fashionpedia classes | No license declared by the uploader (Fashionpedia annotations are CC BY 4.0) |
+| Portrait Segment | [`jonathandinu/face-parsing`](https://huggingface.co/jonathandinu/face-parsing) @ `758b82e` | SegFormer fine-tuned on CelebAMask-HQ | Model card: "non-commercial research and educational purposes" |
+| Garment Segment | [`1038lab/segformer_fashion`](https://huggingface.co/1038lab/segformer_fashion) @ `e5bae2d` | SegFormer trained for Fashionpedia classes | No license declared by the uploader (Fashionpedia annotations are CC BY 4.0) |
 
 ## Python dependencies
 

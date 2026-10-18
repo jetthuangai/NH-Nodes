@@ -64,9 +64,9 @@ class NH_RandomChoice:
                 "weights": ("STRING", {"default": "1,1,1,1,1,1"}),
             },
             "optional": {
-                "input_0": ("*",), "input_1": ("*",),
-                "input_2": ("*",), "input_3": ("*",),
-                "input_4": ("*",), "input_5": ("*",),
+                "input_0": ("*", {"lazy": True}), "input_1": ("*", {"lazy": True}),
+                "input_2": ("*", {"lazy": True}), "input_3": ("*", {"lazy": True}),
+                "input_4": ("*", {"lazy": True}), "input_5": ("*", {"lazy": True}),
             }
         }
 
@@ -74,17 +74,22 @@ class NH_RandomChoice:
     RETURN_NAMES = ("result", "picked_index", "probabilities")
     FUNCTION = "choose"
     CATEGORY = "NH-Nodes/Logic"
+    DESCRIPTION = (
+        "Pick one connected input at random (weight N belongs to input_N, the seed is used as given). "
+        "Only the picked input is executed; the other ones never run. Connected inputs count even if they produce "
+        "no value (an upstream node that returns nothing still takes its slot)."
+    )
 
-    def choose(self, seed, weights, **kwargs):
-        connected = []
-        for i in range(_CHOICE_SLOTS):
-            key = f"input_{i}"
-            if key in kwargs and kwargs[key] is not None:
-                connected.append((i, kwargs[key]))
+    @staticmethod
+    def _connected_slots(kwargs):
+        # "Noi" = key co mat trong kwargs (slot chua noi thi ComfyUI khong gui key). Gia tri None chi co nghia
+        # la nhanh lazy chua chay, nen khong dung gia tri de biet slot nao dang noi. Tang dan theo slot.
+        return [i for i in range(_CHOICE_SLOTS) if f"input_{i}" in kwargs]
 
-        if not connected:
-            return (None, -1, "")
-
+    @staticmethod
+    def _pick(seed, weights, slots):
+        """Tra ve (slot duoc chon, xac suat cua cac slot dang noi). Chi phu thuoc seed, weights va tap slot
+        dang noi, khong dung gia tri input: nho vay check_lazy_status chon dung slot ma choose se tra ve."""
         # Weight thu i thuoc input_i (khong phai input thu i dang noi), slot thieu weight = 1
         slot_weights = []
         for s in weights.split(",")[:_CHOICE_SLOTS]:
@@ -93,7 +98,7 @@ class NH_RandomChoice:
             except (ValueError, TypeError):
                 slot_weights.append(1.0)
         slot_weights += [1.0] * (_CHOICE_SLOTS - len(slot_weights))
-        w = [slot_weights[i] for i, _ in connected]
+        w = [slot_weights[i] for i in slots]
 
         # Normalize
         total = sum(w) or 1.0
@@ -105,16 +110,29 @@ class NH_RandomChoice:
         # Weighted pick
         r = rng.random()
         cumsum = 0.0
-        for idx, (orig_i, item) in enumerate(connected):
-            cumsum += probs[idx]
+        for slot, prob in zip(slots, probs):
+            cumsum += prob
             if r <= cumsum:
-                prob_str = ", ".join(f"{p:.1%}" for p in probs)
-                return (item, orig_i, prob_str)
+                return slot, probs
 
         # Fallback
-        orig_i, item = connected[-1]
+        return slots[-1], probs
+
+    def check_lazy_status(self, seed, weights, **kwargs):
+        slots = self._connected_slots(kwargs)
+        if not slots:
+            return []
+        key = f"input_{self._pick(seed, weights, slots)[0]}"
+        return [key] if kwargs[key] is None else []
+
+    def choose(self, seed, weights, **kwargs):
+        slots = self._connected_slots(kwargs)
+        if not slots:
+            return (None, -1, "")
+
+        slot, probs = self._pick(seed, weights, slots)
         prob_str = ", ".join(f"{p:.1%}" for p in probs)
-        return (item, orig_i, prob_str)
+        return (kwargs[f"input_{slot}"], slot, prob_str)
 
 
 # --- Dang ky ---

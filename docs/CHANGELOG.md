@@ -3,6 +3,24 @@
 All notable changes to NH-Nodes. Versions follow the Comfy Registry releases.
 "Behaviour change" marks fixes that can change the output of an existing workflow.
 
+## 1.6.0 — Performance, caching and VRAM
+
+### Faster graphs
+- **Lazy switches:** `If/Else (NH)`, `Switch N (NH)` and `Random Choice (NH)` now ask ComfyUI only for the branch they pick, so the other branches (for example a second sampler) are never executed. The choice itself is unchanged. A connected input whose upstream returns nothing still counts as connected.
+- `Layer Stack Composite (NH)` is cached like any pure node instead of re-running on every queue.
+- `Load images matching`: results are cached until the matched files change; the search stays inside the matching root (no more scanning parent folders, drive roots or the models folder). When nothing matches, `found` is `False` and `images` returns the new optional `fallback_images` input (evaluated only on a miss); without a fallback, `images` is blocked with a message and the rest of the workflow keeps running (behaviour change: it used to raise an error). Use `fallback_images` rather than routing `images` through a switch — a blocked input stops the switch too. A drive or network-share root cannot be searched recursively any more.
+- Indexed loaders (`Load Diffusion Model Index`, `Load VAE Index`, `Load Clip Index`) reuse the model ComfyUI still holds, so editing a slot you did not select no longer reloads it from disk; they keep only a weak reference, so ComfyUI's RAM-pressure cache can still free the model (`--cache-classic` keeps a normal reference). VAEs are loaded with their file metadata and validated like the core loader does.
+- `Mask Morphology (NH)`: rewritten on torch (CPU or GPU). Soft masks keep their gradient, masks touching the border no longer shrink from the edge, and large kernels are up to 100× faster. Even kernel lengths act as the next odd length (behaviour change).
+
+### VRAM and models
+- `VTON Ultimate Processor (NH)`: new optional `keep_model_loaded` (default **off**). Off frees the ONNX Runtime GPU memory after each run that really used the GPU (about 1.5 s slower per run); on keeps today's speed and is much faster for image lists, which ComfyUI runs one item at a time. ComfyUI is asked to make room before the models are loaded on the GPU, except once ONNX Runtime has fallen back to the CPU.
+- SegFormer nodes now really make ComfyUI unload models when VRAM is tight (a device-index mismatch prevented it).
+- Model downloads are pinned to tested Hugging Face revisions and only fetch the needed files; a half-downloaded VTON folder is repaired instead of trusted.
+- `extra_model_paths.yaml` support: the folder names `nh_nodes` (SegFormer models, `.safetensors`) and `vton_mask` (VTON models, `.onnx`) can point to extra locations; existing installs keep working without moving anything.
+
+### Viewer
+- `NH Large Image Preview` / `NH Large Image Compare`: browse every image of a batch with ◀ n / N ▶ or the ←/→ keys.
+
 ## 1.5.0 — Correctness fixes
 
 ### Image

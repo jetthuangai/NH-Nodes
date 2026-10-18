@@ -14,6 +14,7 @@ import comfy.model_management
 import comfy.utils
 import folder_paths
 import node_helpers
+from comfy_execution.graph_utils import ExecutionBlocker
 
 from ...core.safe_eval import evaluate
 from ...core.utils import parse_hex_color, tensor_to_pil
@@ -496,8 +497,13 @@ def _collect_image_files(folder_path, recursive=False):
             files.append(entry)
 
     if recursive or not files:
+        models_dir = os.path.normcase(os.path.abspath(folder_paths.models_dir))
         for current_root, dir_names, file_names in os.walk(folder_path):
-            dir_names.sort(key=_natural_key)
+            # Natural order, and never into the ComfyUI models folder (a walk from one of its parents would crawl it).
+            dir_names[:] = sorted(
+                (name for name in dir_names if os.path.normcase(os.path.abspath(os.path.join(current_root, name))) != models_dir),
+                key=_natural_key,
+            )
             for file_name in sorted(file_names, key=_natural_key):
                 full_path = os.path.join(current_root, file_name)
                 if os.path.isfile(full_path) and Path(file_name).suffix.lower() in _IMAGE_EXTENSIONS:
@@ -585,12 +591,139 @@ def _add_unique_path(paths, path_value):
         paths.append(path_value)
 
 
-def _context_root_candidates(root_path, source_context_paths):
+_SIGNATURE_ENTRY_LIMIT = 20000  # most folders + files Load Images Matching hashes for IS_CHANGED before it gives up
+
+
+class _NoMatchError(ValueError):
+    """The search itself came up empty: no matching folder, or no images in it. A bad setting is a plain ValueError."""
+
+    def __init__(self, message, match_text=""):
+        super().__init__(message)
+        self.match_text = match_text
+
+
+def _hash_parts(hasher, *parts):
+    for part in parts:
+        hasher.update(str(part).encode("utf-8", errors="replace"))
+        hasher.update(b"\0")
+
+
+def _same_path(first, second):
+    return os.path.normcase(os.path.abspath(first)) == os.path.normcase(os.path.abspath(second))
+
+
+def _is_inside(path, folder):
+    """True when ``path`` lies below ``folder`` (``folder`` itself does not count)."""
+    path = os.path.normcase(os.path.abspath(path))
+    folder = os.path.normcase(os.path.abspath(folder))
+    return path != folder and path.startswith(folder.rstrip(os.sep) + os.sep)
+
+
+def _is_drive_root(path):
+    path = os.path.abspath(path)
+    return os.path.dirname(path) == path
+
+
+def _entry_is_dir(entry, follow_symlinks=True):
+    try:
+        return entry.is_dir(follow_symlinks=follow_symlinks)
+    except OSError:
+        return False
+
+
+def _absolute_root(root_path):
+    """The matching root as an absolute path; a relative one is taken relative to ComfyUI's input folder."""
     root_path = (root_path or "").strip()
+    if root_path and not os.path.isabs(root_path):
+        root_path = os.path.join(folder_paths.get_input_directory(), root_path)
+    return root_path
+
+
+def _check_search_root(root_path, recursive):
+    """Refuse the roots a search must not scan: a whole drive (when it would be walked) and the models folder."""
+    if recursive and _is_drive_root(root_path):
+        raise ValueError(
+            f"Matching root is a drive root ({root_path}); refusing to scan a whole drive. "
+            "Point matching_root_path at the folder that holds the images, or turn recursive off."
+        )
+    if _same_path(root_path, folder_paths.models_dir):
+        raise ValueError(f"Matching root is the ComfyUI models folder ({root_path}), which holds no images to match.")
+
+
+def _list_folder(folder_path):
+    """The os.DirEntry objects in ``folder_path`` in natural order, without the ComfyUI models folder; [] if unreadable."""
+    try:
+        with os.scandir(folder_path) as scan:
+            entries = sorted(scan, key=lambda entry: _natural_key(entry.name))
+    except OSError:
+        return []
+    models_dir = os.path.normcase(os.path.abspath(folder_paths.models_dir))
+    return [
+        entry for entry in entries
+        if not (_entry_is_dir(entry) and os.path.normcase(os.path.normpath(entry.path)) == models_dir)
+    ]
+
+
+def _child_folders(folder_path):
+    """Paths of the sub-folders directly inside ``folder_path``, in natural order."""
+    return [entry.path for entry in _list_folder(folder_path) if _entry_is_dir(entry)]
+
+
+def _walk_folders(root_path, recursive=True):
+    """Yield ``(folder, entries)`` for ``root_path`` and, when ``recursive``, for every folder below it.
+
+    The matching search's stand-in for os.walk, with limits: it refuses the roots ``_check_search_root`` names,
+    never enters the ComfyUI models folder and, like os.walk, does not follow symlinks into other trees.
+    """
+    _check_search_root(root_path, recursive)
+    pending = [root_path]
+    while pending:
+        folder = pending.pop()
+        entries = _list_folder(folder)
+        yield folder, entries
+        if recursive:
+            pending.extend(entry.path for entry in reversed(entries) if _entry_is_dir(entry, follow_symlinks=False))
+
+
+def _context_twins(root_path, context_names, wanted=None):
+    """Folders that stand in for ``root_path`` under another context folder.
+
+    When the root sits inside a context folder (``.../Nam/...``), the same place under a sibling context folder
+    (``.../Nu/...``) is a twin, and so is the sibling context folder as a whole. ``wanted`` limits the siblings to
+    those names (normalized); all other configured context names count when it is None.
+    """
+    context = {_normalize_match_value(name) for name in context_names} - {""}
+    if not context:
+        return []
+
+    parts = list(Path(os.path.normpath(root_path)).parts)
+    twins = []
+    for position, part in enumerate(parts):
+        own_name = _normalize_match_value(part)
+        if position == 0 or own_name not in context:
+            continue
+        rest = parts[position + 1:]
+        for sibling_path in _child_folders(str(Path(*parts[:position]))):
+            sibling_name = _normalize_match_value(os.path.basename(sibling_path))
+            if sibling_name == own_name or sibling_name not in context:
+                continue
+            if wanted is not None and sibling_name not in wanted:
+                continue
+            twins.append(sibling_path)
+            if rest and os.path.isdir(os.path.join(sibling_path, *rest)):
+                twins.append(os.path.join(sibling_path, *rest))
+    return twins
+
+
+def _context_root_candidates(root_path, source_context_paths, context_names=()):
+    """Folders to search for the match, best context first.
+
+    That is the matching root, the sub-folders of it that the source path names (``Nu`` when the source lives in a
+    ``Nu`` folder) and the context twins of the root. Nothing else above the root is listed, let alone walked.
+    """
+    root_path = _absolute_root(root_path)
     if not root_path:
         return []
-    if not os.path.isabs(root_path):
-        root_path = os.path.join(folder_paths.get_input_directory(), root_path)
 
     candidates = []
     _add_unique_path(candidates, root_path)
@@ -599,38 +732,20 @@ def _context_root_candidates(root_path, source_context_paths):
     if not source_segments:
         return candidates
 
-    def add_matching_children(parent_path):
-        if not os.path.isdir(parent_path):
-            return
-        try:
-            entries = sorted(os.listdir(parent_path), key=_natural_key)
-        except OSError:
-            return
-        for entry in entries:
-            child_path = os.path.join(parent_path, entry)
-            if os.path.isdir(child_path) and _normalize_match_value(entry) in source_segments:
-                _add_unique_path(candidates, child_path)
-
-    add_matching_children(root_path)
-
-    current_path = root_path
-    while True:
-        parent_path = os.path.dirname(current_path)
-        if not parent_path or parent_path == current_path:
-            break
-        add_matching_children(parent_path)
-        current_path = parent_path
+    for child_path in _child_folders(root_path):
+        if _normalize_match_value(os.path.basename(child_path)) in source_segments:
+            _add_unique_path(candidates, child_path)
+    for twin_path in _context_twins(root_path, context_names, source_segments):
+        _add_unique_path(candidates, twin_path)
 
     candidates.sort(key=lambda item: (-_candidate_context_score(item, source_context_paths), _natural_key(item)))
     return candidates
 
 
 def _resolve_matching_folder(root_path, match_text, match_mode, recursive, source_context_paths=None):
-    root_path = (root_path or "").strip()
+    root_path = _absolute_root(root_path)
     if not root_path:
         raise ValueError("Matching root path is empty")
-    if not os.path.isabs(root_path):
-        root_path = os.path.join(folder_paths.get_input_directory(), root_path)
     if not os.path.isdir(root_path):
         raise ValueError(f"Matching root folder does not exist: {root_path}")
 
@@ -639,17 +754,8 @@ def _resolve_matching_folder(root_path, match_text, match_mode, recursive, sourc
         raise ValueError("Match text is empty")
 
     candidates = [root_path]
-    if recursive:
-        for current_root, dir_names, _file_names in os.walk(root_path):
-            dir_names.sort(key=_natural_key)
-            for dir_name in dir_names:
-                candidates.append(os.path.join(current_root, dir_name))
-    else:
-        candidates.extend(
-            os.path.join(root_path, entry)
-            for entry in sorted(os.listdir(root_path), key=_natural_key)
-            if os.path.isdir(os.path.join(root_path, entry))
-        )
+    for _folder, entries in _walk_folders(root_path, recursive):
+        candidates.extend(entry.path for entry in entries if _entry_is_dir(entry))
 
     exact_matches = []
     contains_matches = []
@@ -662,7 +768,7 @@ def _resolve_matching_folder(root_path, match_text, match_mode, recursive, sourc
 
     matches = exact_matches if match_mode == "exact" else contains_matches or exact_matches
     if not matches:
-        raise ValueError(f"No matching folder found for '{match_text}' under: {root_path}")
+        raise _NoMatchError(f"No matching folder found for '{match_text}' under: {root_path}", match_text)
 
     if source_context_paths:
         matches.sort(key=lambda item: (
@@ -674,10 +780,20 @@ def _resolve_matching_folder(root_path, match_text, match_mode, recursive, sourc
     return matches[0]
 
 
-def _resolve_best_matching_folder(root_path, match_text, match_mode, recursive, source_context_paths=None):
+def _resolve_best_matching_folder(root_path, match_text, match_mode, recursive, source_context_paths=None, context_names=()):
+    root_path = _absolute_root(root_path)
+    if not root_path:
+        raise ValueError("Matching root path is empty")
+    _check_search_root(root_path, recursive)
+
+    search_roots = _context_root_candidates(root_path, source_context_paths, context_names)
+    if recursive:
+        # Walking a folder covers everything below it, so a search root inside another one is not walked twice.
+        search_roots = [path for path in search_roots if not any(_is_inside(path, other) for other in search_roots)]
+
     matched_folders = []
     errors = []
-    for search_root in _context_root_candidates(root_path, source_context_paths):
+    for search_root in search_roots:
         try:
             matched_folder = _resolve_matching_folder(
                 search_root,
@@ -688,12 +804,14 @@ def _resolve_best_matching_folder(root_path, match_text, match_mode, recursive, 
             )
             _add_unique_path(matched_folders, matched_folder)
         except ValueError as exc:
-            errors.append(str(exc))
+            errors.append(exc)
 
     if not matched_folders:
-        if errors:
-            raise ValueError(errors[0])
-        raise ValueError(f"No matching folder found for '{match_text}' under: {root_path}")
+        # A setting that cannot work (missing root, empty text) is reported as such; otherwise nothing matched.
+        for exc in errors:
+            if not isinstance(exc, _NoMatchError):
+                raise exc
+        raise _NoMatchError(f"No matching folder found for '{match_text}' under: {root_path}", match_text)
 
     matched_folders.sort(key=lambda item: (-_candidate_context_score(item, source_context_paths), _natural_key(item)))
     return matched_folders[0]
@@ -717,28 +835,113 @@ def _detect_context_folder(paths, context_folder_names):
     return ""
 
 
-def _resolve_context_root(root_path, context_folder, context_folder_names):
-    root_path = (root_path or "").strip()
-    if not root_path or not context_folder:
-        return root_path
-    if not os.path.isabs(root_path):
-        root_path = os.path.join(folder_paths.get_input_directory(), root_path)
+def _matching_selection(
+    source_folder_path,
+    matching_root_path,
+    match_text,
+    match_mode,
+    recursive,
+    index,
+    step,
+    context_folder_names,
+    source_file_names,
+    person_folder_path=None,
+):
+    """Work out what Load images matching reads: one ``(match_text, folder, [file names])`` per match item.
 
-    normalized_context = {_normalize_match_value(name) for name in context_folder_names}
-    root_parts = list(Path(os.path.normpath(root_path)).parts)
-    for index, part in enumerate(root_parts):
-        if _normalize_match_value(part) in normalized_context:
-            candidate_parts = root_parts[:]
-            candidate_parts[index] = context_folder
-            candidate = str(Path(*candidate_parts))
-            if os.path.isdir(candidate):
-                return candidate
+    Raises _NoMatchError when an item finds no folder, or a folder without images, and ValueError for a setting
+    that cannot work (missing root, empty match text, a root that must not be scanned).
+    """
+    if not source_folder_path and person_folder_path:
+        source_folder_path = person_folder_path
 
-    child_candidate = os.path.join(root_path, context_folder)
-    if os.path.isdir(child_candidate):
-        return child_candidate
+    source_paths = [line.strip() for line in str(source_folder_path or "").splitlines() if line.strip()]
+    first_source_path = source_paths[0] if source_paths else ""
+    resolved_source_folder = _resolve_load_dir(first_source_path)
+    selected_match_text = (match_text or "").strip()
+    source_names = [line.strip() for line in str(source_file_names or "").splitlines() if line.strip()]
+    context_names = _parse_context_folder_names(context_folder_names)
+    match_items = []
 
-    return root_path
+    if selected_match_text:
+        item_count = max(len(source_paths), len(source_names), 1)
+        for item_index in range(item_count):
+            match_items.append((
+                selected_match_text,
+                source_paths[item_index] if item_index < len(source_paths) else "",
+                source_names[item_index] if item_index < len(source_names) else "",
+            ))
+    elif source_names:
+        for item_index, source_name in enumerate(source_names):
+            source_dir = os.path.dirname(source_name)
+            source_match_text = os.path.basename(os.path.normpath(source_dir)) if source_dir else os.path.basename(os.path.normpath(resolved_source_folder))
+            match_items.append((
+                source_match_text,
+                source_paths[item_index] if item_index < len(source_paths) else "",
+                source_name,
+            ))
+    else:
+        selected_match_text = os.path.basename(os.path.normpath(resolved_source_folder))
+        match_items.append((selected_match_text, first_source_path, ""))
+
+    plan = []
+    for current_match_text, current_source_path, current_source_name in match_items:
+        context_paths = [current_source_path, current_source_name, resolved_source_folder]
+        context_folder = _detect_context_folder(context_paths, context_names)
+        if context_folder:
+            context_paths.append(context_folder)
+        matched_folder = _resolve_best_matching_folder(
+            matching_root_path,
+            current_match_text,
+            match_mode,
+            recursive,
+            source_context_paths=context_paths,
+            context_names=context_names,
+        )
+        try:
+            image_files = _collect_image_files(matched_folder)
+        except ValueError as exc:  # no images in the folder that matched
+            raise _NoMatchError(str(exc), current_match_text) from exc
+        start_index = index % len(image_files)
+        selected_files = [image_files[(start_index + offset) % len(image_files)] for offset in range(step)]
+        plan.append((current_match_text, matched_folder, selected_files))
+    return plan
+
+
+def _selection_signature(plan):
+    """Digest of what a matching plan reads: the folders chosen, and the selected files with size and mtime."""
+    hasher = hashlib.sha256()
+    for current_match_text, matched_folder, selected_files in plan:
+        _hash_parts(hasher, current_match_text, os.path.abspath(matched_folder))
+        for file_name in selected_files:
+            stat = os.stat(os.path.join(matched_folder, file_name))
+            _hash_parts(hasher, file_name, stat.st_size, stat.st_mtime_ns)
+    return hasher.hexdigest()
+
+
+def _tree_signature(roots, limit=None):
+    """Digest of every folder and image below ``roots`` (names, sizes, mtimes); None beyond ``limit`` entries."""
+    limit = _SIGNATURE_ENTRY_LIMIT if limit is None else limit
+    hasher = hashlib.sha256()
+    seen = 0
+    for root in roots:
+        _hash_parts(hasher, "root", os.path.abspath(root))
+        for folder, entries in _walk_folders(root, recursive=True):
+            _hash_parts(hasher, "folder", os.path.relpath(folder, root))
+            for entry in entries:
+                seen += 1
+                if seen > limit:
+                    return None
+                if _entry_is_dir(entry):
+                    _hash_parts(hasher, "dir", entry.name)
+                elif Path(entry.name).suffix.lower() in _IMAGE_EXTENSIONS:
+                    try:
+                        stat = entry.stat()
+                    except OSError:
+                        _hash_parts(hasher, "image", entry.name)
+                    else:
+                        _hash_parts(hasher, "image", entry.name, stat.st_size, stat.st_mtime_ns)
+    return hasher.hexdigest()
 
 
 def _match_batch_sizes(batch_a, batch_b):
@@ -995,6 +1198,14 @@ class NH_LoadImagesMatching:
             },
             "optional": {
                 "source_file_names": ("STRING", {"default": "", "multiline": True}),
+                "fallback_images": ("IMAGE", {
+                    "lazy": True,
+                    "tooltip": (
+                        "Comes out as images when nothing matches, and is only evaluated then. Connect it here "
+                        "instead of routing images through a switch or If/Else: a node that receives the held-back "
+                        "images never runs."
+                    ),
+                }),
             },
         }
 
@@ -1002,43 +1213,72 @@ class NH_LoadImagesMatching:
     RETURN_NAMES = ("images", "filename", "path", "matched_text", "found")
     FUNCTION = "load_matching"
     CATEGORY = "NH-Nodes/Image"
+    DESCRIPTION = (
+        "Load the images of the folder under matching_root_path whose name matches the source folder (or match_text). "
+        "When nothing matches, found is False and images are held back: every node that receives them is skipped, "
+        "a switch or If/Else included. To carry on with another image, connect it to fallback_images instead of "
+        "routing images through a switch or If/Else: it is only evaluated when nothing matches, and then comes out "
+        "as images (found stays False)."
+    )
 
     @classmethod
     def IS_CHANGED(cls, source_folder_path, matching_root_path, match_text, match_mode, recursive, index, step, repeat_count, context_folder_names="Nam\nNu", source_file_names="", **kwargs):
-        return float("nan")
+        # ComfyUI's cache key already holds every setting and every upstream result; this adds what is on disk:
+        # the folder(s) the search picks and the selected files with their size and time, so an edit re-runs the node.
+        # An input wired from another node arrives here as None, which leaves the folder unknown: the whole matching
+        # tree is fingerprinted instead. A search that finds nothing, or a tree too big to hash cheaply, gives NaN:
+        # that result is recomputed every time (so a "not found" is never remembered).
+        unknown = float("nan")
+        try:
+            settings = (source_folder_path, matching_root_path, match_text, match_mode, recursive, index, step, context_folder_names, source_file_names)
+            if None not in settings:
+                plan = _matching_selection(
+                    source_folder_path, matching_root_path, match_text, match_mode, recursive, index, step,
+                    context_folder_names, source_file_names, kwargs.get("person_folder_path"),
+                )
+                return _selection_signature(plan)
+            root_path = _absolute_root(matching_root_path)
+            if not root_path or context_folder_names is None:
+                return unknown
+            roots = [root_path] + _context_twins(root_path, _parse_context_folder_names(context_folder_names))
+            signature = _tree_signature(roots)
+            return unknown if signature is None else signature
+        except (ValueError, OSError):
+            return unknown
 
-    def load_matching(self, source_folder_path, matching_root_path, match_text, match_mode, recursive, index, step, repeat_count, context_folder_names="Nam\nNu", source_file_names="", **kwargs):
-        if not source_folder_path and kwargs.get("person_folder_path"):
-            source_folder_path = kwargs["person_folder_path"]
+    def check_lazy_status(self, source_folder_path, matching_root_path, match_text, match_mode, recursive, index, step, repeat_count, context_folder_names="Nam\nNu", source_file_names="", **kwargs):
+        # fallback_images is asked for only when it is wired (ComfyUI sends its key, with None until the input has
+        # run) and the search finds nothing; on a match its upstream nodes never run. The search is the one
+        # load_matching makes. A setting that cannot work asks for nothing: load_matching raises it right after.
+        if "fallback_images" not in kwargs or kwargs["fallback_images"] is not None:
+            return []
+        try:
+            _matching_selection(
+                source_folder_path, matching_root_path, match_text, match_mode, recursive, index, step,
+                context_folder_names, source_file_names, kwargs.get("person_folder_path"),
+            )
+        except _NoMatchError:
+            return ["fallback_images"]
+        except (ValueError, OSError):
+            pass
+        return []
 
-        source_paths = [line.strip() for line in str(source_folder_path or "").splitlines() if line.strip()]
-        first_source_path = source_paths[0] if source_paths else ""
-        resolved_source_folder = _resolve_load_dir(first_source_path)
-        selected_match_text = (match_text or "").strip()
-        source_names = [line.strip() for line in str(source_file_names or "").splitlines() if line.strip()]
-        context_names = _parse_context_folder_names(context_folder_names)
-        match_items = []
-
-        if selected_match_text:
-            item_count = max(len(source_paths), len(source_names), 1)
-            for item_index in range(item_count):
-                match_items.append((
-                    selected_match_text,
-                    source_paths[item_index] if item_index < len(source_paths) else "",
-                    source_names[item_index] if item_index < len(source_names) else "",
-                ))
-        elif source_names:
-            for item_index, source_name in enumerate(source_names):
-                source_dir = os.path.dirname(source_name)
-                source_match_text = os.path.basename(os.path.normpath(source_dir)) if source_dir else os.path.basename(os.path.normpath(resolved_source_folder))
-                match_items.append((
-                    source_match_text,
-                    source_paths[item_index] if item_index < len(source_paths) else "",
-                    source_name,
-                ))
-        else:
-            selected_match_text = os.path.basename(os.path.normpath(resolved_source_folder))
-            match_items.append((selected_match_text, first_source_path, ""))
+    def load_matching(self, source_folder_path, matching_root_path, match_text, match_mode, recursive, index, step, repeat_count, context_folder_names="Nam\nNu", source_file_names="", fallback_images=None, **kwargs):
+        try:
+            plan = _matching_selection(
+                source_folder_path, matching_root_path, match_text, match_mode, recursive, index, step,
+                context_folder_names, source_file_names, kwargs.get("person_folder_path"),
+            )
+        except _NoMatchError as exc:
+            # Nothing to load for this request. `found` lets a workflow carry on with something else, and so does
+            # fallback_images, which comes out as the images. Without it the images are held back (whatever needs
+            # them is told why). A setting that cannot work still raises.
+            message = str(exc)
+            if fallback_images is not None:
+                print(f"[NH-Nodes] Load images matching: {message} (using fallback_images)")
+                return (fallback_images, "", "", exc.match_text, False)
+            print(f"[NH-Nodes] Load images matching: {message}")
+            return (ExecutionBlocker(message), "", "", exc.match_text, False)
 
         selected_files = []
         matched_folders = []
@@ -1046,27 +1286,8 @@ class NH_LoadImagesMatching:
         output_images = []
         target_size = None
 
-        for current_match_text, current_source_path, current_source_name in match_items:
-            context_paths = [current_source_path, current_source_name, resolved_source_folder]
-            context_folder = _detect_context_folder(
-                context_paths,
-                context_names,
-            )
-            if context_folder:
-                context_paths.append(context_folder)
-            matched_folder = _resolve_best_matching_folder(
-                matching_root_path,
-                current_match_text,
-                match_mode,
-                recursive,
-                source_context_paths=context_paths,
-            )
-            image_files = _collect_image_files(matched_folder)
-            start_index = index % len(image_files)
-            indices = [((start_index + offset) % len(image_files)) for offset in range(step)]
-
-            for image_index in indices:
-                file_name = image_files[image_index]
+        for current_match_text, matched_folder, file_names in plan:
+            for file_name in file_names:
                 full_path = os.path.join(matched_folder, file_name)
                 img = node_helpers.pillow(Image.open, full_path)
                 img = node_helpers.pillow(ImageOps.exif_transpose, img).convert("RGB")
@@ -1224,10 +1445,6 @@ class NH_LayerStackComposite:
     RETURN_NAMES = ("image", "used_count", "layer_info")
     FUNCTION = "composite"
     CATEGORY = "NH-Nodes/Image"
-
-    @classmethod
-    def IS_CHANGED(cls, **kwargs):
-        return float("nan")
 
     @staticmethod
     def _paste_clipped(canvas, layer, x, y):

@@ -4,6 +4,7 @@ from comfy_execution.graph_utils import ExecutionBlocker
 
 
 _MAX_VALUE_MATCH_ITEMS = 64
+_SWITCH_SLOTS = 10  # input_0 .. input_9 of Switch N
 
 
 class NH_Compare:
@@ -141,8 +142,8 @@ class NH_IfElse:
         return {
             "required": {
                 "condition": ("BOOLEAN", {"default": True}),
-                "if_true": ("*",),
-                "if_false": ("*",),
+                "if_true": ("*", {"lazy": True}),
+                "if_false": ("*", {"lazy": True}),
             }
         }
 
@@ -150,8 +151,17 @@ class NH_IfElse:
     RETURN_NAMES = ("result", "condition_out")
     FUNCTION = "switch"
     CATEGORY = "NH-Nodes/Logic"
+    DESCRIPTION = "Pick if_true or if_false by the condition. Only the chosen branch is executed; the other one never runs."
 
-    def switch(self, condition, if_true, if_false):
+    def check_lazy_status(self, condition, if_true=None, if_false=None):
+        # Chi xin nhanh duoc chon; nhanh con lai khong bao gio chay
+        if condition and if_true is None:
+            return ["if_true"]
+        if (not condition) and if_false is None:
+            return ["if_false"]
+        return []
+
+    def switch(self, condition, if_true=None, if_false=None):
         return (if_true if condition else if_false, condition)
 
 
@@ -165,16 +175,16 @@ class NH_SwitchN:
                 "index": ("INT", {"default": 0, "min": 0, "max": 9}),
             },
             "optional": {
-                "input_0": ("*",),
-                "input_1": ("*",),
-                "input_2": ("*",),
-                "input_3": ("*",),
-                "input_4": ("*",),
-                "input_5": ("*",),
-                "input_6": ("*",),
-                "input_7": ("*",),
-                "input_8": ("*",),
-                "input_9": ("*",),
+                "input_0": ("*", {"lazy": True}),
+                "input_1": ("*", {"lazy": True}),
+                "input_2": ("*", {"lazy": True}),
+                "input_3": ("*", {"lazy": True}),
+                "input_4": ("*", {"lazy": True}),
+                "input_5": ("*", {"lazy": True}),
+                "input_6": ("*", {"lazy": True}),
+                "input_7": ("*", {"lazy": True}),
+                "input_8": ("*", {"lazy": True}),
+                "input_9": ("*", {"lazy": True}),
             },
         }
 
@@ -182,25 +192,41 @@ class NH_SwitchN:
     RETURN_NAMES = ("result", "count")
     FUNCTION = "switch"
     CATEGORY = "NH-Nodes/Logic"
+    DESCRIPTION = (
+        "Pick input_<index>. Only the chosen input is executed. If that slot is not connected, the lowest connected "
+        "slot is used instead. count = number of connected slots. Connected inputs count even if they produce no "
+        "value (an upstream node that returns nothing still takes its slot)."
+    )
+
+    @staticmethod
+    def _connected_slots(kwargs):
+        # "Noi" = key co mat trong kwargs (slot chua noi thi ComfyUI khong gui key). Gia tri None chi co nghia
+        # la nhanh lazy chua chay, nen khong dung gia tri de biet slot nao dang noi. Tang dan theo slot.
+        return [i for i in range(_SWITCH_SLOTS) if f"input_{i}" in kwargs]
+
+    @staticmethod
+    def _chosen_slot(index, slots):
+        # Slot duoc chon; neu slot do khong noi thi roi ve slot noi thap nhat (nhu truoc day)
+        return next((slot for slot in slots if slot == index), slots[0])
+
+    def check_lazy_status(self, index, **kwargs):
+        slots = self._connected_slots(kwargs)
+        if not slots:
+            return []
+        key = f"input_{self._chosen_slot(index, slots)}"
+        return [key] if kwargs[key] is None else []
 
     def switch(self, index, **kwargs):
-        connected = {}
-        for i in range(10):
-            key = f"input_{i}"
-            if key in kwargs and kwargs[key] is not None:
-                connected[i] = kwargs[key]
-
-        count = len(connected)
+        slots = self._connected_slots(kwargs)
+        count = len(slots)
         if count == 0:
             print("[NH-Nodes] Warning: SwitchN has no connected inputs")
             return (None, 0)
 
-        if index in connected:
-            return (connected[index], count)
-
-        first_key = sorted(connected.keys())[0]
-        print(f"[NH-Nodes] SwitchN: index {index} not connected, falling back to input_{first_key}")
-        return (connected[first_key], count)
+        chosen = self._chosen_slot(index, slots)
+        if chosen != index:
+            print(f"[NH-Nodes] SwitchN: index {index} not connected, falling back to input_{chosen}")
+        return (kwargs[f"input_{chosen}"], count)
 
 
 class NH_AnySwitchBoolean:
