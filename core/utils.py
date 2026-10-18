@@ -11,11 +11,14 @@ def resize_image(image, target_size=768):
         new_h, new_w = target_size, int(w * target_size / h)
     return image.resize((new_w, new_h), Image.LANCZOS)
 
-def tensor_to_pil(tensor_image):
+def tensor_to_pil(tensor_image, *, rgb=False, keep_alpha=False):
     """Convert ONE ComfyUI image ([H,W,C] or [1,H,W,C]) to PIL.
 
     Values are clipped to [0, 1] first, so overshoot from resampling cannot wrap around
     in uint8. 1/3/4 channels become L/RGB/RGBA. Batches must be converted per image.
+
+    ``rgb=True`` always gives an RGB picture: grey is expanded and alpha is dropped. With ``keep_alpha=True`` as
+    well, a 4-channel image stays RGBA instead (every other image is still RGB).
     """
     if tensor_image.dim() == 4:
         if tensor_image.shape[0] != 1:
@@ -24,10 +27,18 @@ def tensor_to_pil(tensor_image):
                 "convert each image of the batch separately"
             )
         tensor_image = tensor_image[0]
-    np_image = np.clip(tensor_image.detach().cpu().float().numpy() * 255.0, 0, 255).astype(np.uint8)
+    pixels = tensor_image.detach().cpu()
+    if pixels.dtype == torch.bfloat16:  # numpy has no bfloat16; other dtypes keep their own rounding
+        pixels = pixels.float()
+    np_image = np.clip(pixels.numpy() * 255.0, 0, 255).astype(np.uint8)
     if np_image.ndim == 3 and np_image.shape[2] == 1:
         np_image = np_image[:, :, 0]
-    return Image.fromarray(np_image)
+    pil_image = Image.fromarray(np_image)
+    if rgb:
+        kept_modes = ("RGB", "RGBA") if keep_alpha else ("RGB",)
+        if pil_image.mode not in kept_modes:
+            pil_image = pil_image.convert("RGB")
+    return pil_image
 
 def pil_to_tensor(pil_image):
     """Convert PIL image to tensor in ComfyUI format for IMAGE"""

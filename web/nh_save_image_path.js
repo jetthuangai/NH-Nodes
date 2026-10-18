@@ -1,35 +1,7 @@
 import { app } from "../../../scripts/app.js";
+import { chainCallback, findWidget, hideWidget, refreshNode, showWidget } from "./nh_widget_utils.js";
 
 const NODE_NAME = "NH_SaveImagePath";
-
-function findWidget(node, name) {
-    return node.widgets?.find((widget) => widget.name === name);
-}
-
-function hideWidget(widget) {
-    if (!widget || widget.__nhSaveImagePathHidden) {
-        return;
-    }
-
-    widget.__nhSaveImagePathHidden = true;
-    widget.__nhSaveImagePathType = widget.type;
-    widget.__nhSaveImagePathComputeSize = widget.computeSize;
-    widget.computeSize = () => [0, -4];
-    widget.type = "nh-hidden";
-}
-
-function showWidget(widget) {
-    if (!widget || !widget.__nhSaveImagePathHidden) {
-        return;
-    }
-
-    widget.type = widget.__nhSaveImagePathType;
-    widget.computeSize = widget.__nhSaveImagePathComputeSize;
-
-    delete widget.__nhSaveImagePathHidden;
-    delete widget.__nhSaveImagePathType;
-    delete widget.__nhSaveImagePathComputeSize;
-}
 
 function updateNewFolderWidget(node) {
     const createWidget = findWidget(node, "create_new_folder");
@@ -45,9 +17,7 @@ function updateNewFolderWidget(node) {
         hideWidget(folderNameWidget);
     }
 
-    node.setSize?.(node.computeSize?.() || node.size);
-    node.setDirtyCanvas?.(true, true);
-    app.graph?.setDirtyCanvas?.(true, true);
+    refreshNode(node, app.graph);
 }
 
 function installSaveImagePathControls(node) {
@@ -58,11 +28,7 @@ function installSaveImagePathControls(node) {
 
     const createWidget = findWidget(node, "create_new_folder");
     if (createWidget) {
-        const oldCallback = createWidget.callback;
-        createWidget.callback = function () {
-            oldCallback?.apply(this, arguments);
-            updateNewFolderWidget(node);
-        };
+        chainCallback(createWidget, () => updateNewFolderWidget(node));
     }
 
     setTimeout(() => updateNewFolderWidget(node), 0);

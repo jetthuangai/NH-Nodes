@@ -2,6 +2,8 @@ import torch
 import numpy as np
 import cv2
 
+from ...core.mask_ops import mask_bbox
+
 
 class NH_MaskResizeImage:
     """Resize ảnh theo kích thước target, đảm bảo vùng mask không bị mất.
@@ -54,13 +56,12 @@ class NH_MaskResizeImage:
         sh, sw = img_np.shape[:2]
 
         # Tìm bounding box của mask
-        rows, cols = np.where(mask_np > 0.5)
-        if len(rows) == 0:
+        bbox = mask_bbox(mask_np)
+        if bbox is None:
             # Mask rỗng: resize bình thường
             return self._simple_resize(img_np, mask_np, tw, th, mode, pad_color)
 
-        my1, my2 = int(np.min(rows)), int(np.max(rows))
-        mx1, mx2 = int(np.min(cols)), int(np.max(cols))
+        mx1, my1, mx2, my2 = bbox
         mw = mx2 - mx1 + 1
         mh = my2 - my1 + 1
 

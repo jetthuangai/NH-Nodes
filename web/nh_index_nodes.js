@@ -1,4 +1,5 @@
 import { app } from "../../../scripts/app.js";
+import { chainCallback, clampInt, findWidget, hideWidget, refreshNode, showWidget } from "./nh_widget_utils.js";
 
 const MAX_ITEMS = 64;
 
@@ -63,42 +64,8 @@ const NODE_CONFIGS = {
     },
 };
 
-function findWidget(node, name) {
-    return node.widgets?.find((widget) => widget.name === name);
-}
-
-function toInt(value, fallback) {
-    const parsed = Number.parseInt(value, 10);
-    return Number.isFinite(parsed) ? parsed : fallback;
-}
-
 function clampCount(value, minCount = 1) {
-    return Math.max(minCount, Math.min(MAX_ITEMS, toInt(value, minCount)));
-}
-
-function hideWidget(widget) {
-    if (!widget || widget.__nhIndexHidden) {
-        return;
-    }
-
-    widget.__nhIndexHidden = true;
-    widget.__nhIndexType = widget.type;
-    widget.__nhIndexComputeSize = widget.computeSize;
-    widget.computeSize = () => [0, -4];
-    widget.type = "nh-hidden";
-}
-
-function showWidget(widget) {
-    if (!widget || !widget.__nhIndexHidden) {
-        return;
-    }
-
-    widget.type = widget.__nhIndexType;
-    widget.computeSize = widget.__nhIndexComputeSize;
-
-    delete widget.__nhIndexHidden;
-    delete widget.__nhIndexType;
-    delete widget.__nhIndexComputeSize;
+    return clampInt(value, minCount, MAX_ITEMS, minCount);
 }
 
 function updateIndexedWidgets(node, config) {
@@ -137,9 +104,7 @@ function updateIndexedWidgets(node, config) {
         }
     }
 
-    node.setSize?.(node.computeSize?.() || node.size);
-    node.setDirtyCanvas?.(true, true);
-    app.graph?.setDirtyCanvas?.(true, true);
+    refreshNode(node, app.graph);
 }
 
 function installIndexedControls(node, config) {
@@ -155,21 +120,13 @@ function installIndexedControls(node, config) {
 
     const countWidget = findWidget(node, config.countWidget);
     if (countWidget) {
-        const oldCallback = countWidget.callback;
-        countWidget.callback = function () {
-            oldCallback?.apply(this, arguments);
-            updateIndexedWidgets(node, config);
-        };
+        chainCallback(countWidget, () => updateIndexedWidgets(node, config));
     }
 
     if (config.selectModeWidget) {
         const smWidget = findWidget(node, config.selectModeWidget);
         if (smWidget) {
-            const smOld = smWidget.callback;
-            smWidget.callback = function () {
-                smOld?.apply(this, arguments);
-                updateIndexedWidgets(node, config);
-            };
+            chainCallback(smWidget, () => updateIndexedWidgets(node, config));
         }
     }
 
@@ -177,9 +134,7 @@ function installIndexedControls(node, config) {
         for (let i = 1; i <= MAX_ITEMS; i++) {
             const enableWidget = findWidget(node, `${config.enablePrefix}_${i}`);
             if (enableWidget) {
-                const enOld = enableWidget.callback;
-                enableWidget.callback = function () {
-                    enOld?.apply(this, arguments);
+                chainCallback(enableWidget, function () {
                     if (this.value) {
                         for (let j = 1; j <= MAX_ITEMS; j++) {
                             if (j !== i) {
@@ -191,7 +146,7 @@ function installIndexedControls(node, config) {
                         }
                         updateIndexedWidgets(node, config);
                     }
-                };
+                });
             }
         }
     }

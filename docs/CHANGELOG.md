@@ -3,6 +3,20 @@
 All notable changes to NH-Nodes. Versions follow the Comfy Registry releases.
 "Behaviour change" marks fixes that can change the output of an existing workflow.
 
+## 1.6.1 — Cleanup and hardening
+
+- Internal restructuring with no change to node ids, inputs or outputs: the large image-tools module is split into one
+  module per node family, shared helpers live in `core/` (`image_folders`, `image_ops`, `mask_ops`, `model_files`), and
+  the frontend extensions share one widget helper module.
+- Widgets are hidden with the frontend's own `hidden` property when available (older frontends keep the previous
+  method); values are still saved with the workflow.
+- `Load Images Folder`: the image count used for auto increment now honours `recursive`; a wired `folder_path` no
+  longer fingerprints ComfyUI's input folder by mistake.
+- HTTP routes: the folder-count and large-preview routes no longer return absolute paths, answer with proper status
+  codes (malformed JSON → 400) and do their file work off the server's event loop.
+- `NH Save Large Image` accepts single-channel images; bfloat16 IMAGE tensors convert correctly; image conversions no
+  longer use Pillow's deprecated `fromarray(mode=…)`.
+
 ## 1.6.0 — Performance, caching and VRAM
 
 ### Faster graphs

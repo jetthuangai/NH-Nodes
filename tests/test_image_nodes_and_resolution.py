@@ -20,7 +20,10 @@ import torch
 import torch.nn.functional as F
 from PIL import Image, ImageDraw, ImageFont
 
-tools = importlib.import_module("NH-Nodes.nodes.image.image_tools_nodes")
+image_label = importlib.import_module("NH-Nodes.nodes.image.image_label")
+layer_composite = importlib.import_module("NH-Nodes.nodes.image.layer_composite")
+resize_unit = importlib.import_module("NH-Nodes.nodes.image.image_resize_unit")
+save_image_path = importlib.import_module("NH-Nodes.nodes.image.save_image_path")
 picker = importlib.import_module("NH-Nodes.nodes.resolution.smart_resolution_picker")
 restore = importlib.import_module("NH-Nodes.nodes.resolution.restore_image_geometry")
 resolution_data = importlib.import_module("NH-Nodes.core.resolution_data")
@@ -62,7 +65,7 @@ def _abort_if_frozen(seconds):
     [("#000000", 1.0), ("#FFFFFF", 1.0), ("#336699", 1.0), ("#336699FF", 1.0), ("#33669900", 0.0), ("#33669980", 128 / 255)],
 )
 def test_resize_unit_pad_alpha_follows_the_hex_alpha(color, alpha):
-    out, width, height = tools.NH_ImageResizeByUnit().resize(
+    out, width, height = resize_unit.NH_ImageResizeByUnit().resize(
         _rgba(4, 4, (1.0, 1.0, 1.0, 1.0)), "pixel", 8, 4, 300, "pad", "nearest-exact", color
     )
     assert (width, height) == (8, 4) and out.shape == (1, 4, 8, 4)
@@ -75,7 +78,7 @@ def test_resize_unit_pad_alpha_follows_the_hex_alpha(color, alpha):
 
 def test_resize_unit_pad_keeps_rgb_results():
     image = torch.full((1, 4, 4, 3), 0.25)
-    out, _, _ = tools.NH_ImageResizeByUnit().resize(image, "pixel", 8, 4, 300, "pad", "nearest-exact", "#102030")
+    out, _, _ = resize_unit.NH_ImageResizeByUnit().resize(image, "pixel", 8, 4, 300, "pad", "nearest-exact", "#102030")
     assert out.shape == (1, 4, 8, 3)
     expected = torch.tensor([16 / 255.0, 32 / 255.0, 48 / 255.0]).expand(4, 2, 3)
     assert torch.equal(out[0, :, :2], expected) and torch.equal(out[0, :, 6:], expected)
@@ -84,15 +87,15 @@ def test_resize_unit_pad_keeps_rgb_results():
 
 def test_pad_samples_alpha_is_opaque_unless_given():
     samples = torch.zeros((1, 4, 2, 2))
-    opaque = tools._pad_samples(samples, 4, 4, (0, 0, 0))
+    opaque = resize_unit._pad_samples(samples, 4, 4, (0, 0, 0))
     assert opaque[0, :, 0, 0].tolist() == [0.0, 0.0, 0.0, 1.0]
-    translucent = tools._pad_samples(samples, 4, 4, (10, 20, 30, 64))
+    translucent = resize_unit._pad_samples(samples, 4, 4, (10, 20, 30, 64))
     assert translucent[0, 3, 0, 0].item() == pytest.approx(64 / 255)
     assert translucent[0, 0, 0, 0].item() == pytest.approx(10 / 255)
 
 
 def test_pad_color_named_css_colours_still_work():
-    out, _, _ = tools.NH_ImageResizeByUnit().resize(
+    out, _, _ = resize_unit.NH_ImageResizeByUnit().resize(
         torch.ones((1, 4, 4, 3)), "pixel", 8, 4, 300, "pad", "nearest-exact", "red"
     )
     assert out[0, 0, 0].tolist() == [1.0, 0.0, 0.0]
@@ -132,7 +135,7 @@ def _alpha_layer(size=4, opaque_rows=2):
 
 def test_stack_composite_rgba_layer_keeps_transparent_areas():
     background = torch.full((1, 8, 8, 3), _q(100))
-    out, used, _ = tools.NH_LayerStackComposite().composite(background, 1, "2,2", layer_1=_alpha_layer())
+    out, used, _ = layer_composite.NH_LayerStackComposite().composite(background, 1, "2,2", layer_1=_alpha_layer())
     assert used == 1 and out.shape == (1, 8, 8, 3)  # RGB background -> RGB output, as before
     assert _px(out, 2, 2) == [255, 0, 0]
     assert _px(out, 3, 5) == [255, 0, 0]
@@ -144,14 +147,14 @@ def test_stack_composite_rgba_layer_keeps_transparent_areas():
 def test_stack_composite_blends_semi_transparent_layers():
     background = torch.full((1, 4, 4, 3), _q(100))
     layer = _rgba(2, 2, (_q(255), _q(0), _q(0), _q(128)))
-    out, _, _ = tools.NH_LayerStackComposite().composite(background, 1, "0,0", layer_1=layer)
+    out, _, _ = layer_composite.NH_LayerStackComposite().composite(background, 1, "0,0", layer_1=layer)
     assert _close(_px(out, 0, 0), [178, 50, 50])  # 128/255 red over gray 100
 
 
 def test_stack_composite_rgb_layers_are_unchanged():
     background = torch.full((1, 6, 6, 3), _q(100))
     layer = torch.full((1, 2, 3, 3), _q(200))
-    out, used, info = tools.NH_LayerStackComposite().composite(background, 1, "1,2", layer_1=layer)
+    out, used, info = layer_composite.NH_LayerStackComposite().composite(background, 1, "1,2", layer_1=layer)
     assert used == 1 and "layer_1: x=1, y=2, w=3, h=2" in info
     assert _px(out, 2, 1) == [200, 200, 200] and _px(out, 3, 3) == [200, 200, 200]
     assert _px(out, 1, 1) == [100, 100, 100] and _px(out, 2, 4) == [100, 100, 100]
@@ -160,7 +163,7 @@ def test_stack_composite_rgb_layers_are_unchanged():
 def test_stack_composite_rgba_background_gives_rgba_output():
     background = _rgba(8, 8, (_q(0), _q(0), _q(0), _q(0)))  # fully transparent canvas
     layer = _rgba(2, 2, (_q(255), _q(0), _q(0), _q(128)))
-    out, _, _ = tools.NH_LayerStackComposite().composite(background, 1, "3,3", layer_1=layer)
+    out, _, _ = layer_composite.NH_LayerStackComposite().composite(background, 1, "3,3", layer_1=layer)
     assert out.shape == (1, 8, 8, 4)
     assert _close(_px(out, 3, 3), [255, 0, 0, 128])  # straight alpha over transparent keeps the colour
     assert _px(out, 0, 0)[3] == 0
@@ -174,7 +177,7 @@ LAYOUT_ARGS = dict(
 
 
 def _layout(images, **overrides):
-    return tools.NH_LayerLayoutComposite().composite(images, **{**LAYOUT_ARGS, **overrides})
+    return layer_composite.NH_LayerLayoutComposite().composite(images, **{**LAYOUT_ARGS, **overrides})
 
 
 def test_layout_composite_rgba_layer_keeps_transparent_areas():
@@ -220,7 +223,7 @@ def test_layout_composite_rgb_layers_are_unchanged():
 def _save(tmp_path, prefix, images=None, **kwargs):
     settings = dict(folder_path=str(tmp_path / "out"), create_new_folder=False, new_folder_name="")
     settings.update(kwargs)
-    return tools.NH_SaveImagePath().save_images(
+    return save_image_path.NH_SaveImagePath().save_images(
         torch.rand((1, 4, 4, 3)) if images is None else images, filename_prefix=prefix, **settings
     )
 
@@ -294,7 +297,7 @@ def test_dots_inside_a_name_are_not_an_escape(tmp_path):
 # --- 4. Position expressions use the shared safe evaluator ---
 
 def test_position_expressions_keep_their_values():
-    positions = tools._parse_layer_positions(
+    positions = layer_composite._parse_layer_positions(
         "(bg_w - w1) // 2, BG_H / 2 - h1 / 2   # centred\nx1 + w1 + 10, y1\n\n2 ** 3, -(a - b) % 7",
         3, background_width=100, background_height=60, layer_sizes=[(20, 10), (5, 5), (1, 1)],
     )
@@ -302,7 +305,7 @@ def test_position_expressions_keep_their_values():
 
 
 def test_position_positions_fill_missing_lines_with_zero():
-    assert tools._parse_layer_positions("5,6", 3) == [(5, 6), (0, 0), (0, 0)]
+    assert layer_composite._parse_layer_positions("5,6", 3) == [(5, 6), (0, 0), (0, 0)]
 
 
 @pytest.mark.parametrize("expression", ["9**9**9", "10**10**6", "2**2**20", "(9**9)**(9**9)"])
@@ -310,7 +313,7 @@ def test_position_expression_power_bombs_fail_fast(expression):
     started = time.perf_counter()
     with _abort_if_frozen(60):
         with pytest.raises(ValueError):
-            tools._parse_layer_positions(f"{expression}, 0", 1)
+            layer_composite._parse_layer_positions(f"{expression}, 0", 1)
     assert time.perf_counter() - started < 5
 
 
@@ -319,16 +322,16 @@ def test_position_expression_power_bombs_fail_fast(expression):
 )
 def test_bad_position_expressions_raise_value_error(expression):
     with pytest.raises(ValueError):
-        tools._parse_layer_positions(f"{expression}, 0", 1)
+        layer_composite._parse_layer_positions(f"{expression}, 0", 1)
 
 
 def test_position_expression_error_names_the_expression():
     with pytest.raises(ValueError, match="1 / 0"):
-        tools._eval_position_expr("1 / 0", {})
+        layer_composite._eval_position_expr("1 / 0", {})
 
 
 def test_module_no_longer_uses_the_removed_ast_num():
-    assert "ast.Num" not in inspect.getsource(tools)
+    assert "ast.Num" not in inspect.getsource(layer_composite)
 
 
 # --- 5. Image Label: cached fonts and a binary-searched fit ---
@@ -347,7 +350,7 @@ def test_fit_font_size_equals_the_linear_search_for_growing_widths(start, per_po
     for box in list(range(1, 400, 7)) + [10_000, 100_000]:
         def fits(size):
             return math.ceil(per_point * size) <= box
-        assert tools._fit_font_size(start, fits) == _linear_fit(start, fits), (start, per_point, box)
+        assert image_label._fit_font_size(start, fits) == _linear_fit(start, fits), (start, per_point, box)
 
 
 def test_fit_font_size_needs_only_a_logarithmic_number_of_probes():
@@ -357,7 +360,7 @@ def test_fit_font_size_needs_only_a_logarithmic_number_of_probes():
         probes.append(size)
         return size <= 100
 
-    assert tools._fit_font_size(512, fits) == 100
+    assert image_label._fit_font_size(512, fits) == 100
     assert len(probes) <= 12  # the linear search needed 412
 
 
@@ -375,10 +378,10 @@ def scalable_font(monkeypatch):
         loads.append((str(path), size))
         return real_truetype(io.BytesIO(font_bytes), size)
 
-    cache = getattr(tools, "_cached_truetype", None)
+    cache = getattr(image_label, "_cached_truetype", None)
     if cache is not None:
         cache.cache_clear()
-    monkeypatch.setattr(tools.ImageFont, "truetype", fake_truetype)
+    monkeypatch.setattr(image_label.ImageFont, "truetype", fake_truetype)
     yield loads
     if cache is not None:
         cache.cache_clear()
@@ -401,7 +404,7 @@ def test_fit_font_size_matches_the_linear_search_with_a_real_font(scalable_font,
     for text in LABEL_TEXTS:
         widths = {}
         for size in range(6, 301):
-            box = draw.multiline_textbbox((0, 0), text, font=tools._load_font("default", size), stroke_width=stroke)
+            box = draw.multiline_textbbox((0, 0), text, font=image_label._load_font("default", size), stroke_width=stroke)
             widths[size] = box[2] - box[0]
         for start in (6, 8, 9, 24, 96, 300):
             # Text width is not strictly increasing for every font (hinting makes it dip by a pixel or two now and
@@ -411,7 +414,7 @@ def test_fit_font_size_matches_the_linear_search_with_a_real_font(scalable_font,
                 def fits(size, box_width=box_width):
                     return widths[size] <= box_width
                 expected = _linear_fit(start, fits)
-                actual = tools._fit_font_size(start, fits)
+                actual = image_label._fit_font_size(start, fits)
                 checked += 1
                 if increasing:
                     assert actual == expected, (text[:20], start, box_width)
@@ -428,7 +431,7 @@ def test_label_node_fits_text_like_the_old_linear_search_and_loads_each_font_onc
         font_name="default", overlay_on_image=False, align="left", padding_x=10, outline_width=1,
         outline_color_hex="#000000",
     )
-    node = tools.NH_ImageLabel()
+    node = image_label.NH_ImageLabel()
     fitted, = node.add_label(image, text, font_size=120, fit_text=True, **settings)
     loads_when_fitting = len(scalable_font)
 
@@ -436,7 +439,7 @@ def test_label_node_fits_text_like_the_old_linear_search_and_loads_each_font_onc
     draw = ImageDraw.Draw(Image.new("RGB", (8, 8)))
 
     def fits(size):
-        box = draw.multiline_textbbox((0, 0), text, font=tools._load_font("default", size), stroke_width=1)
+        box = draw.multiline_textbbox((0, 0), text, font=image_label._load_font("default", size), stroke_width=1)
         return box[2] - box[0] <= 600 - 2 * 10
 
     expected = _linear_fit(120, fits)
@@ -448,8 +451,8 @@ def test_label_node_fits_text_like_the_old_linear_search_and_loads_each_font_onc
 
 
 def test_load_font_returns_the_cached_object(scalable_font):
-    assert tools._load_font("default", 24) is tools._load_font("default", 24)
-    assert tools._load_font("default", 24) is not tools._load_font("default", 25)
+    assert image_label._load_font("default", 24) is image_label._load_font("default", 24)
+    assert image_label._load_font("default", 24) is not image_label._load_font("default", 25)
     assert len(scalable_font) == 2
 
 
@@ -463,16 +466,16 @@ def test_missing_fonts_fall_back_to_the_default_font_and_the_failure_is_remember
             raise OSError("cannot open resource")
         return real_truetype(font, *args, **kwargs)
 
-    tools._cached_truetype.cache_clear()
-    monkeypatch.setattr(tools.ImageFont, "truetype", truetype_without_system_fonts)
+    image_label._cached_truetype.cache_clear()
+    monkeypatch.setattr(image_label.ImageFont, "truetype", truetype_without_system_fonts)
     try:
         for name in ("no-such-font.ttf", "default", "default"):
-            font = tools._load_font(name, 20)
+            font = image_label._load_font(name, 20)
             assert font.getbbox("Hello")[2] > 0
         assert len(attempts) == 1  # arial.ttf is tried once per size, not once per label
     finally:
         monkeypatch.undo()
-        tools._cached_truetype.cache_clear()
+        image_label._cached_truetype.cache_clear()
 
 
 # --- 6. Remove Resize Padding must not stretch cropped results ---
@@ -1016,6 +1019,7 @@ def layer_stack_js_result(tmp_path_factory):
     assert JS_IMPORT in source, "the extension no longer imports app.js the way this test expects"
     work = tmp_path_factory.mktemp("layer_stack_js")
     (work / "extension.mjs").write_text(source.replace(JS_IMPORT, "const app = globalThis.__app;"), encoding="utf-8")
+    shutil.copy(PACK_DIR / "web" / "nh_widget_utils.js", work / "nh_widget_utils.js")  # the extension imports it
     (work / "harness.mjs").write_text(JS_HARNESS, encoding="utf-8")
     run = subprocess.run(
         [node, str(work / "harness.mjs"), str(work / "extension.mjs")],

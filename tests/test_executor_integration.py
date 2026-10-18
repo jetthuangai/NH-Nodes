@@ -26,7 +26,7 @@ import nodes as comfy_nodes
 
 logic_nodes = importlib.import_module("NH-Nodes.nodes.logic.logic_nodes")
 math_nodes = importlib.import_module("NH-Nodes.nodes.logic.math_nodes")
-tools = importlib.import_module("NH-Nodes.nodes.image.image_tools_nodes")
+folder_loaders = importlib.import_module("NH-Nodes.nodes.image.folder_loaders")
 loader_nodes = importlib.import_module("NH-Nodes.nodes.loaders.loader_index_nodes")
 
 # The node only reads the names in the source path, never the folder, so the tests use one that does not exist.
@@ -117,7 +117,7 @@ STUBS = {
     "NH_AnySwitchBoolean": logic_nodes.NH_AnySwitchBoolean,
     "NH_RandomChoice": math_nodes.NH_RandomChoice,
     "NH_MathEval": math_nodes.NH_MathEval,
-    "NH_LoadImagesMatching": tools.NH_LoadImagesMatching,
+    "NH_LoadImagesMatching": folder_loaders.NH_LoadImagesMatching,
     "NH_DiffusionModelIndex": loader_nodes.NH_DiffusionModelIndex,
 }
 

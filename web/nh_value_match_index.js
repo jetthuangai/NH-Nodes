@@ -1,44 +1,11 @@
 import { app } from "../../../scripts/app.js";
+import { chainCallback, clampInt, findWidget, hideWidget, refreshNode, showWidget } from "./nh_widget_utils.js";
 
 const NODE_NAME = "NH_ValueMatchIndex";
 const MAX_VALUES = 64;
 
-function findWidget(node, name) {
-    return node.widgets?.find((widget) => widget.name === name);
-}
-
-function toInt(value, fallback) {
-    const parsed = Number.parseInt(value, 10);
-    return Number.isFinite(parsed) ? parsed : fallback;
-}
-
 function clampValueCount(value) {
-    return Math.max(1, Math.min(MAX_VALUES, toInt(value, 5)));
-}
-
-function hideWidget(widget) {
-    if (!widget || widget.__nhValueMatchHidden) {
-        return;
-    }
-
-    widget.__nhValueMatchHidden = true;
-    widget.__nhValueMatchType = widget.type;
-    widget.__nhValueMatchComputeSize = widget.computeSize;
-    widget.computeSize = () => [0, -4];
-    widget.type = "nh-hidden";
-}
-
-function showWidget(widget) {
-    if (!widget || !widget.__nhValueMatchHidden) {
-        return;
-    }
-
-    widget.type = widget.__nhValueMatchType;
-    widget.computeSize = widget.__nhValueMatchComputeSize;
-
-    delete widget.__nhValueMatchHidden;
-    delete widget.__nhValueMatchType;
-    delete widget.__nhValueMatchComputeSize;
+    return clampInt(value, 1, MAX_VALUES, 5);
 }
 
 function updateValueWidgets(node) {
@@ -58,9 +25,7 @@ function updateValueWidgets(node) {
         }
     }
 
-    node.setSize?.(node.computeSize?.() || node.size);
-    node.setDirtyCanvas?.(true, true);
-    app.graph?.setDirtyCanvas?.(true, true);
+    refreshNode(node, app.graph);
 }
 
 function installValueMatchControls(node) {
@@ -76,11 +41,7 @@ function installValueMatchControls(node) {
 
     const countWidget = findWidget(node, "value_count");
     if (countWidget) {
-        const oldCallback = countWidget.callback;
-        countWidget.callback = function () {
-            oldCallback?.apply(this, arguments);
-            updateValueWidgets(node);
-        };
+        chainCallback(countWidget, () => updateValueWidgets(node));
     }
 
     setTimeout(() => updateValueWidgets(node), 0);

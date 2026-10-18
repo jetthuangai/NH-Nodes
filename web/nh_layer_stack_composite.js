@@ -1,19 +1,11 @@
 import { app } from "../../../scripts/app.js";
+import { chainCallback, clampInt, findWidget, refreshNode, toInt } from "./nh_widget_utils.js";
 
 const NODE_NAME = "NH_LayerStackComposite";
 const MAX_LAYERS = 64;
 
-function findWidget(node, name) {
-    return node.widgets?.find((widget) => widget.name === name);
-}
-
-function toInt(value, fallback) {
-    const parsed = Number.parseInt(value, 10);
-    return Number.isFinite(parsed) ? parsed : fallback;
-}
-
 function clampLayerCount(value) {
-    return Math.max(0, Math.min(MAX_LAYERS, toInt(value, 1)));
+    return clampInt(value, 0, MAX_LAYERS, 1);
 }
 
 function findInputIndex(node, name) {
@@ -120,9 +112,7 @@ function updateLayerInputs(node) {
     addMissingLayerInputs(node, count);
     sortLayerInputs(node);
 
-    node.setSize?.(node.computeSize?.() || node.size);
-    node.setDirtyCanvas?.(true, true);
-    app.graph?.setDirtyCanvas?.(true, true);
+    refreshNode(node, app.graph);
 }
 
 function installLayerStackControls(node) {
@@ -138,11 +128,7 @@ function installLayerStackControls(node) {
 
     const layerCountWidget = findWidget(node, "layer_count");
     if (layerCountWidget) {
-        const oldCallback = layerCountWidget.callback;
-        layerCountWidget.callback = function () {
-            oldCallback?.apply(this, arguments);
-            updateLayerInputs(node);
-        };
+        chainCallback(layerCountWidget, () => updateLayerInputs(node));
     }
 
     setTimeout(() => updateLayerInputs(node), 0);

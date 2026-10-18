@@ -4,10 +4,10 @@ import json
 import os
 
 import folder_paths
-import numpy as np
 from comfy.cli_args import args
-from PIL import Image
 from PIL.PngImagePlugin import PngInfo
+
+from ...core.utils import tensor_to_pil
 
 # Cạnh dài nhất (px) mà từng định dạng ghi được; PNG/TIFF không bị giới hạn trong thực tế.
 # JPEG: spec cho tới 65535 nhưng libjpeg (Pillow) từ chối > 65500 (JPEG_MAX_DIMENSION).
@@ -32,14 +32,6 @@ def _extension_for_save_format(file_format):
     if file_format in {"tif", "tiff"}:
         return "tiff"
     return "png"
-
-
-def _tensor_to_pil(image_tensor):
-    array = image_tensor.detach().cpu().numpy()
-    array = np.clip(array * 255.0, 0, 255).astype(np.uint8)
-    if array.ndim == 3 and array.shape[-1] == 4:
-        return Image.fromarray(array).convert("RGBA")
-    return Image.fromarray(array).convert("RGB")
 
 
 def _metadata_pnginfo(prompt=None, extra_pnginfo=None):
@@ -116,7 +108,7 @@ class NH_SaveLargeImage:
             filename_with_batch_num = filename.replace("%batch_num%", str(batch_number))
             file_name = f"{filename_with_batch_num}_{counter:05}_.{extension}"
             file_path = os.path.join(full_output_folder, file_name)
-            pil_image = _tensor_to_pil(image_tensor)
+            pil_image = tensor_to_pil(image_tensor, rgb=True, keep_alpha=True)
             _save_image(pil_image, file_path, extension, quality, embed_metadata, prompt, extra_pnginfo)
             saved_paths.append(file_path)
             counter += 1

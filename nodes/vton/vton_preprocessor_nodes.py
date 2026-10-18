@@ -7,7 +7,7 @@ import numpy as np
 from PIL import Image, ImageFilter
 import os
 import folder_paths
-from ...core.segformer_backend import download_pinned, make_room_on_gpu, register_model_folder
+from ...core.model_files import download_pinned, make_room_on_gpu, register_model_folder
 from ...core.utils import resize_image, tensor_to_pil, pil_to_tensor, pil_to_mask
 
 # onnxruntime (via preprocess/) and scikit-image (via utils_mask) are imported
@@ -298,7 +298,8 @@ class NH_VTonUltimateProcessor:
         masked_image = Image.composite(final_mask_for_composite.convert("L"), human_img_pil, final_mask_for_composite)
         
         pose_image_final = pose_image_pil.resize(human_img_pil.size, Image.LANCZOS)
-        parsing_map_colored_pil = Image.fromarray(parsing_map_full_np.astype(np.uint8), 'P')
+        # No fromarray(mode="P") (deprecated in Pillow 11.3): the uint8 map is read as "L", and putpalette turns it into "P".
+        parsing_map_colored_pil = Image.fromarray(parsing_map_full_np.astype(np.uint8))
         parsing_map_colored_pil.putpalette(LIP_PALETTE)
         
         parsing_map_raw_tensor = torch.from_numpy(parsing_map_full_np.astype(np.float32) / 19.0).unsqueeze(0)

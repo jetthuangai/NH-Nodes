@@ -1,7 +1,8 @@
 # Garment mask construction for VTON Ultimate Processor (NH).
 # Third-party code: FitDiT src/utils_mask.py (https://github.com/BoyuanJiang/FitDiT),
 # received via ComfyUI-Vton-Mask. License: CC BY-NC-SA 4.0 (non-commercial), not the
-# pack's MIT license. NH-Nodes changes: lint cleanups and bug fixes. See THIRD_PARTY_NOTICES.md.
+# pack's MIT license. NH-Nodes changes: lint cleanups, bug fixes and Image.fromarray calls without the mode
+# argument that Pillow 11.3 deprecated. See THIRD_PARTY_NOTICES.md.
 import numpy as np
 import cv2
 from PIL import Image, ImageDraw
@@ -125,8 +126,8 @@ def get_img_agnostic_upper_rectangle(im_parse, pose_data, offset_top, offset_bot
 
 
     agnostic_draw.rectangle((max(0, x1-pad_x1+offset_left), max(0, y1-pad_y1+offset_top), min(x2+pad_x2+offset_right, parse_array.shape[1]), min(y2+pad_y2+offset_bottom, parse_array.shape[0])), 'gray', 'gray')
-    agnostic.paste(img_black, None, Image.fromarray(np.uint8(parse_head * 255), 'L'))
-    # agnostic.paste(img_black, None, Image.fromarray(np.uint8(parse_fixed * 255), 'L'))
+    agnostic.paste(img_black, None, Image.fromarray(np.uint8(parse_head * 255)))
+    # agnostic.paste(img_black, None, Image.fromarray(np.uint8(parse_fixed * 255)))
 
     mask_gray = agnostic.copy()
     mask = agnostic.point(lambda p: p == 128 and 255)
@@ -213,8 +214,8 @@ def get_img_agnostic_lower_rectangle(im_parse, pose_data, offset_top, offset_bot
 
 
     agnostic_draw.rectangle((max(0, x1-pad_x1+offset_left), max(0, y1-pad_y1+offset_top), min(x2+pad_x2+offset_right, parse_array.shape[1]), min(y2+pad_y2+offset_bottom, parse_array.shape[0])), 'gray', 'gray')
-    agnostic.paste(img_black, None, Image.fromarray(np.uint8(parse_head * 255), 'L'))
-    agnostic.paste(img_black, None, Image.fromarray(np.uint8(parse_fixed * 255), 'L'))
+    agnostic.paste(img_black, None, Image.fromarray(np.uint8(parse_head * 255)))
+    agnostic.paste(img_black, None, Image.fromarray(np.uint8(parse_fixed * 255)))
 
     mask_gray = agnostic.copy()
     mask = agnostic.point(lambda p: p == 128 and 255)
@@ -305,9 +306,9 @@ def get_img_agnostic_dresses_rectangle(im_parse, pose_data, offset_top, offset_b
 
 
     agnostic_draw.rectangle((max(0, x1-pad_x1+offset_left), max(0, y1-pad_y1+offset_top), min(x2+pad_x2+offset_right, parse_array.shape[1]), min(y2+pad_y2+offset_bottom, parse_array.shape[0])), 'gray', 'gray')
-    agnostic.paste(img_black, None, Image.fromarray(np.uint8(parse_head * 255), 'L'))
-    agnostic.paste(img_black, None, Image.fromarray(np.uint8(parse_shoes * 255), 'L'))
-    agnostic.paste(img_black, None, Image.fromarray(np.uint8(parse_fixed * 255), 'L'))
+    agnostic.paste(img_black, None, Image.fromarray(np.uint8(parse_head * 255)))
+    agnostic.paste(img_black, None, Image.fromarray(np.uint8(parse_shoes * 255)))
+    agnostic.paste(img_black, None, Image.fromarray(np.uint8(parse_fixed * 255)))
 
     mask_gray = agnostic.copy()
     mask = agnostic.point(lambda p: p == 128 and 255)
