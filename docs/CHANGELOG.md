@@ -3,6 +3,11 @@
 All notable changes to NH-Nodes. Versions follow the Comfy Registry releases.
 "Behaviour change" marks fixes that can change the output of an existing workflow.
 
+## 1.7.1 — SAM3 Segment with other SAM 3 packs installed (2026-10-18)
+
+### Fixed
+- `SAM3 Segment (NH)` failed with `FileNotFoundError: ...bpe_simple_vocab_16e6.txt.gz` when another pack's bundled copy of `sam3` was imported first. ComfyUI-RMBG puts its copy ahead of the installed package, and that copy looks for its tokenizer vocabulary one folder too high when it is not told where it is. NH-Nodes now always finds the vocabulary inside the `sam3` package that was actually imported and passes it, so the node works with Meta's package and with the copies that SAM 3 packs bundle.
+
 ## 1.7.0 — SAM 3 segmentation and instance nodes (2026-10-18)
 
 ### Added
