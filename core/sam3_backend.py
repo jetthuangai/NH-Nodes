@@ -24,6 +24,7 @@ import inspect
 import itertools
 import math
 import os
+import sys
 
 import cv2
 import numpy as np
@@ -48,6 +49,7 @@ FOLDER_NAME = "sam3"  # shared with the other SAM 3 packs
 FOLDER_EXTENSIONS = (".pt", ".pth", ".safetensors")
 CHECKPOINT_EXTENSIONS = (".pt", ".pth")  # what sam3's own loader reads (torch.load)
 DEFAULT_CHECKPOINT = "sam3.pt"
+BPE_FILE = "bpe_simple_vocab_16e6.txt.gz"  # sam3's tokenizer vocabulary, in the package's assets folder
 DETAIL_LEVELS = ("balanced", "fast")
 
 SAM3_COMMIT = "b26a5f330e05d321afb39d01d3d4881f258f65ff"  # the sam3 build NH-Nodes is tested with
@@ -197,7 +199,7 @@ def ensure_sam3():
         missing.append("build_sam3_image_model")
     else:
         missing += [f"build_sam3_image_model({name}=)" for name in _missing_parameters(
-            build, ("checkpoint_path", "load_from_HF", "enable_inst_interactivity", "device", "eval_mode"))]
+            build, ("bpe_path", "checkpoint_path", "load_from_HF", "enable_inst_interactivity", "device", "eval_mode"))]
     if processor_cls is None:
         missing.append("Sam3Processor")
     else:
@@ -226,6 +228,24 @@ def sam3_device():
             "builds part of the model on the GPU."
         )
     return device
+
+
+def bpe_path():
+    """The tokenizer vocabulary inside the sam3 package that was imported, whichever copy that is.
+
+    Other packs bundle their own copy of sam3 and may put it first on sys.path (ComfyUI-RMBG does), so "sam3" is not
+    always Meta's install. Such a copy can look for the vocabulary in the wrong folder when it is not given one
+    (ComfyUI-RMBG's looks one level too high), so NH-Nodes always finds it here and passes it.
+    """
+    package = sys.modules.get("sam3") or importlib.import_module("sam3")
+    folders = [os.path.dirname(package.__file__)] if getattr(package, "__file__", None) else []
+    folders += [folder for folder in getattr(package, "__path__", []) if folder not in folders]
+    for folder in folders:
+        for candidate in (os.path.join(folder, "assets", BPE_FILE), os.path.join(folder, os.pardir, "assets", BPE_FILE)):
+            if os.path.isfile(candidate):
+                return os.path.normpath(candidate)
+    where = folders[0] if folders else "its folder"
+    raise RuntimeError(f"[NH-Nodes] The sam3 package in {where} has no assets/{BPE_FILE}; reinstall it:\n{INSTALL_HINT}")
 
 
 def check_checkpoint(path):
@@ -262,8 +282,8 @@ def load_model(checkpoint):
     check_checkpoint(path)
     print(f"[NH-Nodes] Loading SAM 3 from {path}")
     with torch.cuda.device(device):  # the tables sam3 builds on "cuda" go to ComfyUI's GPU
-        model = build(checkpoint_path=path, load_from_HF=False, enable_inst_interactivity=True,
-                      device="cpu", eval_mode=True)
+        model = build(bpe_path=bpe_path(), checkpoint_path=path, load_from_HF=False,
+                      enable_inst_interactivity=True, device="cpu", eval_mode=True)
     if not callable(getattr(model, "predict_inst", None)) or getattr(model, "inst_interactive_predictor", None) is None:
         raise RuntimeError("[NH-Nodes] This sam3 build has no box-prompt decoder (predict_inst). " + INSTALL_HINT)
     transforms = getattr(model.inst_interactive_predictor, "_transforms", None)

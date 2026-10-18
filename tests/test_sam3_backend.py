@@ -257,8 +257,8 @@ def _install_fake_sam3(monkeypatch, build=None, processor=None, fail=None, flip_
     monkeypatch.setattr(backend.importlib, "import_module", import_module)
 
 
-def _good_build(checkpoint_path=None, load_from_HF=True, enable_inst_interactivity=False, device="cuda",
-                eval_mode=True):
+def _good_build(bpe_path=None, checkpoint_path=None, load_from_HF=True, enable_inst_interactivity=False,
+                device="cuda", eval_mode=True):
     return None
 
 
@@ -424,11 +424,13 @@ def test_load_model_builds_once_and_keeps_real_holes(monkeypatch, tmp_path):
     monkeypatch.setattr(backend, "ensure_sam3", lambda: (build, None))
     monkeypatch.setattr(backend, "sam3_device", lambda: torch.device("cpu"))
     monkeypatch.setattr(backend, "check_checkpoint", lambda p: None)
+    monkeypatch.setattr(backend, "bpe_path", lambda: "vocab.txt.gz")
     monkeypatch.setattr(backend.torch.cuda, "device", lambda device: contextlib.nullcontext())
     model = backend.load_model("sam3.pt")
     assert backend.load_model("sam3.pt") is model and len(builds) == 1
     assert builds[0]["enable_inst_interactivity"] is True and builds[0]["load_from_HF"] is False
     assert builds[0]["device"] == "cpu" and builds[0]["checkpoint_path"] == str(path)
+    assert builds[0]["bpe_path"] == "vocab.txt.gz"  # always passed: bundled copies of sam3 look in the wrong place
     assert model.inst_interactive_predictor._transforms.max_hole_area == 0.0
     assert not any(p.requires_grad for p in model.parameters())
 
@@ -497,3 +499,28 @@ def test_one_and_four_channel_images_become_rgb():
     assert torch.equal(backend._image_chw(rgba), rgba[..., :3].permute(2, 0, 1))
     with pytest.raises(ValueError, match="1, 3 or 4 channels"):
         backend._image_chw(torch.rand(6, 8, 2))
+
+
+def _fake_sam3_package(monkeypatch, folder):
+    folder.mkdir(parents=True, exist_ok=True)
+    (folder / "__init__.py").write_text("")
+    monkeypatch.setitem(sys.modules, "sam3", types.SimpleNamespace(__file__=str(folder / "__init__.py"),
+                                                                    __path__=[str(folder)]))
+
+
+def test_bpe_path_is_found_in_the_imported_sam3_copy(monkeypatch, tmp_path):
+    # ComfyUI-RMBG's layout: <pack>/models/sam3/assets/<vocab>, and its builder wrongly looks in <pack>/models/assets
+    package = tmp_path / "ComfyUI-RMBG" / "models" / "sam3"
+    _fake_sam3_package(monkeypatch, package)
+    with pytest.raises(RuntimeError, match="has no assets/bpe_simple_vocab_16e6.txt.gz"):
+        backend.bpe_path()
+    (package / "assets").mkdir()
+    (package / "assets" / backend.BPE_FILE).write_bytes(b"x")
+    assert backend.bpe_path() == os.path.normpath(str(package / "assets" / backend.BPE_FILE))
+
+
+def test_bpe_path_also_accepts_assets_next_to_the_package(monkeypatch, tmp_path):
+    _fake_sam3_package(monkeypatch, tmp_path / "lib" / "sam3")
+    (tmp_path / "lib" / "assets").mkdir()
+    (tmp_path / "lib" / "assets" / backend.BPE_FILE).write_bytes(b"x")
+    assert backend.bpe_path() == os.path.normpath(str(tmp_path / "lib" / "assets" / backend.BPE_FILE))
