@@ -1,7 +1,7 @@
 [project]
 name = "nh-nodes"
-description = "ComfyUI custom nodes for image workflows, tiling, masks, smart resize, logic routing, prompt and text tools, batch automation, SAM 3 object segmentation from mask formulas (Vietnamese words too), instance selection, close-up garment/portrait parsing, and VTON preprocessing."
-version = "1.8.0"
+description = "ComfyUI custom nodes for image workflows, tiling, masks, smart resize, logic routing, prompt and text tools, batch automation, SAM 3 object segmentation from mask formulas (Vietnamese words too), instance selection, close-up garment/portrait parsing, body-part masks by name (Sapiens2), and VTON preprocessing."
+version = "1.9.0"
 license = { file = "LICENSE" }
 dependencies = [
     "numpy",
