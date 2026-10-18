@@ -89,8 +89,8 @@ def _changed(**overrides):
     return folder_loaders.NH_LoadImagesMatching.IS_CHANGED(**_args(**overrides))
 
 
-# The node only reads the names in the source path, never the folder, so tests use one that does not exist. It also
-# must not share leading folders with the matching tree: the context score counts shared path parts first.
+# The node only reads the names in the source path, never the folder, so tests use one that does not exist (shared
+# parent folders with the matching tree no longer matter, see tests/test_folder_matching_context.py).
 SOURCES = Path(os.path.abspath(os.sep)) / "nh_nodes_test_source_photos"
 
 
