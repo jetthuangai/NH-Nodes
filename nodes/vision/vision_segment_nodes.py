@@ -106,7 +106,7 @@ PORTRAIT_SEGS = {"skin": {1}, "nose": {2}, "glasses": {3}, "eyes": {4, 5}, "eyeb
 add_aliases("fashn_human_parser", FASHN_PARTS, FASHN_SEGS)
 add_aliases("segformer_fashion", {**GARMENT_GROUPS, "all_garments": set().union(*GARMENT_GROUPS.values()),
                                   **FASHIONPEDIA_EXTRA}, FASHIONPEDIA_SEGS)
-add_aliases("face_parsing", PORTRAIT_REGIONS, PORTRAIT_SEGS)
+add_aliases("face_parsing", {**PORTRAIT_REGIONS, "face skin": {1}}, PORTRAIT_SEGS)
 
 # ---------------------------------------------------------------------------
 # Mask helpers (pure numpy/cv2, unit-testable without a model)
@@ -451,7 +451,7 @@ class NH_GarmentSegment:
             "optional": {
                 "model": (list(GARMENT_MODELS), {
                     "default": "fashn",
-                    "tooltip": "fashn: FASHN Human Parser (2025), clean tops, dresses, skirts, pants, bags, hats, "
+                    "tooltip": "fashn: FASHN Human Parser, clean tops, dresses, skirts, pants, bags, hats, "
                                "scarves, glasses and jewelry, 256 MB. fashionpedia: the model of 1.8.0 and before, "
                                "with shoes, socks, headbands and small parts (sleeves, collars, pockets) in segs. Both "
                                "are built on NVIDIA's SegFormer, whose licence allows non-commercial use only "

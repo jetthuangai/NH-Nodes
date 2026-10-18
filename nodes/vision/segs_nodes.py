@@ -142,8 +142,9 @@ class NH_SegsCompose:
                                  f"{' and '.join(repr(part) for part in parts)} are. To subtract, put spaces around "
                                  f"the minus: {' - '.join(parts)}")
         if unmatched:
+            held = sorted({seg.label for frame in segs for seg in frame.segments})
             print(f"[NH-Nodes] Segs Compose: no instance is labelled {', '.join(repr(p) for p in unmatched)}; "
-                  "those parts are empty")
+                  f"those parts are empty. The segs hold: {', '.join(held) or 'nothing'}")
         return (expression_masks(tree, segs),)
 
 

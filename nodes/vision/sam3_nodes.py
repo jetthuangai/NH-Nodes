@@ -13,7 +13,7 @@ from ...core.segs import (
     describe_request,
     expression_labels,
     expression_masks,
-    normalize_label,
+    fold_label,
     parse_concepts,
     preview_picture,
     stamped,
@@ -43,8 +43,8 @@ def concepts_to_find(tree):
         if any(ch in label for ch in "*?["):
             raise ValueError(f"[NH-Nodes] SAM3 Segment: '{label}' has a wildcard; SAM 3 needs plain words (wildcards "
                              "work in Segs Select and Segs Compose).")
-        if normalize_label(label) not in seen:
-            seen.add(normalize_label(label))
+        if fold_label(label) not in seen:  # "arm, arms" is one search
+            seen.add(fold_label(label))
             names.append(label)
     added = []
     if uses_keyword(tree, "background") and "person" not in seen:

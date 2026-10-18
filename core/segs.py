@@ -149,10 +149,8 @@ def picture_print(image):
     pixels = image.detach().cpu().float().numpy() if torch.is_tensor(image) else np.asarray(image)
     if pixels.dtype not in (np.uint8, np.uint16, np.float32):
         pixels = pixels.astype(np.float32)  # cv2 has no half precision
-    if pixels.dtype == np.float32 and not np.isfinite(pixels).all():
-        pixels = np.nan_to_num(pixels, nan=0.0, posinf=1.0, neginf=0.0)
     small = cv2.resize(np.ascontiguousarray(pixels), (PRINT_SIDE, PRINT_SIDE), interpolation=cv2.INTER_AREA)
-    small = small.astype(np.float32)
+    small = np.nan_to_num(small.astype(np.float32), nan=0.0, posinf=1.0, neginf=0.0)  # a broken pixel, not a photo
     return small[..., :3].mean(axis=2) if small.ndim == 3 else small
 
 
@@ -208,9 +206,13 @@ def normalize_label(text):
     return " ".join(str(text).replace("_", " ").lower().split())
 
 
-# Plurals of the words the vision nodes use that the usual rules miss (see _singular)
+# Plurals the usual rules miss (see _singular), and "glasses" kept apart from a drinking glass
 _IRREGULAR = {"feet": "foot", "teeth": "tooth", "people": "person", "children": "child", "men": "man",
-              "women": "woman", "mice": "mouse", "geese": "goose"}
+              "women": "woman", "mice": "mouse", "geese": "goose",
+              "leaves": "leaf", "knives": "knife", "shelves": "shelf", "calves": "calf", "halves": "half",
+              "scarves": "scarf", "wolves": "wolf", "wives": "wife", "loaves": "loaf", "thieves": "thief",
+              "hoodies": "hoodie", "movies": "movie", "cookies": "cookie", "selfies": "selfie", "brownies": "brownie",
+              "zombies": "zombie", "pies": "pie", "ties": "tie", "glasses": "glasses"}
 
 
 def _singular(word):
@@ -245,22 +247,34 @@ _ALIASES = {}  # (source of the instances, folded word) -> folded labels of that
 
 def add_aliases(source, words, parts):
     """Let a node's own words (word -> class ids) name the parts of the segs it makes (part label -> class ids, with
-    ``source``): a word stands for the parts whose classes it covers, wherever no instance carries the word itself.
-    So Segs Compose and Segs Select read "skin" on Body Segment's segs as its face, torso, arms... parts."""
+    ``source``): a word stands for the parts whose classes it covers. So Segs Compose and Segs Select read "skin" on
+    Body Segment's segs as its face, torso, arms... parts. A word that is the name of one of the node's parts is left
+    out: the part keeps its name, whatever else a picture holds."""
+    named = {fold_label(part) for part in parts}
     for word, ids in words.items():
         labels = frozenset(fold_label(part) for part, part_ids in parts.items() if part_ids and set(part_ids) <= set(ids))
-        if labels:
+        if labels and fold_label(word) not in named:
             _ALIASES[(source, fold_label(word))] = labels
 
 
-def matching(segments, pattern):
-    """The instances a label pattern names: those carrying it (see label_matches), or when none does, the parts the
-    pattern stands for in the words of the node that made them (see add_aliases)."""
-    found = [seg for seg in segments if label_matches(seg.label, pattern)]
-    if found or any(ch in str(pattern) for ch in "*?["):
-        return found
-    word = fold_label(pattern)
-    return [seg for seg in segments if fold_label(seg.label) in _ALIASES.get((seg.source, word), ())]
+def matching(segments, pattern, written=None):
+    """The instances a label pattern names, node by node (the instances one source made): that node's instances
+    carrying the label (see label_matches), or when none does, the parts the pattern stands for among that node's own
+    words (see add_aliases). ``written`` is the Vietnamese word the pattern was translated from, which a node may read
+    its own way (Body Segment's "tay" is the arm with the hand, not the arm alone)."""
+    if any(ch in str(pattern) for ch in "*?["):
+        return [seg for seg in segments if label_matches(seg.label, pattern)]
+    word, said = fold_label(pattern), fold_label(written) if written else None
+    kept = set()
+    for source in dict.fromkeys(seg.source for seg in segments):
+        own = [seg for seg in segments if seg.source == source]
+        parts = _ALIASES.get((source, said)) if said else None
+        hits = [] if parts else [seg for seg in own if label_matches(seg.label, pattern)]
+        if not hits:
+            parts = parts or _ALIASES.get((source, word), ())
+            hits = [seg for seg in own if fold_label(seg.label) in parts]
+        kept.update(id(seg) for seg in hits)
+    return [seg for seg in segments if id(seg) in kept]
 
 
 def parse_label_list(text):
@@ -575,7 +589,7 @@ def evaluate(tree, frame):
     """
     kind = tree[0]
     if kind == "label":
-        return frame_mask(frame, matching(frame.segments, tree[1]))
+        return frame_mask(frame, matching(frame.segments, tree[1], tree[2] if tree[3] == "translated" else None))
     if kind == "keyword":
         if tree[1] == "all":
             return frame_mask(frame)
@@ -793,7 +807,7 @@ def describe_request(tree, segs, threshold=None, misses=None, added=()):
     instances = [seg for frame in segs for seg in frame.segments]
     lines, seen = [], set()
     for written, english, status in expression_terms(tree):
-        key = (status == "keyword", normalize_label(english))
+        key = (status == "keyword", fold_label(english))
         if key in seen:
             continue
         seen.add(key)
