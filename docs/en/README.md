@@ -4,12 +4,16 @@
 
 # NH-Nodes guide
 
-NH-Nodes adds **69 nodes** to ComfyUI for photo and production work: loading and saving image sets, tiling and compositing,
-resolution management for current models, mask tools, garment and portrait segmentation, VTON masks, logic routing,
-prompt and text tools, batch helpers and indexed model loaders.
+NH-Nodes adds **75 nodes** to ComfyUI for photo and production work: loading and saving image sets, tiling and compositing,
+resolution management for current models, mask tools, garment and portrait segmentation, SAM 3 instance masks for
+anything you can name, VTON masks, logic routing, prompt and text tools, batch helpers and indexed model loaders.
 
 This guide explains every node — what it is for, each input and output, and how it behaves in the details that matter.
 Installation and a quick start are on the [project page](../../README.md#installation).
+
+> **Requirements for SAM 3:** SAM3 Segment needs an NVIDIA GPU with CUDA, Meta's `sam3` package and the `sam3.pt`
+> checkpoint, which you install and download yourself. Every other node works without them. Setup:
+> [Before you start with SAM 3](vision.md#before-you-start-with-sam-3).
 
 ## Reading a node card
 
@@ -20,7 +24,7 @@ Every node section starts with a card drawn from the node's real definition:
 - **Title bar** — the display name, then the node id (type it in the node search) and its menu group under `NH-Nodes`.
 - **Dots on the left** are inputs you connect, **dots on the right** are outputs. The colour shows the data type:
   IMAGE blue, MASK green, LATENT pink, MODEL purple, CLIP yellow, VAE red, numbers (INT, FLOAT) light blue,
-  text (STRING) light green, BOOLEAN rose, any type (`*`) grey, and NH-specific data (tile data, resize data…) amber.
+  text (STRING) light green, BOOLEAN rose, any type (`*`) grey, and NH-specific data (tile data, resize data, instances…) amber.
 - **Rounded rows** are widgets with their default value. `opt` marks an optional input; `≡` after an output means it
   returns a list.
 - A **green** dot in the title is an ordinary node; **orange** marks an output node, which runs even when nothing is
@@ -36,7 +40,7 @@ Every node section starts with a card drawn from the node's real definition:
 | Image — mask-based retouch | [image-retouch](image-retouch.md) | NH Mask-Aware Resize · NH Agnostic Image Generator · NH Simple Face Paste |
 | Resolution | [resolution](resolution.md) | NH Smart Resolution Picker · NH Smart Ratio Image Resize · NH Ratio Preset Image Resize · NH Remove Resize Padding · NH Restore Image Geometry |
 | Mask | [mask](mask.md) | Mask Morphology · Mask Properties · NH Create Box Mask · NH Mask Aspect Ratio Match |
-| Vision | [vision](vision.md) | Garment Segment · Portrait Segment |
+| Vision | [vision](vision.md) | Garment Segment · Portrait Segment · SAM3 Segment · Segs Select · Segs Compose · Segs To Masks · Segs To Impact SEGS · Segs Preview |
 | VTON | [vton](vton.md) | VTON Ultimate Processor |
 | Logic | [logic](logic.md) | Compare · Logic Gate · If/Else · Switch N · Any Switch · Any Branch Switch · Gate Switch · Value Match Index · Math Eval · Random Choice |
 | Text | [text](text.md) | Prompt Template · Prompt Scheduler · String Operations · Prompt Join · Text Split · Regex Extract · Text Index · Text Concatenate · Text Split Lines · Text Random Line |
@@ -58,13 +62,17 @@ Every node section starts with a card drawn from the node's real definition:
   [image-io](image-io.md#paths-and-file-types).
 - **Resize data.** The resolution nodes return a `resize_data` record of how an image was cropped or padded, so a result
   can be put back into the original frame with [NH Restore Image Geometry](resolution.md#nh-restore-image-geometry).
+- **Instances.** SAM3 Segment returns every thing it finds as its own instance, with a label, a score and a mask, in an
+  `NH_SEGS` value. The Segs nodes pick instances, combine them with a formula and turn them into masks; see
+  [Instances: the NH_SEGS type](vision.md#instances-the-nh_segs-type).
 - **Licences.** All nodes are MIT except the parts listed in [THIRD_PARTY_NOTICES](../../THIRD_PARTY_NOTICES.md):
   VTON Ultimate Processor and Portrait Segment are for **non-commercial** use, and Garment Segment's model declares no
-  licence.
+  licence. SAM3 Segment uses Meta's SAM 3 under the SAM License, which has no non-commercial clause but bars military,
+  nuclear, espionage, and gun or illegal-weapon uses; you install the package and download the checkpoint yourself.
 
 ## More
 
 - [Changelog](../CHANGELOG.md) — what changed in each release, including behaviour changes.
 - [Logic gate diagram](../logic_gate_diagram.html) — a visual truth-table sheet for the Logic Gate node (download and open
   it in a browser).
-- [Third-party notices](../../THIRD_PARTY_NOTICES.md) — licences of bundled code and downloaded models.
+- [Third-party notices](../../THIRD_PARTY_NOTICES.md) — licences of bundled code, downloaded models and SAM 3.

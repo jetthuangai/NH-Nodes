@@ -3,6 +3,30 @@
 All notable changes to NH-Nodes. Versions follow the Comfy Registry releases.
 "Behaviour change" marks fixes that can change the output of an existing workflow.
 
+## 1.7.0 — SAM 3 segmentation and instance nodes (2026-10-18)
+
+### Added
+Six nodes under **NH-Nodes → Vision** (75 nodes in total) and a new data type, `NH_SEGS`. Nothing in the existing nodes changes.
+- `SAM3 Segment (NH)`: finds every instance of the concepts you name (short English noun phrases, one per line or separated by commas) with Meta's SAM 3. Outputs the instances (`segs`), their union `mask` and the `count`; `Segs Preview (NH)` shows what it found. `detail_level` `balanced` (default) segments each instance a second time on a close-up cut from the full-resolution image, so small and medium objects get crisp edges even on 4K to 8K photos; `fast` keeps the whole-image pass only. Other inputs: `threshold`, `max_per_concept`, `checkpoint` and `keep_model_loaded`.
+- `NH_SEGS`: for every image of a batch, a list of instances with a label, a score, a tight box and the mask inside that box only, so dozens of instances on an 8K photo stay light. Full-size masks are built only when a node outputs a `MASK`.
+- `Segs Select (NH)`: keeps instances by label (`*` and `?` wildcards), score and size, sorts them (score, area, position, centre first, as found) and takes a slice, for example the second person from the left.
+- `Segs Compose (NH)`: one mask from a formula over labels: `|` `+` `or` (union), `-` (minus), `&` `and` (overlap), `~` `!` `not` (everything except), parentheses, and `all`, `image`, `none`. `~person` is the background, `(wall | ceiling) - window` the walls without the windows. A hyphen inside a word belongs to the label (`t-shirt` needs no quotes), so put spaces around a minus: `person - hair`.
+- `Segs To Masks (NH)`: one mask per instance, the union per image, the labels and the count. It stops with a message when the masks would need more than about half of the free RAM, for example hundreds of instances on an 8K photo.
+- `Segs To Impact SEGS (NH)`: Impact Pack's `SEGS` for one image of the batch (`crop_factor` 3.0 like Impact Pack). Impact Pack is not needed for anything else in NH-Nodes.
+- `Segs Preview (NH)`: draws the instances (tint, outline, label and score) on the picture they were found in.
+
+### Notes
+- SAM3 Segment needs an NVIDIA GPU with CUDA: the official sam3 code builds part of the model on the GPU, so there is no CPU mode.
+- NH-Nodes does not install or download anything for it. You install Meta's `sam3` package yourself (the Vision guide gives the command, pinned to the commit NH-Nodes was tested with; newer commits with the same image API also work), and the weights are gated on Hugging Face: request access, accept Meta's SAM License and put `sam3.pt` in `models/sam3` (or a folder registered as `sam3` in `extra_model_paths.yaml`). The folder is shared with other SAM 3 packs, so an existing copy is found. The licence is in `THIRD_PARTY_NOTICES.md`.
+- The model stays in system memory between runs and moves to the GPU only while the node runs, unless `keep_model_loaded` is on.
+- `detail_level` has two levels for now, `balanced` and `fast`.
+- SAM 3 describes whatever it looks at on a grid of about 288 cells. A subject that fills most of an 8K frame therefore gets edges at about 1/300 of its size: fine for the outline of a person, soft on hair, lace and fur. Hair-level edges are not part of this release.
+- SAM 3 first sees the whole picture squeezed into a square, so on a picture wider or taller than 4:1 it can miss small things. The console says so; split such a picture into tiles with `Image Tile (NH)`.
+- A file in the `sam3` folder that is not a SAM 3 checkpoint, or an incomplete download, is refused with the download advice before anything runs.
+
+### Planned
+Not part of this release, and the names may change: scene parsing that labels the whole picture (sky, wall, floor…), automatic concept tagging with ready presets and a report, matte refinement for hair and fur edges (it will add a `max` detail level), and parsing of each person's parts.
+
 ## 1.6.2 — Load images matching picks the right group
 
 - `Load images matching` (behaviour change): when the source and the matching library share parent folders (for example

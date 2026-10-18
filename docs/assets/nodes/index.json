@@ -312,6 +312,12 @@
   "deprecated": false
  },
  {
+  "id": "NH_SAM3Segment",
+  "name": "SAM3 Segment (NH)",
+  "category": "NH-Nodes/Vision",
+  "deprecated": false
+ },
+ {
   "id": "NH_SaveImagePath",
   "name": "Save Image Path (NH)",
   "category": "NH-Nodes/Image",
@@ -321,6 +327,36 @@
   "id": "NH_SaveLargeImage",
   "name": "NH Save Large Image",
   "category": "NH-Nodes/Image",
+  "deprecated": false
+ },
+ {
+  "id": "NH_SegsCompose",
+  "name": "Segs Compose (NH)",
+  "category": "NH-Nodes/Vision",
+  "deprecated": false
+ },
+ {
+  "id": "NH_SegsPreview",
+  "name": "Segs Preview (NH)",
+  "category": "NH-Nodes/Vision",
+  "deprecated": false
+ },
+ {
+  "id": "NH_SegsSelect",
+  "name": "Segs Select (NH)",
+  "category": "NH-Nodes/Vision",
+  "deprecated": false
+ },
+ {
+  "id": "NH_SegsToImpactSEGS",
+  "name": "Segs To Impact SEGS (NH)",
+  "category": "NH-Nodes/Vision",
+  "deprecated": false
+ },
+ {
+  "id": "NH_SegsToMasks",
+  "name": "Segs To Masks (NH)",
+  "category": "NH-Nodes/Vision",
   "deprecated": false
  },
  {
