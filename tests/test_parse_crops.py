@@ -125,20 +125,39 @@ def test_people_labels_adds_people_found_by_their_faces():
 
 
 def test_a_crop_grows_when_its_people_run_past_a_cut_edge():
-    image = np.full((400, 400, 3), 200, np.uint8)
-    image[150:250, 100:300, 0] = 40
+    image = np.full((800, 800, 3), 200, np.uint8)
+    image[300:500, 200:600, 0] = 40
     shown = []
 
     def predict(picture):
         shown.append(picture.shape[:2])
         person = picture[..., 0] == 40
         if len(shown) == 1:
-            person[:, 160:] = False  # the first look sees only the left part
+            person[:, 320:] = False  # the first look sees only the left part
         return np.where(person, 5, 0).astype(np.int64), np.full(picture.shape[:2], 0.9, np.float16)
 
     labels = crops.people_labels(predict, image, 1.0)
     assert len(shown) >= 3 and shown[2][1] > shown[1][1]  # parsed again, wider
-    assert (labels[150:250, 100:300] == 5).mean() > 0.9
+    assert (labels[300:500, 200:600] == 5).mean() > 0.9
+
+
+def test_people_labels_leaves_regions_too_small_to_parse():
+    image = np.full((600, 900, 3), 200, np.uint8)
+    image[100:500, 100:300, 0] = 40  # a person
+    image[50:70, 700:730, 0] = 40  # a speck far from them: a crop of it would be blown up 20 times
+    shown = []
+
+    def predict(picture):
+        shown.append(picture.shape[:2])
+        labels = np.where(picture[..., 0] == 40, 5, 0).astype(np.int64)
+        if len(shown) == 1:
+            labels[50:70, 700:730] = 7  # what the first look made of the speck
+        return labels, np.full(picture.shape[:2], 0.9, np.float16)
+
+    labels = crops.people_labels(predict, image, 2 / 3)
+    assert len(shown) >= 2 and all(height >= crops.MIN_CROP for height, _ in shown[1:])
+    assert (labels[50:70, 700:730] == 7).all()  # the speck keeps its first-look labels
+    assert (labels[100:500, 100:300] == 5).all()
 
 
 def test_foreground_clusters_groups_people_standing_together():
@@ -241,3 +260,21 @@ def test_people_labels_with_a_floor_finds_nobody_where_the_parser_is_unsure():
     confidence[0] = 0.9
     assert crops.people_labels(predict, image, 0.75, floor=0.5)[10:50, 20:40].all()  # sure without a face: a back
     assert not crops.people_labels(predict, np.zeros_like(image), 0.75, floor=0.5).any()  # nothing labelled
+
+
+def test_the_floor_goes_by_the_share_the_parser_is_sure_of():
+    image = np.zeros((60, 80, 3), np.uint8)
+    image[10:50, 20:40, 0] = 3 * 8
+    sure_rows = [16]
+
+    def predict(picture):
+        labels = np.rint(picture[..., 0] / 8.0).astype(np.int64)
+        labels[labels != 3] = 0
+        sure = np.full(picture.shape[:2], 0.3, np.float16)
+        sure[10:10 + sure_rows[0], 20:40] = 0.95
+        return labels, sure
+
+    # 40% of the labelled pixels are sure (their mean confidence is 0.56): nobody
+    assert not crops.people_labels(predict, image, 0.75, floor=0.5).any()
+    sure_rows[0] = 24  # 60% sure: the people stay
+    assert crops.people_labels(predict, image, 0.75, floor=0.5)[10:50, 20:40].all()

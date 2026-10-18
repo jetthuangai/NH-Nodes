@@ -65,7 +65,7 @@ def test_label_matching_ignores_case_spacing_and_supports_wildcards():
     assert segs.label_matches("Red Car", "red_car")
     assert segs.label_matches("t-shirt", "*shirt")
     assert segs.label_matches("person", "pers?n")
-    assert not segs.label_matches("person", "persons")
+    assert segs.label_matches("person", "persons") and not segs.label_matches("person", "personal")
 
 
 # --- select ------------------------------------------------------------------
@@ -436,3 +436,46 @@ def test_picture_prints_take_any_image_dtype_and_keep_every_frame():
         assert segs.same_picture(first, segs.picture_print(other))
     frames = (_frame(height=20, width=30), _frame(height=20, width=30))
     assert segs.stamped(frames, picture[None]) == frames  # one picture for two frames: left as they were
+
+
+def test_labels_match_singular_and_plural_but_wildcards_as_written():
+    for label, pattern in (("arms", "arm"), ("arm", "Arms"), ("feet", "foot"), ("teeth", "tooth"),
+                           ("accessories", "accessory"), ("shoes", "shoe"), ("dresses", "dress"), ("red cars", "red car")):
+        assert segs.label_matches(label, pattern) and segs.label_matches(pattern, label)
+    assert not segs.label_matches("dress", "dres") and not segs.label_matches("bus", "bu")
+    assert segs.label_matches("cars", "car*") and not segs.label_matches("car", "cars*")  # a wildcard is as written
+
+
+def test_a_node_s_own_words_name_the_parts_of_its_segs():
+    segs.add_aliases("test-parser", {"skin": {1, 2, 3}, "body": {1, 2, 3, 4}, "nothing": {9}},
+                     {"face": {1}, "arms": {2, 3}, "top": {4}})
+    face = segs.make_segment("face", 1.0, torch.ones(2, 2, dtype=torch.bool), (0, 0), "test-parser")
+    arms = segs.make_segment("arms", 1.0, torch.ones(2, 2, dtype=torch.bool), (4, 0), "test-parser")
+    top = segs.make_segment("top", 1.0, torch.ones(2, 2, dtype=torch.bool), (8, 0), "test-parser")
+    other = segs.make_segment("arms", 1.0, torch.ones(2, 2, dtype=torch.bool), (0, 4), "sam3")
+    frame = segs.SegsFrame(8, 12, (face, arms, top, other))
+    assert segs.matching(frame.segments, "skin") == [face, arms]  # only that node's parts
+    assert segs.matching(frame.segments, "arm") == [arms, other]  # a label is found on every node's instances
+    assert segs.matching(frame.segments, "bodies") == [face, arms, top] and segs.matching(frame.segments, "nothing") == []
+    labelled_skin = segs.make_segment("skin", 0.9, torch.ones(2, 2, dtype=torch.bool), (0, 6), "sam3")
+    assert segs.matching(frame.segments + (labelled_skin,), "skin") == [labelled_skin]  # an instance's own label wins
+    assert int(segs.evaluate(segs.parse_expression("skin - face"), frame).sum()) == 4
+    (picked,) = segs.select_segments(frame, labels=("skin",)).segments[1:]
+    assert picked is arms
+
+
+def test_the_photo_check_can_be_turned_off_and_a_nan_does_not_trip_it():
+    rng = np.random.default_rng(5)
+    one, two = (torch.from_numpy(cv2.GaussianBlur(rng.random((40, 60, 3)).astype(np.float32), (0, 0), 4))[None]
+                for _ in range(2))
+    a = segs.stamped((_frame(_seg("person", 0.9, (0, 0, 10, 10))),), one)
+    c = segs.stamped((_frame(_seg("bag", 1.0, (4, 4, 6, 6))),), two)
+    with pytest.raises(ValueError, match="turn check_same_photo off"):
+        segs_nodes.NH_SegsCompose().compose(a, "person - bag", segs_2=c)
+    (mask,) = segs_nodes.NH_SegsCompose().compose(a, "person - bag", segs_2=c, check_same_photo=False)
+    assert int(mask.sum()) == 100 - 4
+    spoiled = one.clone()
+    spoiled[0, 5, 5, 1] = float("nan")
+    assert segs.same_picture(a[0].picture, segs.picture_print(spoiled[0]))
+    optional = segs_nodes.NH_SegsCompose.INPUT_TYPES()["optional"]
+    assert optional["check_same_photo"][1]["default"] is True

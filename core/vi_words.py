@@ -25,7 +25,11 @@ NOUNS = {
     "mũi": "nose", "miệng": "mouth", "môi": "lips", "đôi môi": "lips", "răng": "teeth", "lưỡi": "tongue",
     "tai": "ear", "cổ": "neck", "vai": "shoulder", "ngực": "chest", "bụng": "belly",
     "tay": "arm", "cánh tay": "arm", "bàn tay": "hand", "ngón tay": "finger", "móng tay": "fingernail",
+    "đôi tay": "arm", "hai tay": "arm", "tay trái": "left arm", "tay phải": "right arm", "bắp tay": "upper arm",
+    "cẳng tay": "forearm",
     "chân": "leg", "đôi chân": "leg", "bàn chân": "foot", "móng chân": "toenail",
+    "hai chân": "leg", "chân trái": "left leg", "chân phải": "right leg", "đùi": "thigh", "bắp đùi": "thigh",
+    "bắp chân": "calf", "cẳng chân": "lower leg",
     "râu": "beard", "ria mép": "mustache",
     # clothes and accessories
     "quần áo": "clothes", "trang phục": "outfit", "áo": "top", "áo sơ mi": "shirt", "áo thun": "t-shirt",

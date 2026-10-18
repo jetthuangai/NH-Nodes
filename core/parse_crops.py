@@ -206,6 +206,10 @@ def _grown(region, sides, aspect, image_size):
 
 
 COARSE_TRUST = 0.5  # the first look's confidence counts this much against a crop's: a crop sees people sharper
+SURE = 0.9  # a parser's confidence counted as sure, for the floor of people_labels
+# A region shorter than this (px) is not parsed again: blown up to a parser's input (4 to 8 times) so little is mostly
+# made up (a speck of a held helmet came back as salt-and-pepper labels); the first look's labels stay there.
+MIN_CROP = 128
 
 
 def person_box(face, image_size):
@@ -231,19 +235,19 @@ def people_labels(predict, image, aspect, margin=0.08, people=(), floor=None):
     and for background near them; so nothing is invented on an empty backdrop and overlapping regions meet where their
     answers do, not along a straight line.
 
-    With ``floor`` and no ``people`` boxes, a first look whose median confidence over what it labels is under
-    ``floor`` means nobody is there, and the map is all background: a parser trained on people sees them in a picture
-    without any, but unsure of all of them (a facade or a cafe's shelves come out as faint arms and clothes), and its
+    With ``floor`` and no ``people`` boxes, a first look that is sure (SURE or more) of less than ``floor`` of what it
+    labels means nobody is there, and the map is all background: a parser trained on people sees them in a picture
+    without any, but is unsure of most of it (a facade or a cafe's shelves come out as faint arms and clothes), and its
     crops of such a picture would find more.
     """
     height, width = image.shape[:2]
     coarse, trust = predict(image)
     if floor is not None and not len(people):
-        found = coarse != 0
-        if not found.any() or float(np.median(trust[found])) < floor:
+        labelled = trust[coarse != 0]
+        if not labelled.size or np.count_nonzero(labelled >= labelled.dtype.type(SURE)) < floor * labelled.size:
             return np.zeros_like(coarse)
     regions = [region for box in foreground_clusters(coarse, extra=people)
-               for region in cover_box(box, aspect, margin, (height, width))]
+               for region in cover_box(box, aspect, margin, (height, width)) if region[3] - region[1] >= MIN_CROP]
     if not regions or regions == [(0, 0, width, height)]:
         return coarse  # nobody found, or the first look already saw the whole picture in the parser's own shape
     anchor = coarse != 0  # where the first look (or a face) puts people

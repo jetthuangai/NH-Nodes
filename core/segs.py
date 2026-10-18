@@ -137,8 +137,9 @@ def instance_masks(segs):
 
 PRINT_SIDE = 32  # a frame keeps a PRINT_SIDE x PRINT_SIDE grey print of its picture
 # Least correlation between two prints of one picture. Tone, colour and blur edits keep it high (a strong
-# brightening that clips the highlights: 0.64, contrast 0.85, blur 0.87, on 230 photos); most other photos of the
-# same size fall below it, a mirrored or shifted copy too (the masks would not line up).
+# brightening that clips the highlights: 0.64, contrast 0.85, blur 0.87, on 230 photos), and most other photos of the
+# same size fall below it (36 of 40). It is a guard against wiring mistakes, not a proof: a copy shifted or zoomed a
+# little usually passes, and a new background behind the same person can fail (Segs Compose can turn it off).
 SAME_PICTURE = 0.5
 
 
@@ -148,6 +149,8 @@ def picture_print(image):
     pixels = image.detach().cpu().float().numpy() if torch.is_tensor(image) else np.asarray(image)
     if pixels.dtype not in (np.uint8, np.uint16, np.float32):
         pixels = pixels.astype(np.float32)  # cv2 has no half precision
+    if pixels.dtype == np.float32 and not np.isfinite(pixels).all():
+        pixels = np.nan_to_num(pixels, nan=0.0, posinf=1.0, neginf=0.0)
     small = cv2.resize(np.ascontiguousarray(pixels), (PRINT_SIDE, PRINT_SIDE), interpolation=cv2.INTER_AREA)
     small = small.astype(np.float32)
     return small[..., :3].mean(axis=2) if small.ndim == 3 else small
@@ -170,22 +173,23 @@ def stamped(segs, image):
     return tuple(replace(frame, picture=picture_print(picture)) for frame, picture in zip(segs, image))
 
 
-def merge_segs(*all_segs):
+def merge_segs(*all_segs, check_prints=True):
     """One NH_SEGS from several of the same pictures (None entries are skipped): each frame gets the instances of
     all of them, in order. Raises when they do not belong to the same pictures: another count or size of images, or
-    the prints of different photos."""
+    (with ``check_prints``) the prints of different photos."""
     present = [segs for segs in all_segs if segs is not None]
     first = present[0]
     for other in present[1:]:
         if len(other) != len(first) or any((a.height, a.width) != (b.height, b.width) for a, b in zip(first, other)):
             raise ValueError("[NH-Nodes] The segs to mix come from different pictures: connect segs found on the same "
                              "image batch.")
-    for index in range(len(first)):
+    for index in range(len(first) if check_prints else 0):
         prints = [segs[index].picture for segs in present if segs[index].picture is not None]
         if not all(same_picture(prints[0], other) for other in prints[1:]):
             which = f" (image {index + 1} of the batch)" if len(first) > 1 else ""
-            raise ValueError(f"[NH-Nodes] The segs to mix come from different photos of the same size{which}: "
-                             "connect segs found on the same image.")
+            raise ValueError(f"[NH-Nodes] The segs to mix look like different photos of the same size{which}. "
+                             "Connect segs found on the same image; if they are edits of one photo (a new "
+                             "background, a relight), turn check_same_photo off.")
     if len(present) == 1:
         return first
     return tuple(frame.with_segments([seg for segs in present for seg in segs[index].segments])
@@ -204,9 +208,59 @@ def normalize_label(text):
     return " ".join(str(text).replace("_", " ").lower().split())
 
 
+# Plurals of the words the vision nodes use that the usual rules miss (see _singular)
+_IRREGULAR = {"feet": "foot", "teeth": "tooth", "people": "person", "children": "child", "men": "man",
+              "women": "woman", "mice": "mouse", "geese": "goose"}
+
+
+def _singular(word):
+    """The singular of one English word by the usual rules: arms -> arm, glasses -> glass, accessories -> accessory."""
+    if word in _IRREGULAR:
+        return _IRREGULAR[word]
+    if len(word) > 4 and word.endswith("ies"):
+        return word[:-3] + "y"
+    if word.endswith(("sses", "shes", "ches", "xes", "zes")):
+        return word[:-2]
+    if len(word) > 3 and word.endswith("s") and not word.endswith(("ss", "us", "is")):
+        return word[:-1]
+    return word
+
+
+def fold_label(text):
+    """A label in lower case with every word made singular, so "Arms" and "arm" are the same label."""
+    return " ".join(_singular(word) for word in normalize_label(text).split())
+
+
 def label_matches(label, pattern):
-    """True when ``label`` matches ``pattern``, ignoring case; the pattern may use * and ? wildcards."""
-    return fnmatch.fnmatchcase(normalize_label(label), normalize_label(pattern))
+    """True when ``label`` matches ``pattern``, ignoring case and singular or plural ("arm" finds "arms"); a pattern
+    with * and ? wildcards is matched as written."""
+    label, pattern = normalize_label(label), normalize_label(pattern)
+    if fnmatch.fnmatchcase(label, pattern):
+        return True
+    return not any(ch in pattern for ch in "*?[") and fold_label(label) == fold_label(pattern)
+
+
+_ALIASES = {}  # (source of the instances, folded word) -> folded labels of that source's parts the word stands for
+
+
+def add_aliases(source, words, parts):
+    """Let a node's own words (word -> class ids) name the parts of the segs it makes (part label -> class ids, with
+    ``source``): a word stands for the parts whose classes it covers, wherever no instance carries the word itself.
+    So Segs Compose and Segs Select read "skin" on Body Segment's segs as its face, torso, arms... parts."""
+    for word, ids in words.items():
+        labels = frozenset(fold_label(part) for part, part_ids in parts.items() if part_ids and set(part_ids) <= set(ids))
+        if labels:
+            _ALIASES[(source, fold_label(word))] = labels
+
+
+def matching(segments, pattern):
+    """The instances a label pattern names: those carrying it (see label_matches), or when none does, the parts the
+    pattern stands for in the words of the node that made them (see add_aliases)."""
+    found = [seg for seg in segments if label_matches(seg.label, pattern)]
+    if found or any(ch in str(pattern) for ch in "*?["):
+        return found
+    word = fold_label(pattern)
+    return [seg for seg in segments if fold_label(seg.label) in _ALIASES.get((seg.source, word), ())]
 
 
 def parse_label_list(text):
@@ -263,9 +317,10 @@ def select_segments(frame, labels=(), min_score=0.0, min_area=0.0, max_area=1.0,
     keeps every segment from ``start`` on.
     """
     total = max(1, frame.height * frame.width)
+    named = {id(seg) for pattern in labels for seg in matching(frame.segments, pattern)}
     kept = []
     for seg in frame.segments:
-        if labels and not any(label_matches(seg.label, pattern) for pattern in labels):
+        if labels and id(seg) not in named:
             continue
         if seg.score < min_score:
             continue
@@ -520,7 +575,7 @@ def evaluate(tree, frame):
     """
     kind = tree[0]
     if kind == "label":
-        return frame_mask(frame, [seg for seg in frame.segments if label_matches(seg.label, tree[1])])
+        return frame_mask(frame, matching(frame.segments, tree[1]))
     if kind == "keyword":
         if tree[1] == "all":
             return frame_mask(frame)
