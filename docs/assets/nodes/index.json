@@ -1,0 +1,416 @@
+[
+ {
+  "id": "NH_AgnosticImageGenerator",
+  "name": "NH Agnostic Image Generator",
+  "category": "NH-Nodes/Image",
+  "deprecated": false
+ },
+ {
+  "id": "NH_AnyListSplit",
+  "name": "Any List Split (NH)",
+  "category": "NH-Nodes/Batch",
+  "deprecated": false
+ },
+ {
+  "id": "NH_AnySwitch",
+  "name": "Any Branch Switch (NH)",
+  "category": "NH-Nodes/Logic",
+  "deprecated": false
+ },
+ {
+  "id": "NH_AnySwitchBoolean",
+  "name": "Any Switch (NH)",
+  "category": "NH-Nodes/Logic",
+  "deprecated": false
+ },
+ {
+  "id": "NH_BatchIndex",
+  "name": "Batch Index (NH)",
+  "category": "NH-Nodes/Batch",
+  "deprecated": false
+ },
+ {
+  "id": "NH_BatchMerge",
+  "name": "Batch Merge (NH)",
+  "category": "NH-Nodes/Batch",
+  "deprecated": false
+ },
+ {
+  "id": "NH_BooleanSwitch",
+  "name": "Boolean Switch (NH)",
+  "category": "NH-Nodes/Utils",
+  "deprecated": false
+ },
+ {
+  "id": "NH_ClipIndex",
+  "name": "Load Clip Index (NH)",
+  "category": "NH-Nodes/Loaders",
+  "deprecated": false
+ },
+ {
+  "id": "NH_Compare",
+  "name": "Compare (NH)",
+  "category": "NH-Nodes/Logic",
+  "deprecated": false
+ },
+ {
+  "id": "NH_Counter",
+  "name": "Counter (NH)",
+  "category": "NH-Nodes/Batch",
+  "deprecated": false
+ },
+ {
+  "id": "NH_DiffusionModelIndex",
+  "name": "Load Diffusion Model Index (NH)",
+  "category": "NH-Nodes/Loaders",
+  "deprecated": false
+ },
+ {
+  "id": "NH_GarmentSegment",
+  "name": "Garment Segment (NH)",
+  "category": "NH-Nodes/Vision",
+  "deprecated": false
+ },
+ {
+  "id": "NH_GateSwitch",
+  "name": "Gate Switch (NH)",
+  "category": "NH-Nodes/Logic",
+  "deprecated": false
+ },
+ {
+  "id": "NH_IfElse",
+  "name": "If/Else (NH)",
+  "category": "NH-Nodes/Logic",
+  "deprecated": false
+ },
+ {
+  "id": "NH_ImageCompare",
+  "name": "Image Compare (NH)",
+  "category": "NH-Nodes/Image",
+  "deprecated": false
+ },
+ {
+  "id": "NH_ImageGridComposite",
+  "name": "Image Grid Composite (NH)",
+  "category": "NH-Nodes/Image",
+  "deprecated": false
+ },
+ {
+  "id": "NH_ImageLabel",
+  "name": "Image Label (NH)",
+  "category": "NH-Nodes/Image",
+  "deprecated": false
+ },
+ {
+  "id": "NH_ImageResizeByUnit",
+  "name": "Image Resize Unit (NH)",
+  "category": "NH-Nodes/Image",
+  "deprecated": false
+ },
+ {
+  "id": "NH_ImageTile",
+  "name": "Image Tile (NH)",
+  "category": "NH-Nodes/Image",
+  "deprecated": false
+ },
+ {
+  "id": "NH_ImageUntile",
+  "name": "Image Untile (NH)",
+  "category": "NH-Nodes/Image",
+  "deprecated": false
+ },
+ {
+  "id": "NH_LargeImageCompare",
+  "name": "NH Large Image Compare",
+  "category": "NH-Nodes/Image",
+  "deprecated": false
+ },
+ {
+  "id": "NH_LargeImagePreview",
+  "name": "NH Large Image Preview",
+  "category": "NH-Nodes/Image",
+  "deprecated": false
+ },
+ {
+  "id": "NH_LargePreviewCacheManager",
+  "name": "NH Large Preview Cache Manager",
+  "category": "NH-Nodes/Image",
+  "deprecated": false
+ },
+ {
+  "id": "NH_LayerLayoutComposite",
+  "name": "Layer Layout Composite (NH)",
+  "category": "NH-Nodes/Image",
+  "deprecated": false
+ },
+ {
+  "id": "NH_LayerStackComposite",
+  "name": "Layer Stack Composite (NH)",
+  "category": "NH-Nodes/Image",
+  "deprecated": false
+ },
+ {
+  "id": "NH_ListCreate",
+  "name": "List Create (NH)",
+  "category": "NH-Nodes/Batch",
+  "deprecated": false
+ },
+ {
+  "id": "NH_ListFilter",
+  "name": "List Filter (NH)",
+  "category": "NH-Nodes/Batch",
+  "deprecated": false
+ },
+ {
+  "id": "NH_ListIndex",
+  "name": "List Index (NH)",
+  "category": "NH-Nodes/Batch",
+  "deprecated": false
+ },
+ {
+  "id": "NH_LoadImageInfo",
+  "name": "Load Image Info (NH)",
+  "category": "NH-Nodes/Image",
+  "deprecated": false
+ },
+ {
+  "id": "NH_LoadImagesFromFolder",
+  "name": "Load Images Folder (NH)",
+  "category": "NH-Nodes/Image",
+  "deprecated": false
+ },
+ {
+  "id": "NH_LoadImagesMatching",
+  "name": "Load images matching",
+  "category": "NH-Nodes/Image",
+  "deprecated": false
+ },
+ {
+  "id": "NH_LogicGate",
+  "name": "Logic Gate (NH)",
+  "category": "NH-Nodes/Logic",
+  "deprecated": false
+ },
+ {
+  "id": "NH_LoraClipIndex",
+  "name": "Load LoRA Clip Index (NH)",
+  "category": "NH-Nodes/Loaders",
+  "deprecated": false
+ },
+ {
+  "id": "NH_LoraModelIndex",
+  "name": "Load LoRA Model Index (NH)",
+  "category": "NH-Nodes/Loaders",
+  "deprecated": false
+ },
+ {
+  "id": "NH_MaskAdvancedMorphology",
+  "name": "Mask Morphology (NH)",
+  "category": "NH-Nodes/Mask",
+  "deprecated": false
+ },
+ {
+  "id": "NH_MaskAspectRatioMatch",
+  "name": "NH Mask Aspect Ratio Match",
+  "category": "NH-Nodes/Mask",
+  "deprecated": false
+ },
+ {
+  "id": "NH_MaskProperties",
+  "name": "Mask Properties (NH)",
+  "category": "NH-Nodes/Mask",
+  "deprecated": false
+ },
+ {
+  "id": "NH_MaskResizeImage",
+  "name": "NH Mask-Aware Resize",
+  "category": "NH-Nodes/Image",
+  "deprecated": false
+ },
+ {
+  "id": "NH_MaskToBBox",
+  "name": "NH Create Box Mask",
+  "category": "NH-Nodes/Mask",
+  "deprecated": false
+ },
+ {
+  "id": "NH_MathEval",
+  "name": "Math Eval (NH)",
+  "category": "NH-Nodes/Logic",
+  "deprecated": false
+ },
+ {
+  "id": "NH_MultiSliderFloat",
+  "name": "Multi-Slider (FLOAT)",
+  "category": "NH-Nodes/Utils",
+  "deprecated": false
+ },
+ {
+  "id": "NH_MultiSliderInt",
+  "name": "Multi-Slider (INT)",
+  "category": "NH-Nodes/Utils",
+  "deprecated": false
+ },
+ {
+  "id": "NH_PackUniversal",
+  "name": "Pack Universal (NH)",
+  "category": "NH-Nodes/Utils/Pipe",
+  "deprecated": false
+ },
+ {
+  "id": "NH_PortraitSegment",
+  "name": "Portrait Segment (NH)",
+  "category": "NH-Nodes/Vision",
+  "deprecated": false
+ },
+ {
+  "id": "NH_PromptJoin",
+  "name": "Prompt Join (NH)",
+  "category": "NH-Nodes/Text",
+  "deprecated": false
+ },
+ {
+  "id": "NH_PromptScheduler",
+  "name": "Prompt Scheduler (NH)",
+  "category": "NH-Nodes/Text",
+  "deprecated": false
+ },
+ {
+  "id": "NH_PromptTemplate",
+  "name": "Prompt Template (NH)",
+  "category": "NH-Nodes/Text",
+  "deprecated": false
+ },
+ {
+  "id": "NH_RandomChoice",
+  "name": "Random Choice (NH)",
+  "category": "NH-Nodes/Logic",
+  "deprecated": false
+ },
+ {
+  "id": "NH_RatioPresetImageResize",
+  "name": "NH Ratio Preset Image Resize",
+  "category": "NH-Nodes/Resolution",
+  "deprecated": false
+ },
+ {
+  "id": "NH_RegexExtract",
+  "name": "Regex Extract (NH)",
+  "category": "NH-Nodes/Text",
+  "deprecated": false
+ },
+ {
+  "id": "NH_RemoveResizePadding",
+  "name": "NH Remove Resize Padding",
+  "category": "NH-Nodes/Resolution",
+  "deprecated": false
+ },
+ {
+  "id": "NH_RestoreImageGeometry",
+  "name": "NH Restore Image Geometry",
+  "category": "NH-Nodes/Resolution",
+  "deprecated": false
+ },
+ {
+  "id": "NH_SaveImagePath",
+  "name": "Save Image Path (NH)",
+  "category": "NH-Nodes/Image",
+  "deprecated": false
+ },
+ {
+  "id": "NH_SaveLargeImage",
+  "name": "NH Save Large Image",
+  "category": "NH-Nodes/Image",
+  "deprecated": false
+ },
+ {
+  "id": "NH_SimpleFacePaste",
+  "name": "NH Simple Face Paste",
+  "category": "NH-Nodes/Image",
+  "deprecated": false
+ },
+ {
+  "id": "NH_SmartRatioImageResize",
+  "name": "NH Smart Ratio Image Resize",
+  "category": "NH-Nodes/Resolution",
+  "deprecated": false
+ },
+ {
+  "id": "NH_SmartResolutionPicker",
+  "name": "NH Smart Resolution Picker",
+  "category": "NH-Nodes/Resolution",
+  "deprecated": false
+ },
+ {
+  "id": "NH_StringOps",
+  "name": "String Operations (NH)",
+  "category": "NH-Nodes/Text",
+  "deprecated": false
+ },
+ {
+  "id": "NH_SwitchN",
+  "name": "Switch N (NH)",
+  "category": "NH-Nodes/Logic",
+  "deprecated": false
+ },
+ {
+  "id": "NH_TextConcatenate",
+  "name": "Text Concatenate (NH)",
+  "category": "NH-Nodes/Text",
+  "deprecated": false
+ },
+ {
+  "id": "NH_TextIndex",
+  "name": "Text Index (NH)",
+  "category": "NH-Nodes/Text",
+  "deprecated": false
+ },
+ {
+  "id": "NH_TextRandomLine",
+  "name": "Text Random Line (NH)",
+  "category": "NH-Nodes/Text",
+  "deprecated": false
+ },
+ {
+  "id": "NH_TextSplit",
+  "name": "Text Split (NH)",
+  "category": "NH-Nodes/Text",
+  "deprecated": false
+ },
+ {
+  "id": "NH_TextSplitLines",
+  "name": "Text Split Lines (NH)",
+  "category": "NH-Nodes/Text",
+  "deprecated": false
+ },
+ {
+  "id": "NH_UniversalSliderBuilder",
+  "name": "Universal Slider Builder (NH)",
+  "category": "NH-Nodes/Utils",
+  "deprecated": true
+ },
+ {
+  "id": "NH_UnpackUniversal",
+  "name": "Unpack Universal (NH)",
+  "category": "NH-Nodes/Utils/Pipe",
+  "deprecated": false
+ },
+ {
+  "id": "NH_VAEIndex",
+  "name": "Load VAE Index (NH)",
+  "category": "NH-Nodes/Loaders",
+  "deprecated": false
+ },
+ {
+  "id": "NH_VTonUltimateProcessor",
+  "name": "VTON Ultimate Processor (NH)",
+  "category": "NH-Nodes/VTON",
+  "deprecated": false
+ },
+ {
+  "id": "NH_ValueMatchIndex",
+  "name": "Value Match Index (NH)",
+  "category": "NH-Nodes/Logic",
+  "deprecated": false
+ }
+]

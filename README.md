@@ -1,354 +1,148 @@
+<p align="center"><img src="docs/assets/banner.jpg" alt="NH-Nodes — image, mask, resolution and workflow nodes for ComfyUI" width="100%"></p>
+
+<p align="center">
+  <a href="https://registry.comfy.org/nodes/nh-nodes"><img src="https://img.shields.io/badge/ComfyUI_Registry-nh--nodes-2563eb" alt="ComfyUI Registry"></a>
+  <a href="https://github.com/jetthuangai/NH-Nodes/actions/workflows/tests.yml"><img src="https://github.com/jetthuangai/NH-Nodes/actions/workflows/tests.yml/badge.svg" alt="Tests"></a>
+  <a href="LICENSE"><img src="https://img.shields.io/badge/License-MIT_(see_notices)-16a34a" alt="License"></a>
+  <a href="docs/en/README.md"><img src="https://img.shields.io/badge/Docs-EN_%7C_VI-0f766e" alt="Documentation"></a>
+</p>
+
+<p align="center"><b>English</b> · <a href="docs/vi/README.md">Tiếng Việt</a></p>
+
 # NH-Nodes for ComfyUI
 
-Production-focused custom nodes for ComfyUI workflows: image loading, tiling,
-compositing, mask utilities, smart resize, logic routing, prompt/text tooling,
-batch helpers, indexed model loaders, garment/portrait segmentation, and VTON
-preprocessing.
+**69 production-focused nodes** for ComfyUI: load and save image sets with their metadata, tile and composite large
+images, pick the right resolution for current models and put results back into the original frame, refine masks,
+segment garments and faces, build VTON masks, route workflows with lazy switches, generate prompts, and test many
+LoRAs or models from one node.
 
-[![ComfyUI Registry](https://img.shields.io/badge/ComfyUI_Registry-nh--nodes-2563eb)](https://registry.comfy.org/nodes/nh-nodes)
-[![GitHub](https://img.shields.io/badge/GitHub-jetthuangai%2FNH--Nodes-111827)](https://github.com/jetthuangai/NH-Nodes)
-[![License: MIT](https://img.shields.io/badge/License-MIT-16a34a.svg)](LICENSE)
+Every node is documented with a visual card, its inputs and outputs, and examples — in
+[English](docs/en/README.md) and [Vietnamese](docs/vi/README.md).
 
-- **Author:** [jetthuang.com](https://jetthuang.com)
-- **Hugging Face:** [nhathoangfoto](https://huggingface.co/nhathoangfoto)
-- **Support:** [PayPal](https://paypal.me/nhathoangfoto)
+## Highlights
 
----
-
-## Why NH-Nodes
-
-NH-Nodes is built for practical workflow construction. It focuses on reusable
-building blocks that remove repetitive graph work:
-
-- Load images with filename/path metadata.
-- Split images into tiles, upscale or process tiles, then stitch them back.
-- Build image grids, layer composites, comparisons, and labeled previews.
-- Resize images and masks with predictable aspect-ratio behavior.
-- Route workflow branches with boolean logic and generic data switches.
-- Generate prompts from templates, regex, lists, schedules, and text utilities.
-- Pick indexed LoRA/diffusion models for larger configurable workflows.
-- Prepare VTON masks, agnostic images, DensePose/parsing outputs, and related masks.
-
----
+<table>
+  <tr>
+    <td width="50%"><a href="docs/en/resolution.md"><img src="docs/assets/examples/resize-modes.jpg" alt="Resize modes"></a><br>
+      <b>Resolution done right</b> — presets for FLUX.2, Qwen-Image and Z-Image, cover / contain / stretch resizing, and an
+      exact round trip back to the original frame.</td>
+    <td width="50%"><a href="docs/en/image-compose.md"><img src="docs/assets/examples/tile-untile.jpg" alt="Tile and untile"></a><br>
+      <b>Large images</b> — split into overlapping tiles, process them, and blend them back seamlessly; deep-zoom preview
+      for images too big for the canvas.</td>
+  </tr>
+  <tr>
+    <td><a href="docs/en/vision.md"><img src="docs/assets/examples/garment-segment.jpg" alt="Garment segmentation"></a><br>
+      <b>Segmentation</b> — garment and face-part masks from SegFormer models, plus VTON garment masks with pose and
+      parsing.</td>
+    <td><a href="docs/en/mask.md"><img src="docs/assets/examples/mask-morphology.jpg" alt="Mask morphology"></a><br>
+      <b>Mask tools</b> — fast grow / shrink on the CPU or the GPU, hole filling, soft edges, bounding boxes and
+      aspect-ratio matching.</td>
+  </tr>
+  <tr>
+    <td><a href="docs/en/image-compose.md"><img src="docs/assets/examples/layer-layout.jpg" alt="Layer layout"></a><br>
+      <b>Compositing</b> — layouts, layer stacks with alpha, labelled grids and side-by-side comparisons.</td>
+    <td><a href="docs/en/logic.md"><img src="docs/assets/examples/grid-composite.jpg" alt="Grid composite"></a><br>
+      <b>Workflow logic</b> — lazy If/Else and switches that run only the chosen branch, safe math, counters, lists and
+      prompt tools.</td>
+  </tr>
+</table>
 
 ## Installation
 
-### ComfyUI Manager
+**ComfyUI Manager** — search for `NH-Nodes`, install, restart ComfyUI.
 
-Search for `NH-Nodes`, install, then restart ComfyUI.
-
-### Comfy CLI
+**Comfy CLI**
 
 ```bash
 comfy node install nh-nodes
 ```
 
-### Manual
+**Manual**
 
 ```bash
 cd ComfyUI/custom_nodes
 git clone https://github.com/jetthuangai/NH-Nodes.git
 cd NH-Nodes
-pip install -r requirements.txt
+python -m pip install -r requirements.txt
 ```
 
-Restart ComfyUI after installation.
+Restart ComfyUI afterwards. Requirements: a recent ComfyUI (tested with 0.41) and Python 3.10+.
 
----
+### Optional: VTON and segmentation models
 
-## Featured Workflows
+- **VTON Ultimate Processor** needs ONNX Runtime, which is not installed automatically (the CPU wheel would overwrite an
+  existing GPU build). Install one of them into ComfyUI's Python:
+  `python -m pip install onnxruntime-gpu` (NVIDIA) or `python -m pip install onnxruntime` (CPU).
+- **Garment Segment**, **Portrait Segment** and **VTON** download their models from Hugging Face on first use (pinned
+  revisions, only the needed files). To keep models elsewhere, add these keys to `extra_model_paths.yaml`:
 
-### Tile, Process, Untile
+  ```yaml
+  my_models:
+      base_path: D:/ai-models/
+      nh_nodes: NH-Nodes/            # SegFormer models (garment, face parsing)
+      vton_mask: ComfyUI-Vton-Mask/  # VTON pose + parsing ONNX models
+  ```
 
-Use this when an image is too large for a model, or when every tile needs the
-same enhancement/upscale step.
+## Quick start
 
-```text
-Load Image -> Image Tile (NH) -> upscale/process tiles -> Image Untile (NH)
-```
+| Goal | Chain | Guide |
+|---|---|---|
+| Upscale or refine a huge image piece by piece | Load Image → **Image Tile** → your sampler/upscaler per tile → **Image Untile** | [image-compose](docs/en/image-compose.md#image-tile-nh) |
+| Generate at the model's native size, then restore the original framing | Load Image → **NH Smart Ratio Image Resize** → edit → **NH Restore Image Geometry** | [resolution](docs/en/resolution.md) |
+| Inpaint only the clothes | Load Image → **Garment Segment** → **Mask Morphology** (grow) → inpaint | [vision](docs/en/vision.md) |
+| Compare many LoRAs, one per queue | **Counter** → **Load LoRA Model Index** (index) → sampler → **Image Label** (prints the LoRA name) → Save Image | [loaders](docs/en/loaders.md) |
+| Run one of two branches without executing the other | condition → **If/Else** (lazy) → … | [logic](docs/en/logic.md#ifelse-nh) |
 
-`Image Tile (NH)` supports:
+## Node catalog
 
-- `original_ratio`: derive tile dimensions from the original image aspect ratio.
-- `custom`: use explicit tile width and height.
-- `square`: force square tiles, for example `1024 x 1024`.
-- Automatic overlap calculation.
-- Edge padding so square/custom tile outputs keep the requested tile size.
+| Group | Nodes | Guide |
+|---|---|---|
+| Image — load & save | Load Image Info, Load Images Folder, Load images matching, Save Image Path, NH Save Large Image | [EN](docs/en/image-io.md) · [VI](docs/vi/image-io.md) |
+| Image — compose | Image Tile, Image Untile, Image Grid Composite, Layer Layout Composite, Layer Stack Composite, Image Compare, Image Label, Image Resize Unit | [EN](docs/en/image-compose.md) · [VI](docs/vi/image-compose.md) |
+| Image — large preview | NH Large Image Preview, NH Large Image Compare, NH Large Preview Cache Manager | [EN](docs/en/image-preview.md) · [VI](docs/vi/image-preview.md) |
+| Image — mask-based retouch | NH Mask-Aware Resize, NH Agnostic Image Generator, NH Simple Face Paste | [EN](docs/en/image-retouch.md) · [VI](docs/vi/image-retouch.md) |
+| Resolution | NH Smart Resolution Picker, NH Smart Ratio Image Resize, NH Ratio Preset Image Resize, NH Remove Resize Padding, NH Restore Image Geometry | [EN](docs/en/resolution.md) · [VI](docs/vi/resolution.md) |
+| Mask | Mask Morphology, Mask Properties, NH Create Box Mask, NH Mask Aspect Ratio Match | [EN](docs/en/mask.md) · [VI](docs/vi/mask.md) |
+| Vision | Garment Segment, Portrait Segment | [EN](docs/en/vision.md) · [VI](docs/vi/vision.md) |
+| VTON | VTON Ultimate Processor | [EN](docs/en/vton.md) · [VI](docs/vi/vton.md) |
+| Logic | Compare, Logic Gate, If/Else, Switch N, Any Switch, Any Branch Switch, Gate Switch, Value Match Index, Math Eval, Random Choice | [EN](docs/en/logic.md) · [VI](docs/vi/logic.md) |
+| Text | Prompt Template, Prompt Scheduler, String Operations, Prompt Join, Text Split, Regex Extract, Text Index, Text Concatenate, Text Split Lines, Text Random Line | [EN](docs/en/text.md) · [VI](docs/vi/text.md) |
+| Batch & lists | Batch Index, Batch Merge, Counter, List Create, List Index, List Filter, Any List Split | [EN](docs/en/batch-lists.md) · [VI](docs/vi/batch-lists.md) |
+| Loaders | Load LoRA Model Index, Load LoRA Clip Index, Load Diffusion Model Index, Load VAE Index, Load Clip Index | [EN](docs/en/loaders.md) · [VI](docs/vi/loaders.md) |
+| Utils | Multi-Slider (FLOAT/INT), Boolean Switch, Pack Universal, Unpack Universal, Universal Slider Builder *(deprecated)* | [EN](docs/en/utils.md) · [VI](docs/vi/utils.md) |
 
-`Image Untile (NH)` uses `tile_data` from the tile node to stitch results back.
-It also handles tiles that were resized or upscaled, such as 2x or 3x per tile.
+All nodes live under **NH-Nodes** in the node menu; search by name or by node id (for example `NH_ImageTile`).
 
-### Grid Contact Sheet
+## Documentation
 
-```text
-Image batch -> Image Grid Composite (NH) -> Preview Image
-```
-
-Use manual cell size or first-image cell size. Resize modes include `stretch`,
-`pad`, and `fill`.
-
-### Metadata-Aware Image Load
-
-```text
-Load Image Info (NH) -> image / mask / file_name / path
-```
-
-Useful for naming outputs, logging source images, or routing by filename.
-
-### Smart Resolution Resize
-
-```text
-Load Image -> NH Smart Ratio Image Resize -> (your pipeline) -> NH Remove Resize Padding
-```
-
-`NH Smart Ratio Image Resize` picks the closest model preset itself from
-`model_family` + `resolution_level`, so it does not need `NH Smart Resolution
-Picker` upstream. Resize with cover crop, contain pad, or stretch behavior.
-
-In `contain_pad` mode it also emits `resize_data` describing the content region,
-padding, and scale factor. Feed that into `NH Remove Resize Padding` at the end
-of the pipeline to crop the padded border back off (`content_region`) or to
-restore the original input size (`original_size`).
-
-For `cover_crop`, use `NH Restore Image Geometry` after processing. Connect the
-processed image to `image`, the source image to `original_image`, and the resize
-node's `resize_data` to the matching input. It returns an image at the exact
-original dimensions, with processed content placed back in its original region
-and cropped-away borders retained from the source. Its `mask` is white in the
-restored region and black in the retained borders; use it for masked blending
-with the original, optionally softening the mask edges first.
-
-Processed images may be upscaled, including by a non-integer factor, provided
-their framing is unchanged. Additional crops, rotations, or model-generated
-changes in geometry cannot be reversed by this metadata. The restore node also
-accepts `contain_pad` and `stretch` metadata and supports matching batches or
-singleton batch broadcasting. Restoration uses bicubic (default), bilinear, or
-nearest sampling; it does not recover details lost during downsampling.
-
-Use `NH Smart Resolution Picker` when you need target dimensions and a latent
-for text-to-image, instead of resizing an existing image.
-
-### Garment and Portrait Segmentation
-
-```text
-Load Image -> Garment Segment (NH) [part=upper_garment] -> mask / cutout_rgba / mask_image
-Load Image -> Portrait Segment (NH) [hair + face] -> mask / cutout_rgba / mask_image
-```
-
-SegFormer-based masks at input resolution. `cutout_rgba` is the input image
-with the mask as alpha (RGB is left untouched outside the mask); `mask_image`
-is the mask as an RGB preview. Dresses and jumpsuits belong to `upper_garment`. Both nodes share `mask_expand`, `mask_blur`, and `fill_holes`.
-Choose `part=all_garments` to combine upper/lower garments, footwear and headwear
-in one mask, for example a shirt and pants together. `attach_parts` still controls
-whether touching pockets, zippers and other garment decorations are included.
-Models are auto-downloaded to `models/NH-Nodes/` on first use (existing
-`models/face_parsing` or `models/RMBG/segformer_fashion` copies are reused).
-
----
-
-## Node Catalog
-
-### Image Loading and Saving
-
-| Node | Purpose |
-|---|---|
-| `Load Image Info (NH)` | Load one image and output `IMAGE`, `MASK`, file name, and path. |
-| `Save Image Path (NH)` | Save image batches to a chosen folder and output saved filenames/path/count. |
-| `NH Save Large Image` | Save full-resolution images without attaching heavy full-res previews to the canvas. |
-| `Load Images Folder (NH)` | Load images from a folder by index/step, with filename and path outputs. |
-| `Load images matching` | Load source/matching images by text, folder context, and matching rules. |
-
-### Image Tiling, Grid, and Composition
-
-| Node | Purpose |
-|---|---|
-| `Image Tile (NH)` | Split image batches into overlapping tiles with metadata for reconstruction. |
-| `Image Untile (NH)` | Rebuild full images from processed/upscaled tiles and tile metadata. |
-| `Image Grid Composite (NH)` | Combine an image batch into a configurable grid. |
-| `NH Large Image Preview` | Preview large images with lightweight canvas thumbnails and passthrough output. |
-| `NH Large Image Compare` | Compare large A/B images with lightweight canvas proxy and tiled slider/side/difference viewer. |
-| `NH Large Preview Cache Manager` | Inspect and clean the NH large preview tile cache by age, size, or cache id. |
-| `Layer Layout Composite (NH)` | Place layers into preset, grid, or custom layout slots. |
-| `Layer Stack Composite (NH)` | Paste multiple layers onto a background using explicit coordinates. |
-| `Image Resize Unit (NH)` | Resize by pixel/mm/cm using stretch, pad, crop, or lock-ratio modes. |
-| `Image Compare (NH)` | Compare two images side-by-side, top/bottom, split, difference, or overlay. |
-| `Image Label (NH)` | Add header/bottom labels with font, padding, color, and outline controls. |
-| `NH Agnostic Image Generator` | Create agnostic/masked/composite images for inpaint and VTON workflows. |
-| `NH Simple Face Paste` | Paste a source face region into a target using mask feathering. |
-
-### Smart Resolution
-
-| Node | Purpose |
-|---|---|
-| `NH Smart Resolution Picker` | Pick model/preset-aware dimensions and latent setup. |
-| `NH Smart Ratio Image Resize` | Auto-pick the closest model preset for the source aspect, then resize with cover, contain, or stretch; outputs `resize_data` for padding removal. |
-| `NH Ratio Preset Image Resize` | Resize to a chosen model preset ratio with crop, pad, or fill behavior. |
-| `NH Remove Resize Padding` | Remove the padded border from processed images using resize metadata. |
-| `NH Restore Image Geometry` | Restore processed or upscaled images to original coordinates with a blend mask; keep source pixels outside the crop. |
-
-### Vision Segmentation
-
-| Node | Purpose |
-|---|---|
-| `Garment Segment (NH)` | Mask `upper_garment` (tops, jackets, coats, dresses, ties, scarves, collars, sleeves), `lower_garment` (pants, shorts, skirts, belts, tights; no shoes), `footwear`, `headwear`, or combine all four with `all_garments`. Attached parts (pockets, zippers, bows...) merge only when touching the selected garments. |
-| `Portrait Segment (NH)` | Checklist mask of face, neck, hair, eyes, lips, nose, eyebrows, ears (+ optional mouth interior). `face` is the solid face region including features. |
-
-### Mask Tools
-
-| Node | Purpose |
-|---|---|
-| `Mask Morphology (NH)` | Expand/shrink masks, fill holes, and blur edges. |
-| `Mask Properties (NH)` | Output mask bounding box, dimensions, and related measurements. |
-| `NH Create Box Mask` | Convert a mask area into a rectangular box mask. |
-| `NH Mask Aspect Ratio Match` | Adjust one mask to match another mask's aspect ratio. |
-| `NH Mask-Aware Resize` | Resize an image/mask pair while preserving the masked subject region. |
-
-### Logic and Flow Control
-
-| Node | Purpose |
-|---|---|
-| `Compare (NH)` | Compare values with typed operators. |
-| `Logic Gate (NH)` | AND, OR, NOT, XOR, NAND, and NOR boolean logic. |
-| `If/Else (NH)` | Select between two inputs by condition. |
-| `Switch N (NH)` | Pick one of several generic inputs by index. |
-| `Any Switch (NH)` | Boolean switch helper. |
-| `Any Branch Switch (NH)` | Route generic data through selected branches. |
-| `Gate Switch (NH)` | Pass or block a generic input by boolean state. |
-| `Value Match Index (NH)` | Return index of matching configured value. |
-| `Math Eval (NH)` | Safe math expression evaluator with numeric/string outputs. |
-| `Random Choice (NH)` | Weighted random choice from generic inputs. |
-
-### Text and Prompt Tools
-
-| Node | Purpose |
-|---|---|
-| `String Operations (NH)` | Strip, case convert, replace, slice, inspect, and test strings. |
-| `Prompt Join (NH)` | Join text fragments with separators and empty-line handling. |
-| `Text Split (NH)` | Split text by delimiter and expose count/first/last values. |
-| `Regex Extract (NH)` | Extract, replace, split, and match with regex patterns. |
-| `Text Index (NH)` | Select a line/item from text by index. |
-| `Text Concatenate (NH)` | Concatenate multiple text inputs. |
-| `Text Split Lines (NH)` | Split multiline text into selected parts and metadata. |
-| `Text Random Line (NH)` | Pick a random line from multiline text. |
-| `Prompt Template (NH)` | Fill `{placeholder}` variables from connected text values. |
-| `Prompt Scheduler (NH)` | Select prompts by step, sequence, ping-pong, or seed. |
-
-### Lists and Batch Helpers
-
-| Node | Purpose |
-|---|---|
-| `List Create (NH)` | Build an `NH_LIST` from multiline or delimited text. |
-| `List Index (NH)` | Select an item from an `NH_LIST`. |
-| `List Filter (NH)` | Filter lists with contains, regex, equals, length, and related conditions. |
-| `Batch Index (NH)` | Extract one or more images from an image batch. |
-| `Batch Merge (NH)` | Merge image batches with resize handling. |
-| `Counter (NH)` | Stateful counter for repeated queue runs. |
-| `Any List Split (NH)` | Split any incoming list into an `All` output plus up to 10 indexed outputs. |
-
-### Indexed Loaders
-
-| Node | Purpose |
-|---|---|
-| `Load LoRA Model Index (NH)` | Apply one selected LoRA to `MODEL` by 1-based index. |
-| `Load LoRA Clip Index (NH)` | Apply one selected LoRA to `CLIP` by 1-based index. |
-| `Load Diffusion Model Index (NH)` | Load one diffusion model by 1-based index. |
-| `Load VAE Index (NH)` | Load one VAE by 1-based index or boolean toggle. |
-| `Load Clip Index (NH)` | Load one CLIP by 1-based index or boolean toggle, with CLIP type selection. |
-
-### Workflow Utilities
-
-| Node | Purpose |
-|---|---|
-| `Multi-Slider (FLOAT)` | Five float controls in one node. |
-| `Multi-Slider (INT)` | Five integer controls in one node. |
-| `Universal Slider Builder (NH)` | Generate dynamic slider outputs from text config. |
-| `Boolean Switch (NH)` | Simple boolean toggle. |
-| `Pack Universal (NH)` | Bundle generic values into an `NH_UNIVERSAL_PIPE`. |
-| `Unpack Universal (NH)` | Extract values from an `NH_UNIVERSAL_PIPE`. |
-
-### VTON Preprocessing
-
-| Node | Purpose |
-|---|---|
-| `VTON Ultimate Processor (NH)` | Generate masks, agnostic image data, DensePose/parsing outputs, hair/hands masks, and related VTON preprocessing assets. |
-
----
-
-## Menu Structure
-
-```text
-NH-Nodes/
-  Image/
-    Load/save helpers
-    Tile/untile
-    Grid and layer composition
-    Resize, compare, label
-  Mask/
-    Morphology, properties, bbox, aspect matching
-  Vision/
-    Garment and portrait segmentation
-  Logic/
-    Compare, gates, switches, branching, math, random choice
-  Text/
-    String, regex, split, concatenate, templates, scheduling
-  Batch/
-    Image batch, list helpers, any-list split
-  Resolution/
-    Smart resolution picker, ratio resize, preset resize, padding removal
-  Loaders/
-    Indexed LoRA, diffusion model, VAE, and CLIP loaders
-  Utils/
-    Sliders, booleans, universal pipe
-  VTON/
-    VTON Ultimate Processor
-```
-
----
-
-## Requirements
-
-```text
-numpy
-Pillow
-scipy
-opencv-python
-scikit-image>=0.18.0
-transformers>=4.20.0
-tqdm>=4.62.0
-huggingface_hub>=0.16.0
-```
-
-`VTON Ultimate Processor (NH)` also needs ONNX Runtime, which is not installed
-automatically (the CPU wheel would overwrite an existing GPU build). Install one:
-`python -m pip install onnxruntime-gpu` (NVIDIA) or `python -m pip install onnxruntime` (CPU).
-
-Most image/text/logic nodes use common ComfyUI dependencies. VTON and Vision
-nodes download model assets on first use (`transformers` SegFormer weights for
-Vision: ~190 MB fashion, ~340 MB face).
-
----
-
-## Development Notes
-
-- Layout: `core/` holds shared helpers and model backends (no nodes); `nodes/<category>/`
-  mirrors the ComfyUI menu, and every module there that defines `NODE_CLASS_MAPPINGS`
-  is registered automatically by `__init__.py` - drop a file in the right folder
-  and restart. VTON's vendored preprocessing lives in `nodes/vton/preprocess/`.
-- Tests: `python -m pytest custom_nodes/NH-Nodes/tests -q` from the ComfyUI root.
-- Restart ComfyUI after installing or updating nodes.
-- If a node appears cached in the browser, refresh the ComfyUI page after restart.
-- `Image Tile (NH)` and `Image Untile (NH)` must pass `tile_data` directly through
-  the workflow so reconstruction uses the original tile layout.
-
----
+- **Guide:** [English](docs/en/README.md) · [Tiếng Việt](docs/vi/README.md)
+- **PDF guides:** [English](https://github.com/jetthuangai/NH-Nodes/releases/latest/download/NH-Nodes-Guide-EN.pdf) ·
+  [Tiếng Việt](https://github.com/jetthuangai/NH-Nodes/releases/latest/download/NH-Nodes-Huong-dan-VI.pdf)
+- **Changelog:** [docs/CHANGELOG.md](docs/CHANGELOG.md) — read it when updating: some fixes change outputs on purpose.
 
 ## License
 
-NH-Nodes' own code is [MIT](LICENSE). `VTON Ultimate Processor (NH)` and
-`Portrait Segment (NH)` depend on third-party code or models that are licensed for
-**non-commercial use only**, and the model behind `Garment Segment (NH)` declares no
-license. See [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md) before using these
-three nodes commercially.
+NH-Nodes' own code is [MIT](LICENSE). Some features rely on third-party code or models with other terms — see
+[THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md):
 
-If NH-Nodes helps your workflow, consider starring the repository:
-[github.com/jetthuangai/NH-Nodes](https://github.com/jetthuangai/NH-Nodes)
+- **VTON Ultimate Processor** and **Portrait Segment** are for **non-commercial use only** (CC BY-NC-SA 4.0 code and
+  parsing models; non-commercial face-parsing model).
+- **Garment Segment**'s model does not declare a licence.
+
+## Development
+
+- Layout: `core/` holds shared helpers and model backends (no nodes); `nodes/<category>/` mirrors the menu, and every
+  module there that defines `NODE_CLASS_MAPPINGS` is registered automatically; `web/` holds the frontend extensions.
+- Tests and lint (run from the ComfyUI root / the pack folder):
+
+  ```bash
+  python -m pytest custom_nodes/NH-Nodes/tests -q
+  ruff check .
+  ```
+- Docs assets are generated from the live code: `docs/_tools/build_node_cards.py` (node cards) and
+  `docs/_tools/build_examples.py` (example images), both run from the ComfyUI root.
+
+## Author
+
+[jetthuang.com](https://jetthuang.com) · [Hugging Face](https://huggingface.co/nhathoangfoto) ·
+[Support via PayPal](https://paypal.me/nhathoangfoto). If NH-Nodes helps your work, a ⭐ on GitHub is appreciated.

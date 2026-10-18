@@ -1,0 +1,10 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="360" height="119" viewBox="0 0 360 119" font-family="Inter, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif" role="img" aria-label="Universal Slider Builder (NH) node">
+<rect x="0.5" y="0.5" width="359" height="118" rx="10" fill="#26282c" stroke="#45484f"/>
+<path d="M0.5 10.5 a10 10 0 0 1 10 -10 h339 a10 10 0 0 1 10 10 v36 h-359 z" fill="#34373d"/>
+<circle cx="17" cy="17" r="4.5" fill="#F6AD55"/>
+<text x="28" y="22" font-size="14" font-weight="600" fill="#EEF0F3">Universal Slider Builder (NH)</text>
+<text x="28" y="38" font-size="10.5" fill="#9AA0A8" font-family="'JetBrains Mono', Consolas, 'Courier New', monospace">NH_UniversalSliderBuilder · Utils</text>
+<rect x="12" y="56" width="336" height="46" rx="7" fill="#1d1f22" stroke="#3a3d43"/>
+<text x="22" y="72" font-size="11.5" fill="#9AA0A8">config</text>
+<text x="22" y="92" font-size="11.5" fill="#E6E8EB" font-family="'JetBrains Mono', Consolas, 'Courier New', monospace"># Syntax: name, type, default…</text>
+</svg>
