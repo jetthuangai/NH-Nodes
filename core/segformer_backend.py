@@ -50,6 +50,13 @@ MODEL_SPECS = {
         "legacy_dirs": ("face_parsing", "RMBG/segformer_face"),
         "signature": {1: "skin", 13: "hair", 17: "neck"},
     },
+    # FASHN Human Parser (2025): SegFormer-B4 for fashion, 18 classes (clothes, accessories and body parts), 576 x 384
+    "fashn_human_parser": {
+        "repo_id": "fashn-ai/fashn-human-parser",
+        "revision": "1f80c34dbab321c5730dda5c3fea279fd3e97498",
+        "legacy_dirs": (),
+        "signature": {3: "top", 8: "bag", 17: "jewelry"},
+    },
 }
 
 _LOADED = {}

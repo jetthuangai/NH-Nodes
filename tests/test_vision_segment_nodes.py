@@ -190,14 +190,23 @@ def test_nodes_end_to_end_with_stub_backend(monkeypatch):
     monkeypatch.setattr(vs, "detect_faces", lambda img: [])  # no face: Portrait Segment parses the whole frame
     image = torch.rand(2, 8, 8, 3)
 
-    mask, rgba, mask_img = vs.NH_GarmentSegment().segment(image, "lower_garment", True, 0, 0, True, "cpu")
+    mask, rgba, mask_img, segs = vs.NH_GarmentSegment().segment(image, "lower_garment", True, 0, 0, True, "cpu",
+                                                                 "fashionpedia")
     assert mask.shape == (2, 8, 8) and rgba.shape == (2, 8, 8, 4) and mask_img.shape == (2, 8, 8, 3)
     assert mask[0, 4:, :].all() and mask[0, :4, :].sum() == 0
+    assert [seg.label for seg in segs[0].segments] == ["top", "pants"] and len(segs) == 2  # Fashionpedia names
 
-    mask, rgba, mask_img = vs.NH_GarmentSegment().segment(image, "all_garments", True, 0, 0, False, "cpu")
+    mask, rgba, mask_img, _ = vs.NH_GarmentSegment().segment(image, "all_garments", True, 0, 0, False, "cpu",
+                                                             "fashionpedia")
     assert mask.all() and rgba[:, :, :, 3].all() and mask_img.all()
 
-    mask, _, _ = vs.NH_PortraitSegment().segment(image, 0, 0, False, "cpu", nose=True, face=False)
+    # FASHN (the default): 2 is hair and 7 a belt there, so only the belt is a garment
+    mask, _, _, segs = vs.NH_GarmentSegment().segment(image, "all_garments", True, 0, 0, False, "cpu")
+    assert mask[0, 4:, :].all() and mask[0, :4, :].sum() == 0
+    assert [seg.label for seg in segs[0].segments] == ["hair", "belt"]
+
+    mask, _, _, segs = vs.NH_PortraitSegment().segment(image, 0, 0, False, "cpu", nose=True, face=False)
+    assert [seg.label for seg in segs[0].segments] == ["nose", "eyebrows"]  # CelebAMask-HQ: 2 nose, 7 right brow
     assert mask.shape == (2, 8, 8)
     assert mask[0, :4, :].all() and mask[0, 4:, :].sum() == 0  # label 2 is nose in the face model
 
@@ -321,9 +330,14 @@ def test_garment_labels_refine_a_crop_of_the_model_shape_around_the_clothes(monk
 
 
 def test_input_types_expose_expected_widgets():
-    garment = vs.NH_GarmentSegment.INPUT_TYPES()["required"]
-    assert garment["part"][0] == ["upper_garment", "lower_garment", "footwear", "headwear", "all_garments"]
+    spec = vs.NH_GarmentSegment.INPUT_TYPES()
+    garment = spec["required"]
+    assert garment["part"][0] == ["upper_garment", "lower_garment", "footwear", "headwear", "all_garments", "dress",
+                                  "bag", "belt", "scarf", "glasses", "jewelry"]
     assert garment["part"][1]["default"] == "upper_garment"
+    # the model choice is optional, so prompts saved before it existed still validate
+    assert spec["optional"]["model"][0] == ["fashn", "fashionpedia"] and spec["optional"]["model"][1]["default"] == "fashn"
+    assert vs.NH_GarmentSegment.RETURN_NAMES[-1] == "segs" and vs.NH_PortraitSegment.RETURN_NAMES[-1] == "segs"
     portrait = vs.NH_PortraitSegment.INPUT_TYPES()["required"]
     for region in ("face", "neck", "hair", "eyes", "lips", "nose", "eyebrows", "ears"):
         assert portrait[region][1]["default"] is True
@@ -361,3 +375,58 @@ def test_predict_labels_caps_logit_size_and_restores_input_size(monkeypatch):
     monkeypatch.setattr(backend, "_MAX_LOGIT_SIDE", 16)
     labels = backend.predict_labels(bundle, np.zeros((40, 30, 3), np.uint8))
     assert labels.shape == (40, 30) and labels.dtype == np.int64
+
+
+def test_fashn_parts_map_to_its_classes():
+    labels = np.array([[3, 4, 5, 6], [7, 8, 9, 10], [11, 15, 17, 2]])
+    build = vs.NH_GarmentSegment.build_mask
+    assert build(labels, "upper_garment", model="fashn").tolist() == [[1, 1, 0, 0], [0, 0, 0, 1], [0, 0, 0, 0]]
+    assert build(labels, "lower_garment", model="fashn").tolist() == [[0, 0, 1, 1], [1, 0, 0, 0], [0, 0, 0, 0]]
+    assert build(labels, "footwear", model="fashn")[2, 1] == 1 and build(labels, "all_garments", model="fashn")[2, 1] == 0
+    for part, value in (("dress", 4), ("bag", 8), ("headwear", 9), ("glasses", 11), ("jewelry", 17)):
+        assert build(labels, part, model="fashn").sum() == 1 and build(labels, part, model="fashn")[labels == value].all()
+    # the same parts on Fashionpedia ids; it has no jewelry class
+    fashionpedia = np.array([[11, 25, 20, 26], [14, 12, 35, 1]])
+    assert build(fashionpedia, "dress").tolist() == [[1, 0, 0, 0], [0, 1, 0, 0]]
+    assert build(fashionpedia, "belt").tolist() == [[0, 0, 1, 0], [0, 0, 1, 0]]
+    assert not build(fashionpedia, "jewelry").any()
+
+
+def test_parts_frame_matches_the_enlarged_label_map_pixel_for_pixel():
+    rng = np.random.default_rng(0)
+    work = rng.integers(0, 4, (13, 17))
+    rows, cols = vs._nearest_index(50, 13), vs._nearest_index(61, 17)
+    full = work[np.ix_(rows, cols)]
+    frame = vs.parts_frame(work, {"a": {1}, "bc": {2, 3}, "none": {9}}, (50, 61))
+    assert [seg.label for seg in frame.segments] == ["a", "bc"] and (frame.height, frame.width) == (50, 61)
+    for seg, ids in zip(frame.segments, ({1}, {2, 3})):
+        canvas = np.zeros((50, 61), bool)
+        x1, y1, x2, y2 = seg.box
+        canvas[y1:y2, x1:x2] = seg.mask.numpy()
+        assert (canvas == np.isin(full, list(ids))).all()
+
+
+def test_labels_at_work_size_shrinks_big_frames_only(monkeypatch):
+    shown = []
+    monkeypatch.setattr(vs, "WORK_SIDE", 64)
+
+    def labeler(bundle, picture):
+        shown.append(picture.shape[:2])
+        return np.ones(picture.shape[:2], np.int64)
+
+    full, work = vs.labels_at_work_size(labeler, {}, np.zeros((100, 200, 3), np.float32))
+    assert shown == [(32, 64)] and full.shape == (100, 200) and work.shape == (32, 64)
+    full, work = vs.labels_at_work_size(labeler, {}, np.zeros((30, 40, 3), np.float32))
+    assert full is work and full.shape == (30, 40)
+
+
+def test_garment_jewelry_with_fashionpedia_says_why_it_is_empty(monkeypatch, capsys):
+    monkeypatch.setattr(vs, "load_segformer", lambda name, device: {"name": name})
+    monkeypatch.setattr(vs, "predict_labels", lambda bundle, img, confidence=False: (
+        np.zeros(img.shape[:2], np.int64), np.ones(img.shape[:2], np.float16)) if confidence else np.zeros(
+        img.shape[:2], np.int64))
+    monkeypatch.setattr(vs, "offload", lambda bundle: None)
+    monkeypatch.setattr(vs, "detect_faces", lambda img: [])
+    mask, _, _, _ = vs.NH_GarmentSegment().segment(torch.rand(1, 8, 8, 3), "jewelry", True, 0, 0, False, "cpu",
+                                                   "fashionpedia")
+    assert not mask.any() and "no jewelry class" in capsys.readouterr().out

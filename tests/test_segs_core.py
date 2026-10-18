@@ -371,3 +371,14 @@ def test_segs_select_reads_vietnamese_labels_but_not_formula_words():
     assert count == 1 and picked[0].segments[0].label == "hair"
     picked, _, count = segs_nodes.NH_SegsSelect().select((frame,), "tất cả", 0.0, 0.0, 1.0, "score", 0, 0)
     assert count == 0  # "tất cả" is the formula word all, not a label named "all"
+
+
+def test_merge_segs_mixes_instances_of_the_same_pictures():
+    a = (_frame(_seg("person", 0.9, (0, 0, 10, 10))),)
+    b = (_frame(_seg("dress", 1.0, (2, 2, 8, 8))),)
+    merged = segs.merge_segs(a, None, b)
+    assert [seg.label for seg in merged[0].segments] == ["person", "dress"] and segs.merge_segs(a) is a
+    with pytest.raises(ValueError, match="different pictures"):
+        segs.merge_segs(a, (_frame(height=20, width=20),))
+    (mask,) = segs_nodes.NH_SegsCompose().compose(a, "person - dress", segs_2=b)
+    assert int(mask.sum()) == 100 - 36

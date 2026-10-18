@@ -133,6 +133,21 @@ def instance_masks(segs):
     return masks, labels
 
 
+def merge_segs(*all_segs):
+    """One NH_SEGS from several of the same pictures (None entries are skipped): each frame gets the instances of
+    all of them, in order. Raises when they do not belong to the same pictures."""
+    present = [segs for segs in all_segs if segs is not None]
+    first = present[0]
+    for other in present[1:]:
+        if len(other) != len(first) or any((a.height, a.width) != (b.height, b.width) for a, b in zip(first, other)):
+            raise ValueError("[NH-Nodes] The segs to mix come from different pictures: connect segs found on the same "
+                             "image batch.")
+    if len(present) == 1:
+        return first
+    return tuple(frame.with_segments([seg for segs in present for seg in segs[index].segments])
+                 for index, frame in enumerate(first))
+
+
 def count_segments(segs):
     return sum(len(frame.segments) for frame in segs)
 

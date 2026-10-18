@@ -6,6 +6,7 @@ All of them work on the instances SAM3 Segment (NH) finds; the logic lives in co
 from ...core.segs import (
     SEGS_TYPE,
     SORT_ORDERS,
+    merge_segs,
     count_segments,
     expression_labels,
     expression_masks,
@@ -83,6 +84,11 @@ class NH_SegsCompose:
     @classmethod
     def INPUT_TYPES(cls):
         return {
+            "optional": {
+                "segs_2": (SEGS_TYPE, {"tooltip": "More instances of the same pictures (from another SAM3 Segment, "
+                                                  "Garment, Portrait or Body Segment), mixed into the formula."}),
+                "segs_3": (SEGS_TYPE, {"tooltip": "And more."}),
+            },
             "required": {
                 "segs": (SEGS_TYPE,),
                 "expression": ("STRING", {
@@ -108,7 +114,8 @@ class NH_SegsCompose:
     )
     SEARCH_ALIASES = ["segs compose", "mask formula", "combine masks", "subtract mask", "background mask"]
 
-    def compose(self, segs, expression):
+    def compose(self, segs, expression, segs_2=None, segs_3=None):
+        segs = merge_segs(segs, segs_2, segs_3)
         tree = parse_expression(expression)
         labels = [seg.label for frame in segs for seg in frame.segments]
 
