@@ -1154,6 +1154,59 @@ def ex_sam3_formula():
     return render_panel([top, bottom])
 
 
+def require_sapiens2():
+    """Skip the Body Segment example unless the Sapiens2 0.4b weights are on disk (this script never downloads)."""
+    try:
+        found = importlib.import_module("NH-Nodes.core.sapiens2_backend").model_path("0.4b", download=False)
+    except Exception as error:
+        raise Skip(f"cannot look for the Sapiens2 weights: {error}") from error
+    if not found:
+        raise Skip("the Sapiens2 0.4b weights are not installed (this script never downloads models)")
+
+
+BODY_FORMULAS = ("skin", "tóc, môi", "clothes", "background")
+
+
+@example("body-segment.jpg")
+def ex_body_segment():
+    """What Body Segment shows on the node itself, for a few region formulas (one node run each)."""
+    require_sapiens2()
+    import tempfile
+
+    import folder_paths
+
+    image = photo("astronaut")
+    device = "cuda" if GPU and torch.cuda.is_available() else "cpu"
+    shown = {}
+    with tempfile.TemporaryDirectory() as folder:
+        previous = folder_paths.get_temp_directory()
+        folder_paths.set_temp_directory(folder)  # the node saves its preview into ComfyUI's temp folder: use ours
+        try:
+            for regions in BODY_FORMULAS:
+                result = run("NH_BodySegment", image=to_tensor(image), regions=regions, model_size="0.4b",
+                             mask_expand=0, mask_blur=0, fill_holes=False, device=device, show_preview=True)
+                with Image.open(Path(folder) / result["ui"]["images"][0]["filename"]) as picture:
+                    shown[regions] = picture.convert("RGB")
+        finally:
+            folder_paths.set_temp_directory(previous)
+
+    def picture_only(regions):  # the report is written on a strip under the picture: keep the picture
+        return shown[regions].crop((0, 0, image.width, image.height))
+
+    top = Row(
+        [Tile(image, "image", "input photo"), ARROW,
+         Tile(shown["skin"], "regions: skin", "the face (eyes and brows in, lips apart) and the hands; the report is underneath")],
+        "Body Segment (NH)", "what the node shows on itself: the mask is bright, the rest darkened", max_h=470,
+    )
+    bottom = Row(
+        [Tile(picture_only("tóc, môi"), "tóc, môi", "Vietnamese works: hair and lips", aspect=1.0),
+         Tile(picture_only("clothes"), "clothes", "everything the person wears", aspect=1.0),
+         Tile(picture_only("background"), "background", "everything outside the person", aspect=1.0)],
+        "More regions", "one Body Segment (NH) each; the bright part is its mask output", max_h=330,
+    )
+    return render_panel([top, bottom])
+
+
 # ---------------------------------------------------------------------------------------------------------------
 # Banner
 # ---------------------------------------------------------------------------------------------------------------

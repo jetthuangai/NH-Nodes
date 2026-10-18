@@ -311,7 +311,7 @@ def test_garment_labels_refine_a_crop_of_the_model_shape_around_the_clothes(monk
         shown.append(img.shape[:2])
         labels = np.zeros(img.shape[:2], np.int64)
         if len(shown) == 1:  # the first look at the whole picture: the clothes, under another label, unsure
-            labels[50:150, 120:180] = 3
+            labels[100:300, 240:360] = 3
             return labels, np.full(img.shape[:2], 0.5, np.float16)
         labels[np.asarray(img)[..., 0] == 9] = 5  # the close look
         return labels, np.full(img.shape[:2], 0.9, np.float16)
@@ -319,12 +319,12 @@ def test_garment_labels_refine_a_crop_of_the_model_shape_around_the_clothes(monk
     monkeypatch.setattr(vs, "predict_labels", parser)
     monkeypatch.setattr(vs, "detect_faces", lambda img: [])
     bundle = {"processor": types.SimpleNamespace(size={"height": 576, "width": 384})}
-    image = np.zeros((200, 300, 3), np.uint8)
-    image[50:150, 120:180, 0] = 9
+    image = np.zeros((400, 600, 3), np.uint8)
+    image[100:300, 240:360, 0] = 9
     canvas = vs.garment_labels(bundle, image)
     crop_h, crop_w = shown[1]
-    assert shown[0] == (200, 300) and abs(crop_w / crop_h - 384 / 576) < 0.02  # the model's 2:3, not squeezed
-    assert (canvas[50:150, 120:180] == 5).all() and set(np.unique(canvas)) == {0, 5}
+    assert shown[0] == (400, 600) and abs(crop_w / crop_h - 384 / 576) < 0.02  # the model's 2:3, not squeezed
+    assert (canvas[100:300, 240:360] == 5).all() and set(np.unique(canvas)) == {0, 5}
 
     shown.clear()
     monkeypatch.setattr(vs, "predict_labels", lambda bundle, img, confidence=False: shown.append(1) or (
@@ -489,3 +489,22 @@ def test_fashn_gets_the_area_resize_it_was_trained_with(monkeypatch):
     face = {"processor": _Processor(512, 512), "model": _Model(), "name": "face_parsing"}
     backend.predict_labels(face, np.zeros((700, 700, 3), np.uint8))  # under 2x: the processor resizes it
     assert shown == [(576, 384), (576, 384), (700, 700)]
+
+
+def test_parser_segs_carry_their_model_and_answer_to_its_words(monkeypatch):
+    segs_core = importlib.import_module("NH-Nodes.core.segs")
+    work = np.array([[3, 4, 10, 5], [6, 7, 12, 1]])  # FASHN: top, dress, scarf, skirt / pants, belt, arms, face
+    frame = vs.parts_frame(work, vs.FASHN_SEGS, (2, 4), "fashn_human_parser")
+    assert {seg.source for seg in frame.segments} == {"fashn_human_parser"}
+    upper = segs_core.evaluate(segs_core.parse_expression("upper garment"), frame).numpy()
+    assert upper.tolist() == [[True, True, True, False], [False, False, False, False]]
+    lower = segs_core.evaluate(segs_core.parse_expression("lower_garment"), frame).numpy()
+    assert lower.tolist() == [[False, False, False, True], [True, True, False, False]]
+    face = vs.parts_frame(np.array([[1, 4, 13, 17]]), vs.PORTRAIT_SEGS, (1, 4), "face_parsing")
+    assert segs_core.evaluate(segs_core.parse_expression("face"), face).numpy().tolist() == [[True, True, False, False]]
+
+
+def test_image_batches_of_any_float_type_are_read():
+    for dtype in (torch.float32, torch.float16, torch.bfloat16):
+        (picture,) = vs._image_batch_to_numpy(torch.full((1, 3, 4, 3), 0.5, dtype=dtype))
+        assert picture.dtype == np.float32 and picture.shape == (3, 4, 3) and np.allclose(picture, 0.5)

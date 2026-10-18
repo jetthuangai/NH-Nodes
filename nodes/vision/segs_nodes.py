@@ -11,7 +11,7 @@ from ...core.segs import (
     expression_labels,
     expression_masks,
     instance_masks,
-    label_matches,
+    matching,
     parse_expression,
     parse_label_list,
     preview_batch,
@@ -88,6 +88,12 @@ class NH_SegsCompose:
                 "segs_2": (SEGS_TYPE, {"tooltip": "More instances of the same pictures (from another SAM3 Segment, "
                                                   "Garment, Portrait or Body Segment), mixed into the formula."}),
                 "segs_3": (SEGS_TYPE, {"tooltip": "And more."}),
+                "check_same_photo": ("BOOLEAN", {
+                    "default": True,
+                    "tooltip": "Refuse segs of different photos of the same size (each segs keeps a small print of "
+                               "its picture). Turn off to mix segs of edits of one photo, such as a new background "
+                               "or a relight.",
+                }),
             },
             "required": {
                 "segs": (SEGS_TYPE,),
@@ -114,13 +120,12 @@ class NH_SegsCompose:
     )
     SEARCH_ALIASES = ["segs compose", "mask formula", "combine masks", "subtract mask", "background mask"]
 
-    def compose(self, segs, expression, segs_2=None, segs_3=None):
-        segs = merge_segs(segs, segs_2, segs_3)
+    def compose(self, segs, expression, segs_2=None, segs_3=None, check_same_photo=True):
+        segs = merge_segs(segs, segs_2, segs_3, check_prints=check_same_photo)
         tree = parse_expression(expression)
-        labels = [seg.label for frame in segs for seg in frame.segments]
 
         def found(pattern):
-            return any(label_matches(label, pattern) for label in labels)
+            return any(matching(frame.segments, pattern) for frame in segs)
 
         unmatched = [pattern for pattern in expression_labels(tree) if not found(pattern)]
         for pattern in unmatched:

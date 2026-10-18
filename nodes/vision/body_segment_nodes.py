@@ -16,8 +16,10 @@ from ...core.segs import (
     SEGS_TYPE,
     EmptyExpressionError,
     ExpressionError,
+    add_aliases,
     evaluate,
     expression_terms,
+    fold_label,
     normalize_label,
     parse_concepts,
     preview_picture,
@@ -104,8 +106,16 @@ REGIONS = {
     "left shoe": _ids("left_shoe"), "right shoe": _ids("right_shoe"),
 }
 # Vietnamese "tay" and "chân" name the whole limb, hand or foot included ("cánh tay" is the arm alone, "bàn tay" the
-# hand); vi_words turns them into "arm" and "leg", the limb alone in English.
-WHOLE_LIMBS = {"tay": ARMS | HANDS, "chân": LEGS | FEET, "đôi chân": LEGS | FEET}
+# hand); vi_words turns them into "arm" and "leg", the limb alone in English, so the request keeps them apart under
+# their own name (see _whole_limbs).
+WHOLE_LIMBS = {
+    "tay": ARMS | HANDS, "đôi tay": ARMS | HANDS, "hai tay": ARMS | HANDS,
+    "chân": LEGS | FEET, "đôi chân": LEGS | FEET, "hai chân": LEGS | FEET,
+    "tay trái": _ids("left_lower_arm", "left_upper_arm", "left_hand"),
+    "tay phải": _ids("right_lower_arm", "right_upper_arm", "right_hand"),
+    "chân trái": _ids("left_lower_leg", "left_upper_leg", "left_foot"),
+    "chân phải": _ids("right_lower_leg", "right_upper_leg", "right_foot"),
+}
 # Words people try that Sapiens2 has no class for, and what to do instead.
 _IN_FACE = "eyes, eyebrows, nose and ears are part of 'face' here; Portrait Segment masks them one by one"
 _ACCESSORY = ("Sapiens2 puts hats, bags and other accessories in one class, 'accessories'; for one of them use "
@@ -126,27 +136,39 @@ PARTS = {
 MODEL_SIZES = tuple(sapiens2.MODELS)
 _EXAMPLES = "skin, hair, face, arms, hands, legs, feet, torso, lips, teeth, glasses, clothes, top, bottom, shoes"
 _VIETNAMESE = "da, tóc, mặt, môi, răng, tay, chân, áo, quần, giày"
-# Sapiens2 is sure of the people it sees (median confidence 0.8 to 1.0 on real photos, faded scans included) and unsure
-# of the people it invents on a picture without any (0.33 to 0.36 on a facade and a cafe's shelves); used only when no
-# face is found.
+# With no face found, Sapiens2's first look must be sure (0.9 or more) of this share of what it labels as people: it
+# was 0.61 to 0.98 on 32 faceless photos of people (backs, bodies without heads, a mannequin) and 0.00 to 0.41 on 17
+# pictures of no one (a facade, a cafe, an elephant, products, masks), with PIL's and with ComfyUI's JPEG decoder.
 FIRST_LOOK_FLOOR = 0.5
 
 _SIDES = ("left and right are the person's own sides: on the right of the picture when they face the camera")
 _FACE_CLASS = ("face is one Sapiens2 class with the neck, eyes, brows and beard (skin includes it); Portrait Segment "
                "masks the parts of a face")
+_NOBODY = "no person found (none Sapiens2 was sure of, and no face)"
+# the words above in singular (fold_label), so "lower leg", "accessory" or "dresses" are read like the listed form
+_FOLDED_REGIONS = {fold_label(word): ids for word, ids in REGIONS.items()}
+_FOLDED_NOT_REGIONS = {fold_label(word): advice for word, advice in NOT_REGIONS.items()}
+# Segs Compose and Segs Select read Body Segment's words on its segs: "skin" is the face, torso, arms... parts.
+add_aliases("sapiens2", REGIONS, PARTS)
 
 
 def region_ids(written, english, status):
     """Class ids a word of the request covers, or None when Body Segment has no such region."""
     if status == "translated" and normalize(written) in WHOLE_LIMBS:
         return WHOLE_LIMBS[normalize(written)]
-    return REGIONS.get(normalize_label(english))
+    word = normalize_label(english)
+    return REGIONS.get(word, _FOLDED_REGIONS.get(fold_label(word)))
 
 
-def region_mask(labels, word):
-    """Bool mask of the classes ``word`` covers in a Sapiens2 label map, or None for a word Body Segment lacks."""
-    ids = REGIONS.get(normalize_label(word))
-    return None if ids is None else np.isin(labels, list(ids))
+def _whole_limbs(tree):
+    """The parsed request with "tay", "chân"... named as written, so "tay - cánh tay" (whole arms minus arms) leaves the
+    hands instead of nothing: both would be "arm" in English."""
+    if tree[0] == "label":
+        word = normalize(tree[2])
+        return ("label", word, tree[2], tree[3]) if tree[3] == "translated" and word in WHOLE_LIMBS else tree
+    if tree[0] == "keyword":
+        return tree
+    return (tree[0], *(_whole_limbs(child) for child in tree[1:]))
 
 
 def check_regions(tree):
@@ -166,8 +188,8 @@ def check_regions(tree):
             named[word] = named.get(word, frozenset()) | ids
         elif status == "unknown":
             problems.append(f"{shown} is not in the Vietnamese word list; write it in English or use {_VIETNAMESE}")
-        elif word in NOT_REGIONS:
-            problems.append(f"{shown} is not a body region: {NOT_REGIONS[word]}")
+        elif fold_label(word) in _FOLDED_NOT_REGIONS:
+            problems.append(f"{shown} is not a body region: {_FOLDED_NOT_REGIONS[fold_label(word)]}")
         elif {"and", "or", "not"} & set(word.split()):
             problems.append(f"{shown} is not a body region; combine regions with + or a comma (skin + hair), remove "
                             "with - and invert with ~")
@@ -199,18 +221,19 @@ def describe(tree, counts, pixels, where="picture"):
                 lines.append("background = everything outside the people")
             continue
         ids = region_ids(written, english, status)
-        name = f"{written} -> {english}" if status == "translated" else written
+        name = f"{written} -> {english}" if status == "translated" and word != normalize(written) else written
         lines.append(f"{name}: {_share(int(sum(counts[i] for i in ids)), pixels, where)}")
+        folded = fold_label(word)
         if word.startswith(("left ", "right ")):
             notes.append(_SIDES)
-        if word in ("skin", "body skin", "face", "neck", "face neck", "face skin", "head"):
+        if folded in ("skin", "body skin", "face", "neck", "face neck", "face skin", "head"):
             notes.append(_FACE_CLASS)
-        if word in ("dress", "wedding dress", "ao dai"):
+        if folded in ("dress", "wedding dress", "ao dai"):
             notes.append(f"{name}: Sapiens2 labels a dress as a top (upper clothes)")
-        if word == "skirt":
+        if folded == "skirt":
             notes.append("skirt: the skirt of a dress counts as a top in Sapiens2")
         if status == "translated" and normalize(written) in WHOLE_LIMBS:
-            notes.append(f"{written}: the whole limb, {'hands' if ids == WHOLE_LIMBS['tay'] else 'feet'} included")
+            notes.append(f"{written}: the whole limb, {'hands' if ids & HANDS else 'feet'} included")
     return lines + list(dict.fromkeys(notes))
 
 
@@ -285,7 +308,7 @@ class NH_BodySegment:
 
     def segment(self, image, regions, model_size, mask_expand, mask_blur, fill_holes, device, show_preview=True):
         try:
-            tree = parse_concepts(regions)
+            tree = _whole_limbs(parse_concepts(regions))
         except EmptyExpressionError:
             raise ValueError("[NH-Nodes] Body Segment: write at least one region, e.g. 'skin' or 'hair'.") from None
         except ExpressionError as exc:
@@ -308,12 +331,15 @@ class NH_BodySegment:
                 masks.append(mask_t)
                 cutouts.append(rgba_t)
                 mask_images.append(mask_img_t)
-                frames.append(parts_frame(work, PARTS, size))
+                frames.append(parts_frame(work, PARTS, size, "sapiens2"))
         finally:
             sapiens2.offload(bundle)
         frames = stamped(frames, image)
         where = "picture" if len(frames) == 1 else "pictures"
         lines = describe(tree, np.sum(counts, axis=0), sum(pixels), where)
+        empty = [str(index + 1) for index, found in enumerate(counts) if not found[1:].any()]
+        if empty:
+            lines.append(_NOBODY if len(frames) == 1 else f"{_NOBODY} in image(s) {', '.join(empty)}")
         report = "\n".join([f"Body Segment (Sapiens2 {model_size}): {len(frames)} image(s)", *lines])
         mask_batch = torch.cat(masks, 0)
         result = (mask_batch, torch.cat(cutouts, 0), torch.cat(mask_images, 0), frames, report)
@@ -327,7 +353,8 @@ class NH_BodySegment:
                 # the parts the request names and keeps: "skin - lips" shows the skin parts, not the lips
                 shown = frame.with_segments(seg for seg in frame.segments
                                             if PARTS[seg.label] & wanted and _mostly_inside(seg, inside))
-                notes = lines if len(frames) == 1 else describe(tree, counts[index], pixels[index])
+                notes = lines if len(frames) == 1 else describe(tree, counts[index], pixels[index]) + (
+                    [] if counts[index][1:].any() else [_NOBODY])
                 pictures.append(preview_picture(picture, shown, notes, mask=held))
             images = save_temp_previews(pictures, "NH_body")
         except Exception as exc:  # noqa: BLE001 - a preview that cannot be drawn or saved must not lose the run

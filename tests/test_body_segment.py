@@ -24,9 +24,9 @@ def test_region_words_cover_the_right_classes():
     assert bs.REGIONS["mouth"] == bs.LIPS | bs.TEETH | {C["tongue"]}
     assert all(word == bs.normalize_label(word) for word in bs.REGIONS)  # looked up after normalising
     assert set().union(*bs.PARTS.values()) == set(range(1, len(s2.CLASSES)))  # every class has a segs part
-    labels = np.array([[C["hair"], C["upper_lip"]], [0, C["lower_teeth"]]])
-    assert bs.region_mask(labels, "Lips").tolist() == [[False, True], [False, False]]
-    assert bs.region_mask(labels, "wings") is None
+    assert bs.region_ids("Lips", "Lips", "english") == bs.LIPS and bs.region_ids("wings", "wings", "english") is None
+    assert bs.region_ids("tay", "arm", "translated") == bs.ARMS | bs.HANDS  # the whole limb in Vietnamese
+    assert bs.region_ids("cánh tay", "arm", "translated") == bs.ARMS
 
 
 # --- the node, with a stub parser -------------------------------------------------
@@ -267,3 +267,70 @@ def test_real_sapiens2_on_a_photo():
     face, hair = labels == C["face_neck"], labels == C["hair"]
     assert face.mean() > 0.03 and hair.mean() > 0.03
     assert np.nonzero(face)[0].mean() < picture.shape[0] * 0.6  # the face is in the upper part
+
+
+def test_vietnamese_limbs_are_whole_and_kept_apart_from_the_english_word(monkeypatch):
+    (mask, _, _, _, report), labels, _, _ = _run(monkeypatch, "tay - cánh tay")
+    assert (mask[0].numpy() > 0.5).tolist() == np.isin(labels, list(bs.HANDS)).tolist()  # the hands: none here
+    (mask, _, _, _, report), labels, _, _ = _run(monkeypatch, "chân")
+    assert (mask[0].numpy() > 0.5).tolist() == np.isin(labels, list(bs.LEGS | bs.FEET)).tolist()
+    assert "chân: the whole limb, feet included" in report and "chân ->" not in report
+    assert bs.WHOLE_LIMBS["tay trái"] == {C["left_lower_arm"], C["left_upper_arm"], C["left_hand"]}
+    (mask, _, _, _, _), labels, _, _ = _run(monkeypatch, "tay trái")
+    assert (mask[0].numpy() > 0.5).tolist() == np.isin(labels, list(bs.WHOLE_LIMBS["tay trái"])).tolist()
+
+
+def test_nobody_found_is_said(monkeypatch):
+    monkeypatch.setattr(bs, "find_faces", lambda picture, second_look=True: [])
+    monkeypatch.setattr(bs.sapiens2, "load", lambda size, device: {"size": size})
+    monkeypatch.setattr(bs.sapiens2, "offload", lambda bundle: None)
+    monkeypatch.setattr(bs.sapiens2, "predict_labels", lambda bundle, picture, confidence=False: (
+        np.zeros(picture.shape[:2], np.int64), np.full(picture.shape[:2], 0.9, np.float16)))
+    drawn = []
+    monkeypatch.setattr(bs, "preview_picture", lambda picture, frame, notes, mask=None: drawn.append(notes) or picture)
+    monkeypatch.setattr(bs, "save_temp_previews", lambda pictures, prefix: [])
+    labels, image = _picture()
+    batch = torch.cat([image, torch.zeros_like(image)])
+    out = bs.NH_BodySegment().segment(batch, "skin", "0.4b", 0, 0, False, "cpu", True)
+    report = out["result"][4]
+    assert f"{bs._NOBODY} in image(s) 1, 2" in report
+    assert drawn[0][-1] == bs._NOBODY and drawn[1][-1] == bs._NOBODY  # each preview has its own notes
+
+
+def test_batch_previews_get_their_own_picture_s_numbers(monkeypatch):
+    drawn = []
+    monkeypatch.setattr(bs, "preview_picture", lambda picture, frame, notes, mask=None: drawn.append(notes) or picture)
+    monkeypatch.setattr(bs, "find_faces", lambda picture, second_look=True: [])
+    monkeypatch.setattr(bs.sapiens2, "load", lambda size, device: {"size": size})
+    monkeypatch.setattr(bs.sapiens2, "offload", lambda bundle: None)
+    monkeypatch.setattr(bs.sapiens2, "predict_labels", lambda bundle, picture, confidence=False: (
+        np.rint(picture[..., 0] / 8.0).astype(np.int64), np.full(picture.shape[:2], 0.9, np.float16)))
+    monkeypatch.setattr(bs, "save_temp_previews", lambda pictures, prefix: [])
+    labels, image = _picture()
+    half = image.clone()
+    half[:, :, : W // 2] = 0  # the left half of the picture is empty
+    bs.NH_BodySegment().segment(torch.cat([image, half]), "hair", "0.4b", 0, 0, False, "cpu", True)
+    whole = 100.0 * (labels == C["hair"]).sum() / labels.size
+    cut = 100.0 * (labels[:, W // 2:] == C["hair"]).sum() / labels.size
+    assert drawn[0][0] == f"hair: {whole:.1f}% of the picture" and drawn[1][0] == f"hair: {cut:.1f}% of the picture"
+
+
+def test_compose_reads_body_words_on_body_segs(monkeypatch):
+    segs_nodes = importlib.import_module("NH-Nodes.nodes.vision.segs_nodes")
+    (_, _, _, segs, _), labels, _, _ = _run(monkeypatch, "skin")
+    compose = segs_nodes.NH_SegsCompose().compose
+    for formula, ids in (("skin", bs.SKIN), ("da", bs.SKIN), ("arm", bs.ARMS), ("tay", bs.ARMS), ("clothes", bs.CLOTHES),
+                         ("quần", bs.BOTTOM), ("skin - face", bs.SKIN - bs.FACE), ("head", bs.FACE | bs.HAIR)):
+        (mask,) = compose(segs, formula)
+        assert (mask[0].numpy() > 0.5).tolist() == np.isin(labels, list(ids)).tolist(), formula
+
+
+def test_region_words_are_read_in_singular_or_plural():
+    for word, region in (("lower leg", "lower legs"), ("upper leg", "upper legs"), ("accessory", "accessories"),
+                         ("dresses", "dress"), ("Sunglass", "sunglasses"), ("calf", "calves")):
+        assert bs.region_ids(word, word, "english") == bs.REGIONS[region], word
+    assert bs.region_ids("cẳng chân", "lower leg", "translated") == bs.REGIONS["lower legs"]
+    tree = bs.parse_concepts("cẳng chân, bắp tay, đùi")
+    assert set(bs.check_regions(tree)) == {"lower leg", "upper arm", "thigh"}
+    with pytest.raises(ValueError, match="part of 'face'"):
+        bs.check_regions(bs.parse_concepts("eyebrow"))

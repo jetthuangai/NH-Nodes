@@ -23,7 +23,7 @@ from ...core.parse_crops import (
     visible,
 )
 from ...core.segformer_backend import load_segformer, offload, predict_labels
-from ...core.segs import SEGS_TYPE, SegsFrame, Segment, stamped
+from ...core.segs import SEGS_TYPE, SegsFrame, Segment, add_aliases, stamped
 
 try:
     from comfy.model_management import throw_exception_if_processing_interrupted
@@ -101,6 +101,12 @@ PORTRAIT_SEGS = {"skin": {1}, "nose": {2}, "glasses": {3}, "eyes": {4, 5}, "eyeb
                  "mouth": {10}, "lips": {11, 12}, "hair": {13}, "hat": {14}, "earrings": {15}, "necklace": {16},
                  "neck": {17}, "clothes": {18}}
 
+# Segs Compose and Segs Select read each node's own words on its segs: "upper garment" is the top, dress and scarf of
+# FASHN's segs, "face" the skin, eyes, brows, nose and lips of Portrait Segment's (see segs.add_aliases).
+add_aliases("fashn_human_parser", FASHN_PARTS, FASHN_SEGS)
+add_aliases("segformer_fashion", {**GARMENT_GROUPS, "all_garments": set().union(*GARMENT_GROUPS.values()),
+                                  **FASHIONPEDIA_EXTRA}, FASHIONPEDIA_SEGS)
+add_aliases("face_parsing", PORTRAIT_REGIONS, PORTRAIT_SEGS)
 
 # ---------------------------------------------------------------------------
 # Mask helpers (pure numpy/cv2, unit-testable without a model)
@@ -161,7 +167,7 @@ def pack_outputs(image_rgb, mask):
 
 def _image_batch_to_numpy(image):
     """ComfyUI IMAGE (B,H,W,3|4) -> list of HxWx3 float32 arrays in [0,1]."""
-    array = image.detach().cpu().numpy().astype(np.float32)
+    array = image.detach().cpu().float().numpy()  # float() first: numpy has no bfloat16
     if array.ndim == 3:
         array = array[None]
     channels = array.shape[-1]
@@ -349,10 +355,11 @@ def _nearest_index(size, work_size, start=0, stop=None):
     return np.minimum((np.arange(start, stop) * work_size) // size, work_size - 1)
 
 
-def parts_frame(work, parts, size):
+def parts_frame(work, parts, size, source="parser"):
     """SegsFrame of a picture of ``size`` (height, width) with one instance per part of ``parts`` (name -> class
     ids) present in the label map ``work``, enlarged to the picture the same way as the mask: each instance is cut
-    from the small map and only its own box is enlarged, so this costs little even on an 8K photo."""
+    from the small map and only its own box is enlarged, so this costs little even on an 8K photo. ``source`` names
+    the model, whose own words Segs Compose then understands (see segs.add_aliases)."""
     height, width = size
     small_h, small_w = work.shape
     # one table lookup per part instead of a comparison per class: the label maps have well under 256 classes
@@ -378,7 +385,7 @@ def parts_frame(work, parts, size):
                             _nearest_index(width, small_w, x1, min(width, x2)))]
         if crop.any():
             segments.append(Segment(name, 1.0, (x1, y1, x1 + crop.shape[1], y1 + crop.shape[0]),
-                                    torch.from_numpy(np.ascontiguousarray(crop)), source="parser"))
+                                    torch.from_numpy(np.ascontiguousarray(crop)), source=source))
     return SegsFrame(height, width, tuple(segments))
 
 
@@ -397,7 +404,7 @@ def _run_batch(image, model_name, device, build_mask, expand, blur, holes, label
             masks.append(mask_t)
             cutouts.append(rgba_t)
             mask_images.append(mask_img_t)
-            frames_out.append(parts_frame(work, parts, labels.shape))
+            frames_out.append(parts_frame(work, parts, labels.shape, model_name))
     finally:
         offload(bundle)
     return torch.cat(masks, 0), torch.cat(cutouts, 0), torch.cat(mask_images, 0), stamped(frames_out, image)
