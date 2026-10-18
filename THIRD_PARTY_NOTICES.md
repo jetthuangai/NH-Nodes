@@ -55,6 +55,11 @@ They are looked up first in the folders registered as `vton_mask` and `nh_nodes`
 | VTON Ultimate Processor | same | `humanparsing/parsing_atr.onnx`, `humanparsing/parsing_lip.onnx` | From the OOTDiffusion/FitDiT checkpoints (CC BY-NC-SA 4.0); trained on the ATR and LIP datasets, which are distributed for research use |
 | Portrait Segment | [`jonathandinu/face-parsing`](https://huggingface.co/jonathandinu/face-parsing) @ `758b82e` | SegFormer fine-tuned on CelebAMask-HQ | Model card: "non-commercial research and educational purposes" |
 | Garment Segment | [`1038lab/segformer_fashion`](https://huggingface.co/1038lab/segformer_fashion) @ `e5bae2d` | SegFormer trained for Fashionpedia classes | No license declared by the uploader (Fashionpedia annotations are CC BY 4.0) |
+| Portrait Segment, Garment Segment | [`opencv/face_detection_yunet`](https://huggingface.co/opencv/face_detection_yunet) @ `3cc26e7` | `yunet/face_detection_yunet_2023mar.onnx`, the YuNet face detector (about 230 KB), and its `LICENSE` file | MIT, Copyright (c) 2020 Shiqi Yu (OpenCV Zoo) |
+
+YuNet is the face detector that Portrait Segment and Garment Segment use to find the people in a
+picture. It runs on the CPU through OpenCV, and its MIT license does not change the "At a glance"
+table: the terms of those two nodes come from their SegFormer models.
 
 ## Software and models you install yourself
 

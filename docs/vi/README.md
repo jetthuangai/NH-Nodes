@@ -5,8 +5,8 @@
 # Hướng dẫn NH-Nodes
 
 NH-Nodes bổ sung **75 node** cho ComfyUI, phục vụ công việc ảnh và sản xuất: nạp và lưu bộ ảnh, chia ô (tile) và ghép ảnh,
-quản lý độ phân giải cho các model hiện nay, công cụ mask, phân đoạn trang phục và khuôn mặt, mask từng instance của bất cứ
-thứ gì bạn gọi tên bằng SAM 3, tạo mask VTON, rẽ nhánh logic, xử lý prompt và văn bản, tiện ích batch và bộ nạp model theo
+quản lý độ phân giải cho các model hiện nay, công cụ mask, phân đoạn trang phục và khuôn mặt, mask của bất cứ thứ gì bạn gọi tên
+bằng SAM 3 qua một công thức ngắn, tạo mask VTON, rẽ nhánh logic, xử lý prompt và văn bản, tiện ích batch và bộ nạp model theo
 chỉ số.
 
 Tài liệu này giải thích từng node: dùng để làm gì, từng đầu vào và đầu ra, và cách node xử lý ở những chi tiết quan trọng.

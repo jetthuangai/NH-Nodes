@@ -170,20 +170,36 @@ def offload(bundle):
         torch.cuda.empty_cache()
 
 
-def predict_labels(bundle, image_uint8):
-    """Run SegFormer on one HxWx3 uint8 RGB array -> HxW int64 label map at input size."""
+def predict_labels(bundle, image_uint8, confidence=False):
+    """Run SegFormer on one HxWx3 uint8 RGB array -> HxW int64 label map at input size.
+
+    With ``confidence`` it returns (labels, HxW float16 probability of each pixel's label), which lets crops of the
+    same picture be merged by how sure each one is (see parse_crops.people_labels).
+    """
     _ensure_on_device(bundle)
     processor, model = bundle["processor"], bundle["model"]
     height, width = image_uint8.shape[:2]
     scale = min(1.0, _MAX_LOGIT_SIDE / max(height, width))
     logit_size = (max(1, round(height * scale)), max(1, round(width * scale)))
 
+    # The processor squeezes the picture to its fixed size anyway; doing that here first, with area averaging, is
+    # many times faster on a big photo than its own resize and keeps fine detail from aliasing.
+    size = getattr(processor, "size", None)
+    if isinstance(size, dict) and "height" in size and "width" in size and (
+            height > 2 * size["height"] or width > 2 * size["width"]):
+        image_uint8 = cv2.resize(image_uint8, (size["width"], size["height"]), interpolation=cv2.INTER_AREA)
     inputs = processor(images=image_uint8, return_tensors="pt")
     inputs = {k: v.to(model.device) for k, v in inputs.items()}
     with torch.no_grad():
         logits = model(**inputs).logits
         logits = F.interpolate(logits, size=logit_size, mode="bilinear", align_corners=False)
-        labels = logits.argmax(dim=1)[0].to(torch.int32).cpu().numpy()
+        best, labels = logits.float().softmax(dim=1)[0].max(dim=0)
+        labels = labels.to(torch.int32).cpu().numpy()
+        best = best.cpu().numpy() if confidence else None
     if labels.shape != (height, width):
         labels = cv2.resize(labels, (width, height), interpolation=cv2.INTER_NEAREST)
+        if best is not None:
+            best = cv2.resize(best, (width, height), interpolation=cv2.INTER_LINEAR)
+    if best is not None:
+        return labels.astype(np.int64), best.astype(np.float16)
     return labels.astype(np.int64)

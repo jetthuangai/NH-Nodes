@@ -77,6 +77,17 @@ _CROP_MARGIN = 0.2  # pass-2 crop margin on each side, as a fraction of the inst
 _CROP_MIN_MARGIN = 16  # px
 _CROP_MAX_ASPECT = 2.0  # pass-2 crops are widened to at most 2:1, the model squeezes them into a square
 _SAMPLE_CHUNK = 1 << 22  # output pixels per grid_sample call when resampling masks
+# SAM 3's masks fade out along the border of the square view it segments: on a 1008 px view the last 3 rows and
+# columns hold logits near 0 even where the object runs off the picture (79% / 23% / 23% of an edge's object pixels
+# still positive), which left a ragged gap along the image edge. That band is lifted to the first row inside it, only
+# where it is still in the fade (see extend_to_border). A close-up fades over 2 to 3 rows of its own view. The price:
+# a thing that ends within that band (about 0.3% of the picture's side) above the edge is drawn down to the edge,
+# which costs far less than the ragged edge every person cut by the frame used to get.
+_BORDER_CELLS = 3
+_CLOSE_UP_CELLS = 3
+_FADE_FLOOR = -2.5  # band logits below this are a sure "no" and are left alone (the fade reaches about -1.6)
+_VIEW_SIZE = 1008  # side of SAM 3's square view
+NEAR_MISS = 0.1  # candidates scoring at least this (but under the threshold) are reported as near misses
 _WORKING_BYTES = 3 << 30  # VRAM for activations and the full-resolution image, on top of the weights
 
 _API = None
@@ -416,6 +427,38 @@ def sample_region(logits, image_size, region, out_size):
     return result
 
 
+def _lift(band, inner):
+    """``band`` raised to ``inner`` where that is higher and ``band`` is still in the fade (above _FADE_FLOOR)."""
+    if torch.is_tensor(band):
+        return torch.where(band > _FADE_FLOOR, torch.maximum(band, inner), band)
+    return np.where(band > _FADE_FLOOR, np.maximum(band, inner), band)
+
+
+def extend_to_border(logits, band_y, band_x, edges=("top", "bottom", "left", "right")):
+    """Copy of ``logits`` [..., H, W] (torch or numpy) whose outer ``band_y`` rows / ``band_x`` columns on the given
+    ``edges`` are lifted to the first row / column inside the band, where they are still in the fade. A mask can only
+    grow there, and only where the object reaches the band from inside."""
+    out = logits.clone() if torch.is_tensor(logits) else np.array(logits, copy=True)
+    height, width = out.shape[-2:]
+    band_y, band_x = min(int(band_y), (height - 1) // 2), min(int(band_x), (width - 1) // 2)
+    if band_y > 0 and "top" in edges:
+        out[..., :band_y, :] = _lift(out[..., :band_y, :], out[..., band_y:band_y + 1, :])
+    if band_y > 0 and "bottom" in edges:
+        out[..., height - band_y:, :] = _lift(out[..., height - band_y:, :],
+                                              out[..., height - band_y - 1:height - band_y, :])
+    if band_x > 0 and "left" in edges:
+        out[..., :, :band_x] = _lift(out[..., :, :band_x], out[..., :, band_x:band_x + 1])
+    if band_x > 0 and "right" in edges:
+        out[..., :, width - band_x:] = _lift(out[..., :, width - band_x:], out[..., :, width - band_x - 1:width - band_x])
+    return out
+
+
+def border_band(pixels, view=_VIEW_SIZE, cells=_BORDER_CELLS):
+    """Width in pixels of the faded band (``cells`` rows of SAM 3's view) along an edge ``pixels`` long that SAM 3
+    saw ``view`` pixels long."""
+    return math.ceil(cells * pixels / view)
+
+
 def mask_box(mask):
     """Tight (x1, y1, x2, y2) box of a bool [H, W] tensor with exclusive ends; None when empty."""
     rows = torch.nonzero(mask.any(dim=1)).flatten()
@@ -492,17 +535,28 @@ def _box_overlap(a, b):
     return (x1, y1, x2, y2) if x1 < x2 and y1 < y2 else None
 
 
-def find_instances(processor, state, concept, max_instances=0):
-    """[(score, logits [S, S], model-space box)] for one concept on an encoded image, best first, duplicates dropped."""
+def find_instances(processor, state, concept, max_instances=0, threshold=0.0, misses=None):
+    """[(score, logits [S, S], model-space box)] for one concept on an encoded image, best first, duplicates dropped.
+
+    Candidates scoring under ``threshold`` are left out; the best of them goes to ``misses[concept]`` when a dict is
+    given, so the node can say how close a concept it did not find came. The logits are extended to the border of
+    the view first (SAM 3's masks fade out there, see extend_to_border).
+    """
     processor.reset_all_prompts(state)
     output = processor.set_text_prompt(concept, state)
     masks, scores = output["masks_logits"], output["scores"]
     if masks is None or len(scores) == 0:
         return []
     scores = scores.float().flatten()
+    under = scores <= threshold  # SAM 3 itself keeps only scores above the threshold
+    if misses is not None and bool(under.any()):
+        misses[concept] = max(misses.get(concept, 0.0), float(scores[under].max()))
+    band = border_band(masks.shape[-1])
     found, kept = [], []  # kept: (bool mask, box, area) of accepted instances
-    for i in torch.argsort(scores, descending=True).tolist():
-        logits = to_logits(masks[i].reshape(masks.shape[-2], masks.shape[-1]))
+    for i in torch.argsort(scores, descending=True, stable=True).tolist():
+        if float(scores[i]) <= threshold:
+            break
+        logits = extend_to_border(to_logits(masks[i].reshape(masks.shape[-2], masks.shape[-1])), band, band)
         inside = logits > 0
         box = mask_box(inside)
         if box is None:
@@ -560,7 +614,14 @@ def _refine(model, processor, image, concept, score, logits, box, image_size, hi
     prompt_box = np.array([x1 - cx1, y1 - cy1, x2 - cx1, y2 - cy1], dtype=np.float32)
     masks, _, _ = model.predict_inst(state, box=prompt_box, mask_input=hint[None], multimask_output=False,
                                      return_logits=True)
-    refined = np.asarray(masks).reshape(-1, cy2 - cy1, cx2 - cx1)[0] > 0
+    logits = np.asarray(masks, dtype=np.float32).reshape(-1, cy2 - cy1, cx2 - cx1)[0]
+    # the close-up fades out along its own border too, which matters where that border is the image's
+    height, width = image_size
+    edges = [edge for edge, at_image_edge in (("top", cy1 == 0), ("bottom", cy2 == height), ("left", cx1 == 0),
+                                              ("right", cx2 == width)) if at_image_edge]
+    view = int(getattr(processor, "resolution", _VIEW_SIZE))
+    refined = extend_to_border(logits, border_band(cy2 - cy1, view, _CLOSE_UP_CELLS),
+                               border_band(cx2 - cx1, view, _CLOSE_UP_CELLS), edges) > 0
     refined = drop_stray_parts(refined, coarse)
     accepted = close_up_agrees(refined, coarse, max(image_size) / _PASS1_GRID + 2.0)
     return make_segment(concept, score, refined if accepted else coarse, origin=(cx1, cy1)), accepted
@@ -577,12 +638,14 @@ def _image_chw(image):
 
 
 def segment_images(model, make_processor, images, concepts, threshold=0.5, detail_level="balanced",
-                   max_per_concept=0, device=None, interrupt=None, progress=None):
+                   max_per_concept=0, device=None, interrupt=None, progress=None, misses=None):
     """NH_SEGS (one SegsFrame per image) for ``concepts`` found in the ComfyUI IMAGE batch ``images``.
 
     ``make_processor(threshold)`` returns a Sam3Processor for ``model`` on ``device``; the model must already be
-    there. Instances come in concept order, best score first within a concept. ``interrupt()`` runs before each
-    concept and each close-up (it raises to stop), ``progress(done, total)`` after each concept of each image.
+    there. It is asked for candidates down to NEAR_MISS, so that ``misses`` (a dict, when given) learns the best score
+    under ``threshold`` of each concept. Instances come in concept order, best score first within a concept.
+    ``interrupt()`` runs before each concept and each close-up (it raises to stop), ``progress(done, total)`` after
+    each concept of each image.
     """
     device = device or _model_device(model)
     refine = detail_level != "fast"
@@ -597,7 +660,7 @@ def segment_images(model, make_processor, images, concepts, threshold=0.5, detai
                 print(f"[NH-Nodes] SAM 3 sees the whole {width}x{height} picture squeezed into a square, so on images "
                       "wider than 4:1 it can miss small things; split such a picture into tiles for better results")
             pixels = _image_chw(image).to(device)
-            processor = make_processor(threshold)
+            processor = make_processor(min(threshold, NEAR_MISS))
             size = int(getattr(processor, "resolution", 1008))
             square = F.interpolate(pixels[None], size=(size, size), mode="bilinear", antialias=True,
                                    align_corners=False)[0].clamp_(0.0, 1.0)
@@ -606,7 +669,8 @@ def segment_images(model, make_processor, images, concepts, threshold=0.5, detai
             for concept in concepts:
                 if interrupt is not None:
                     interrupt()
-                for score, logits, box in find_instances(processor, state, concept, max_per_concept):
+                for score, logits, box in find_instances(processor, state, concept, max_per_concept, threshold,
+                                                         misses):
                     if refine:
                         if interrupt is not None:
                             interrupt()
@@ -628,7 +692,7 @@ def segment_images(model, make_processor, images, concepts, threshold=0.5, detai
 
 
 def segment(images, concepts, threshold=0.5, detail_level="balanced", max_per_concept=0, checkpoint=DEFAULT_CHECKPOINT,
-            keep_model_loaded=False, interrupt=None, progress=None):
+            keep_model_loaded=False, interrupt=None, progress=None, misses=None):
     """Load SAM 3 and run ``segment_images`` on ComfyUI's GPU; the weights go back to RAM afterwards unless kept."""
     if images.shape[0] == 0:
         raise ValueError("[NH-Nodes] SAM 3 got an empty image batch")
@@ -639,7 +703,7 @@ def segment(images, concepts, threshold=0.5, detail_level="balanced", max_per_co
         move_model(model, device)
         return segment_images(
             model, lambda value: processor_cls(model, device=device, confidence_threshold=value), images, concepts,
-            threshold, detail_level, max_per_concept, device, interrupt, progress,
+            threshold, detail_level, max_per_concept, device, interrupt, progress, misses,
         )
     finally:
         if not keep_model_loaded:

@@ -12,7 +12,7 @@ Three nodes that work with a mask. One resizes an image to an exact size and kee
 | [NH Agnostic Image Generator](#nh-agnostic-image-generator) | Erase the masked area with grey, noise or blur |
 | [NH Simple Face Paste](#nh-simple-face-paste) | Paste the masked face of one image onto the masked area of another |
 
-A `MASK` is white (`1`) where the node should work and black (`0`) elsewhere. Get one from a segmentation node such as [SAM3 Segment (NH)](./vision.md#sam3-segment-nh) (any object you can name, refined with [Segs Compose (NH)](./vision.md#segs-compose-nh)), [Garment Segment (NH)](./vision.md#garment-segment-nh) or [Portrait Segment (NH)](./vision.md#portrait-segment-nh), or from any mask tool in ComfyUI.
+A `MASK` is white (`1`) where the node should work and black (`0`) elsewhere. Get one from a segmentation node such as [SAM3 Segment (NH)](./vision.md#sam3-segment-nh) (any object you can name, or a formula such as `person - bag` or `background`), [Garment Segment (NH)](./vision.md#garment-segment-nh) or [Portrait Segment (NH)](./vision.md#portrait-segment-nh), or from any mask tool in ComfyUI.
 
 ---
 
@@ -172,6 +172,7 @@ Set `feathering` to `20`. Because a single source is reused, every image of the 
 
 - Using masks whose boxes have very different proportions. The face looks squashed or stretched.
 - Giving a mask that has another size than its image.
+- Using a [Portrait Segment (NH)](./vision.md#portrait-segment-nh) mask of a photo with several faces. The mask holds every face, so the box around it covers them all.
 - Setting `feathering` very high for a small face. The blur can eat the whole shape.
 
 > **Tip:** Make `dest_mask` slightly larger than the face you replace, and keep `source_mask` tight. The soft edge of the source mask then blends into the destination.

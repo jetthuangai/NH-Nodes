@@ -136,13 +136,46 @@ def test_compose_precedence_and_associativity():
 
 
 @pytest.mark.parametrize("expression, message", [
-    ("", "empty"), ("   ", "empty"), ("'red car", "never closed"), ("(person | hair", "not closed"),
-    ("person |", "ends where"), ("person hair", "unexpected 'hair' at position 8"), (")", "unexpected ')'"),
+    ("", "empty"), ("   ", "empty"), (" , \n # only a comment", "empty"), ("'red car", "never closed"),
+    ("(person | hair", "not closed"), ("person |", "ends where"), (")", "unexpected ')'"),
     ("person !", "unexpected '!' at position 8"), ("(person or)", "unexpected ')' at position 11"),
+    ("person | , hair", "unexpected ','"), ("()", "holds nothing"), ("hair (person)", "unexpected '(' at position 6"),
 ])
 def test_compose_errors_explain_where(expression, message):
     with pytest.raises(segs.ExpressionError, match=re.escape(message)):
         segs.parse_expression(expression)
+
+
+def test_lists_comments_and_words_in_a_row():
+    # commas and new lines join like |, after every other operator; words in a row are one label
+    assert _px("person, red car") == _px("person\nred car") == _px("person | 'red car'") == 1400
+    assert _px("red car") == _px("Red  Car") == 200 and _px("person hair") == 0  # one (unknown) label
+    assert _px("person - hair, red car") == 900 + 200
+    assert _px("(hair, red car) - person") == 200 and _px("person,,\n\nhair,") == 1200
+    assert _px("hair # the hair only\n# person\n") == 300
+
+
+def test_background_is_everything_outside_the_instances():
+    assert _px("background") == 2400 - 1400 == _px("~all") and _px("~background") == _px("all")
+    assert _px("background - red car") == 1000 and _px("background | hair") == 1300
+
+
+def test_vietnamese_labels_and_keywords():
+    frame = _frame(_seg("hair", 0.8, (0, 0, 30, 10)), _seg("bag", 0.7, (40, 30, 60, 40)))
+    assert _px("tóc", frame) == 300 and _px("tóc, túi", frame) == 500 and _px("nền", frame) == 2400 - 500
+    assert _px("tất cả - túi", frame) == 300 and _px("'nền'", frame) == 0  # quoted: a label, never a keyword
+    tree = segs.parse_expression("tóc - túi, nền, áo xanh, sky")
+    assert segs.expression_labels(tree) == ["hair", "bag", "áo xanh", "sky"]
+    assert segs.expression_terms(tree) == [("tóc", "hair", "translated"), ("túi", "bag", "translated"),
+                                           ("nền", "background", "keyword"), ("áo xanh", "áo xanh", "unknown"),
+                                           ("sky", "sky", "english")]
+    assert segs.uses_keyword(tree, "background") and not segs.uses_keyword(tree, "all")
+
+
+def test_sam3_concepts_read_and_or_not_as_words():
+    tree = segs.parse_concepts("black and white dog, person - bag")
+    assert segs.expression_labels(tree) == ["black and white dog", "person", "bag"]
+    assert segs.expression_labels(segs.parse_expression("person and hair")) == ["person", "hair"]
 
 
 def test_compose_node_reports_unmatched_labels(capsys):
@@ -157,6 +190,27 @@ def test_compose_node_catches_a_minus_without_spaces():
     # a real hyphenated label, or parts that are not both labels, stay plain labels
     assert int(segs_nodes.NH_SegsCompose().compose((_compose_frame(),), "t-shirt")[0].sum()) == 450
     assert int(segs_nodes.NH_SegsCompose().compose((_compose_frame(),), "person-ghost")[0].sum()) == 0
+
+
+def test_preview_picture_shrinks_darkens_outside_the_mask_and_adds_notes():
+    frame = segs.SegsFrame(400, 600, (_seg("car", 0.9, (300, 200, 500, 380), 400, 600),))
+    image = torch.full((400, 600, 3), 0.8)
+    mask = torch.zeros((400, 600))
+    mask[200:380, 300:500] = 1.0
+    picture = segs.preview_picture(image, frame, ["car: 1 found"], max_side=300, mask=mask)
+    assert picture.dtype == np.uint8 and picture.shape[1] == 300 and picture.shape[0] > 200  # caption strip below
+    assert abs(int(picture[20, 20, 0]) - round(204 * 0.35)) <= 1  # outside the mask: darkened
+    assert int(picture[150, 200].min()) > 140  # inside: bright, lightly tinted
+    plain = segs.preview_picture(image, frame)
+    assert plain.shape == (400, 600, 3) and int(plain[20, 20, 0]) == 204  # no mask, no notes: as Segs Preview
+
+
+def test_scale_frame_keeps_tiny_instances_visible():
+    frame = segs.SegsFrame(400, 600, (_seg("dot", 0.9, (10, 10, 12, 12), 400, 600),
+                                      _seg("car", 0.8, (300, 200, 500, 380), 400, 600)))
+    small = segs.scale_frame(frame, 0.1)
+    assert (small.height, small.width) == (40, 60) and [s.label for s in small.segments] == ["dot", "car"]
+    assert small.segments[0].area == 1 and small.segments[1].box == (30, 20, 50, 38)
 
 
 # --- Impact Pack SEGS --------------------------------------------------------
@@ -276,3 +330,44 @@ def test_segs_preview_node_and_every_node_declares_matching_outputs():
         assert len(cls.RETURN_TYPES) == len(cls.RETURN_NAMES) and cls.CATEGORY == "NH-Nodes/Vision"
         assert callable(getattr(cls(), cls.FUNCTION)) and required
         assert all(isinstance(spec, tuple) and spec for spec in required.values())
+
+
+def test_formulas_laid_out_over_several_lines_still_read():
+    # a line break next to an operator joins (as on 1.7), a line break between two labels lists them
+    assert _px("person\n- hair") == _px("person -\nhair") == _px("person\r\n- hair") == 900
+    assert _px("(person | 'red car')\n- hair") == 1100 and _px("~\nperson") == 1200
+    assert _px("hair\n| 'red car'") == 500 and _px("person &\nhair") == 300
+    assert _px("(\nperson\n)") == 1200 and _px("hair\n\n- hair") == 0
+    assert _px("person\nhair") == 1200 and _px("hair\n~person") == 300 + 1200  # a list; ~person is an item
+
+
+def test_comments_start_only_where_a_word_could():
+    frame = _frame(_seg("car#2", 0.9, (0, 0, 10, 10)), _seg("car", 0.8, (20, 20, 30, 30)))
+    assert _px("car#2", frame) == 100 and _px("car # the second\n", frame) == 100
+    with pytest.raises(segs.EmptyExpressionError):
+        segs.parse_expression("# nothing but a comment")
+    with pytest.raises(segs.ExpressionError) as caught:
+        segs.parse_expression("(person) empty")
+    assert not isinstance(caught.value, segs.EmptyExpressionError)
+
+
+def test_report_trusts_what_was_found_over_the_dictionary():
+    frame = _frame(_seg("café", 0.9, (0, 0, 10, 10)))
+    lines = segs.describe_request(segs.parse_concepts("café, bánh xèo"), (frame,), 0.5)
+    assert lines[0] == "café: 1 found (best 0.90)"  # not Vietnamese after all: SAM 3 found it
+    assert lines[1].startswith("bánh xèo: not understood")
+
+
+def test_compose_node_catches_words_left_without_an_operator():
+    with pytest.raises(ValueError, match=re.escape("person + hair")):
+        segs_nodes.NH_SegsCompose().compose((_compose_frame(),), "person hair")
+    assert int(segs_nodes.NH_SegsCompose().compose((_compose_frame(),), "red car")[0].sum()) == 200
+    assert int(segs_nodes.NH_SegsCompose().compose((_compose_frame(),), "person ghost")[0].sum()) == 0
+
+
+def test_segs_select_reads_vietnamese_labels_but_not_formula_words():
+    frame = _frame(_seg("hair", 0.9, (0, 0, 10, 10)), _seg("all", 0.8, (20, 20, 30, 30)))
+    picked, _, count = segs_nodes.NH_SegsSelect().select((frame,), "tóc", 0.0, 0.0, 1.0, "score", 0, 0)
+    assert count == 1 and picked[0].segments[0].label == "hair"
+    picked, _, count = segs_nodes.NH_SegsSelect().select((frame,), "tất cả", 0.0, 0.0, 1.0, "score", 0, 0)
+    assert count == 0  # "tất cả" is the formula word all, not a label named "all"

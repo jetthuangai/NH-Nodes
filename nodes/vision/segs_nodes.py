@@ -18,6 +18,7 @@ from ...core.segs import (
     select_segments,
     to_impact_segs,
 )
+from ...core.vi_words import translate
 
 CATEGORY = "NH-Nodes/Vision"
 
@@ -32,8 +33,8 @@ class NH_SegsSelect:
                 "segs": (SEGS_TYPE,),
                 "labels": ("STRING", {
                     "default": "",
-                    "tooltip": "Labels to keep, separated by commas; * and ? are wildcards (\"*shirt\"). "
-                               "Empty keeps every label.",
+                    "tooltip": "Labels to keep, separated by commas; * and ? are wildcards (\"*shirt\"). Common "
+                               "Vietnamese words work too (tóc, túi). Empty keeps every label.",
                 }),
                 "min_score": ("FLOAT", {"default": 0.0, "min": 0.0, "max": 1.0, "step": 0.01,
                                         "tooltip": "Drop instances with a lower confidence."}),
@@ -64,7 +65,12 @@ class NH_SegsSelect:
     SEARCH_ALIASES = ["segs select", "filter segs", "pick instance", "largest object", "leftmost person"]
 
     def select(self, segs, labels, min_score, min_area, max_area, sort_by, start, count):
-        patterns = parse_label_list(labels)
+        patterns = []
+        for pattern in parse_label_list(labels):
+            english, status = translate(pattern)
+            # "nền" / "tất cả" are formula words, not labels: Select matches labels only
+            patterns.append(english if status == "translated" and english not in ("background", "all", "image")
+                            else pattern)
         picked = tuple(
             select_segments(frame, patterns, min_score, min_area, max_area, sort_by, start, count) for frame in segs
         )
@@ -82,9 +88,10 @@ class NH_SegsCompose:
                 "expression": ("STRING", {
                     "default": "all", "multiline": True,
                     "tooltip": "Labels combined with | or + (union), - (minus), & (overlap), ~ (everything except) "
-                               "and parentheses. all = every instance, image = whole frame, none = nothing. Quote "
-                               "labels with spaces (\"red car\") or use _ (red_car); t-shirt needs no quotes. Put "
-                               "spaces around a minus to subtract. Examples: person - hair · ~person · "
+                               "and parentheses; commas or new lines list several. all = every instance, background = "
+                               "everything outside them, image = whole frame, none = nothing. Words in a row are one "
+                               "label (red car); t-shirt needs no quotes; Vietnamese works (tóc, nền). Put spaces "
+                               "around a minus to subtract. Examples: person - hair · background · "
                                "(wall | ceiling) - window.",
                 }),
             }
@@ -95,8 +102,9 @@ class NH_SegsCompose:
     FUNCTION = "compose"
     CATEGORY = CATEGORY
     DESCRIPTION = (
-        "Turn instances into one mask with a small formula over their labels: | or + joins, - removes, & keeps the "
-        "overlap, ~ inverts. ~person is the background around people; (building | roof) - window keeps the facade."
+        "Turn instances into one mask with a small formula over their labels: | or + (or a comma) joins, - removes, "
+        "& keeps the overlap, ~ inverts, background is everything outside them. (building | roof) - window keeps the "
+        "facade. SAM3 Segment takes the same formula in its concepts, so this node is for mixing or re-using segs."
     )
     SEARCH_ALIASES = ["segs compose", "mask formula", "combine masks", "subtract mask", "background mask"]
 
@@ -109,6 +117,12 @@ class NH_SegsCompose:
 
         unmatched = [pattern for pattern in expression_labels(tree) if not found(pattern)]
         for pattern in unmatched:
+            words = pattern.split()
+            if len(words) > 1 and all(found(word) for word in words):
+                # words in a row make one label; with each of them found, an operator was left out
+                raise ValueError(f"[NH-Nodes] Segs Compose: no instance is labelled '{pattern}', but "
+                                 f"{' and '.join(repr(word) for word in words)} are. Join them with + or a comma: "
+                                 f"{' + '.join(words)}")
             parts = pattern.split("-")
             if len(parts) > 1 and all(part and found(part) for part in parts):
                 # "person-hair" is one label; with person and hair both found, a subtraction was meant

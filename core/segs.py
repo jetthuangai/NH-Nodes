@@ -15,7 +15,10 @@ from dataclasses import dataclass
 import cv2
 import numpy as np
 import torch
+import torch.nn.functional as F
 from PIL import Image, ImageDraw, ImageFont
+
+from .vi_words import translate
 
 SEGS_TYPE = "NH_SEGS"
 
@@ -223,9 +226,14 @@ class ExpressionError(ValueError):
     """An NH_SEGS mask expression that cannot be read."""
 
 
+class EmptyExpressionError(ExpressionError):
+    """An expression with nothing in it (blank, or only commas and comments)."""
+
+
 _OPERATORS = {"+": "|", "|": "|", "-": "-", "&": "&", "~": "~", "!": "~", "(": "(", ")": ")"}
+_SEPARATORS = ",\n"  # list items, joined like '|' but read last
 _WORD_OPERATORS = {"or": "|", "and": "&", "not": "~"}
-_KEYWORDS = ("all", "image", "none")
+_KEYWORDS = ("all", "image", "none", "background")
 _QUOTES = "\"'"
 
 
@@ -233,16 +241,23 @@ def _is_word_char(ch):
     return ch.isalnum() or ch == "_"
 
 
-def _tokenize(text):
-    """[(kind, value, position, written)] with kinds "op", "keyword", "label"; positions count from 1.
+def _word_tokens(text, word_operators):
+    """[(kind, value, position, written)] with kinds "op", "sep", "word" and "quoted"; positions count from 1.
 
     A quote opens a quoted label only where a token starts, and a '-' between two word characters is part of the
-    word, so ``women's`` and ``t-shirt`` are plain labels while ``person - hair`` subtracts.
+    word, so ``women's`` and ``t-shirt`` are plain words while ``person - hair`` subtracts. A '#' where a token would
+    start begins a comment that runs to the end of its line (inside a word, as in ``car#2``, it is part of the word).
     """
     tokens, i, n = [], 0, len(text)
     while i < n:
         ch = text[i]
-        if ch.isspace():
+        if ch == "#":
+            end = text.find("\n", i)
+            i = n if end < 0 else end
+        elif ch in _SEPARATORS:
+            tokens.append(("sep", ",", i + 1, "a new line" if ch == "\n" else ch))
+            i += 1
+        elif ch.isspace():
             i += 1
         elif ch in _OPERATORS:
             tokens.append(("op", _OPERATORS[ch], i + 1, ch))
@@ -251,34 +266,74 @@ def _tokenize(text):
             end = text.find(ch, i + 1)
             if end < 0:
                 raise ExpressionError(f"quote opened at position {i + 1} is never closed")
-            tokens.append(("label", text[i + 1:end], i + 1, text[i:end + 1]))
+            tokens.append(("quoted", text[i + 1:end], i + 1, text[i:end + 1]))
             i = end + 1
         else:
             j = i
-            while j < n and not text[j].isspace():
+            while j < n and not text[j].isspace() and text[j] not in _SEPARATORS:
                 hyphen_in_word = (text[j] == "-" and _is_word_char(text[j - 1])
                                   and j + 1 < n and _is_word_char(text[j + 1]))
                 if text[j] in _OPERATORS and not hyphen_in_word:
                     break
                 j += 1
             word = text[i:j]
-            lowered = word.lower()
-            if lowered in _WORD_OPERATORS:
-                tokens.append(("op", _WORD_OPERATORS[lowered], i + 1, word))
-            elif lowered in _KEYWORDS:
-                tokens.append(("keyword", lowered, i + 1, word))
+            if word_operators and word.lower() in _WORD_OPERATORS:
+                tokens.append(("op", _WORD_OPERATORS[word.lower()], i + 1, word))
             else:
-                tokens.append(("label", word, i + 1, word))
+                tokens.append(("word", word, i + 1, word))
             i = j
     return tokens
 
 
-class _Parser:
-    """expr := term (('|' | '-') term)* ; term := unary ('&' unary)* ; unary := '~' unary | atom ;
-    atom := label | keyword | '(' expr ')'. Builds a tuple tree evaluated by ``evaluate``."""
+def _tokenize(text, word_operators=True):
+    """Tokens with each run of words joined into one "label" (or "keyword") token: ``red car`` is one label.
 
-    def __init__(self, text):
-        self.tokens = _tokenize(text)
+    Labels are read through ``vi_words.translate``, so Vietnamese becomes the English the instances are named in;
+    the token keeps (english, status) as its value. A run that translates to all, image, none or background, unquoted,
+    is that keyword.
+    """
+    raw = _word_tokens(text, word_operators)
+    tokens = []
+    for index, token in enumerate(raw):
+        kind, value, position, written = token
+        if kind == "sep" and written == "a new line":
+            # a formula laid out over several lines: a line break next to an operator joins, it does not list
+            after = next((t for t in raw[index + 1:] if not (t[0] == "sep" and t[3] == "a new line")), None)
+            before = next((t for t in reversed(tokens) if t[0] != "sep"), None) if tokens and tokens[-1][0] != "sep" \
+                else None
+            if (before is not None and before[0] == "op" and before[1] != ")") or (
+                    after is not None and after[0] == "op" and after[1] in ("|", "-", "&", ")")):
+                continue
+        if kind in ("word", "quoted") and tokens and tokens[-1][0] == "run":
+            _, parts, start, quoted = tokens[-1]
+            tokens[-1] = ("run", parts + [value], start, quoted or kind == "quoted")
+        elif kind in ("word", "quoted"):
+            tokens.append(("run", [value], position, kind == "quoted"))
+        else:
+            tokens.append(token)
+    result = []
+    for token in tokens:
+        if token[0] != "run":
+            result.append(token)
+            continue
+        _, parts, position, quoted = token
+        written = " ".join(parts)
+        english, status = translate(written)
+        if not quoted and english.lower() in _KEYWORDS:
+            result.append(("keyword", english.lower(), position, written))
+        else:
+            result.append(("label", (english, status), position, written))
+    return result
+
+
+class _Parser:
+    """list := expr? (',' expr?)* ; expr := term (('|' | '-') term)* ; term := unary ('&' unary)* ;
+    unary := '~' unary | atom ; atom := label | keyword | '(' list ')'. Commas and new lines join the items of a list
+    like '|', after every other operator. Builds a tuple tree evaluated by ``evaluate``: a label node is
+    ("label", english, written, status), a keyword node ("keyword", name, written)."""
+
+    def __init__(self, text, word_operators=True):
+        self.tokens = _tokenize(text, word_operators)
         self.pos = 0
 
     def _peek(self):
@@ -289,12 +344,32 @@ class _Parser:
         return f"'{token[3]}' at position {token[2]}" if token else "the end"
 
     def parse(self):
-        if not self.tokens:
-            raise ExpressionError("the expression is empty; use 'all' for every instance")
-        tree = self._expr()
-        if self._peek() is not None:
-            raise ExpressionError(f"unexpected {self._where()}")
+        items = self._list(nested=False)
+        if not items:
+            raise EmptyExpressionError("the expression is empty; use 'all' for every instance")
+        return self._union(items)
+
+    @staticmethod
+    def _union(items):
+        tree = items[0]
+        for item in items[1:]:
+            tree = ("|", tree, item)
         return tree
+
+    def _list(self, nested):
+        """The items of a list up to the end (or the closing ')' when ``nested``); empty items are skipped."""
+        items = []
+        while True:
+            token = self._peek()
+            if token is not None and token[0] == "sep":
+                self.pos += 1
+                continue
+            if token is None or (nested and token[:2] == ("op", ")")):
+                return items
+            items.append(self._expr())
+            token = self._peek()
+            if token is not None and token[0] != "sep" and not (nested and token[:2] == ("op", ")")):
+                raise ExpressionError(f"unexpected {self._where()}")
 
     def _expr(self):
         tree = self._term()
@@ -324,27 +399,37 @@ class _Parser:
         kind, value, position, written = token
         self.pos += 1
         if kind == "label":
-            return ("label", value)
+            return ("label", value[0], written, value[1])
         if kind == "keyword":
-            return ("keyword", value)
+            return ("keyword", value, written)
         if value == "(":
-            tree = self._expr()
+            items = self._list(nested=True)
             closing = self._peek()
             if closing is None or closing[:2] != ("op", ")"):
                 raise ExpressionError(f"'(' at position {position} is not closed (found {self._where()})")
+            if not items:
+                raise ExpressionError(f"'(' at position {position} holds nothing")
             self.pos += 1
-            return tree
+            return self._union(items)
         raise ExpressionError(f"unexpected '{written}' at position {position}")
 
 
 @functools.lru_cache(maxsize=64)
-def parse_expression(text):
-    """Parse a mask expression (see ``evaluate``) into a tree; raises ExpressionError with the position on mistakes."""
-    return _Parser(str(text)).parse()
+def parse_expression(text, word_operators=True):
+    """Parse a mask expression (see ``evaluate``) into a tree; raises ExpressionError with the position on mistakes.
+
+    ``word_operators=False`` reads or/and/not as words, for the natural phrases SAM 3 takes ("black and white dog").
+    """
+    return _Parser(str(text), word_operators).parse()
+
+
+def parse_concepts(text):
+    """``parse_expression`` for SAM3 Segment's concepts: or/and/not are plain words there."""
+    return parse_expression(text, word_operators=False)
 
 
 def expression_labels(tree):
-    """Label patterns used in a parsed expression, in order."""
+    """Label patterns (in English) used in a parsed expression, in order."""
     if tree[0] == "label":
         return [tree[1]]
     if tree[0] == "keyword":
@@ -352,12 +437,26 @@ def expression_labels(tree):
     return [label for child in tree[1:] for label in expression_labels(child)]
 
 
+def expression_terms(tree):
+    """(written, english, status) of each label and keyword of a parsed expression, in order; status is "english",
+    "translated" or "unknown" (Vietnamese not in vi_words) for labels and "keyword" for keywords."""
+    if tree[0] == "label":
+        return [(tree[2], tree[1], tree[3])]
+    if tree[0] == "keyword":
+        return [(tree[2], tree[1], "keyword")]
+    return [term for child in tree[1:] for term in expression_terms(child)]
+
+
+def uses_keyword(tree, name):
+    return any(status == "keyword" and english == name for _, english, status in expression_terms(tree))
+
+
 def evaluate(tree, frame):
     """Bool [H, W] mask of a parsed expression for one frame.
 
-    A label (wildcards allowed; quotes or '_' for spaces; a '-' inside a word is part of it) is the union of the
-    matching instances,
-    ``all`` every instance, ``image`` the whole frame, ``none`` nothing. ``a | b`` (also ``+``, ``or``) is the union,
+    A label (wildcards allowed; quotes or '_' for spaces; a '-' inside a word is part of it; words in a row make one
+    label) is the union of the matching instances, ``all`` every instance, ``background`` everything outside them,
+    ``image`` the whole frame, ``none`` nothing. ``a | b`` (also ``+``, ``or``, a comma or a new line) is the union,
     ``a - b`` the difference, ``a & b`` (``and``) the intersection, ``~a`` (``!``, ``not``) everything outside ``a``.
     """
     kind = tree[0]
@@ -366,6 +465,8 @@ def evaluate(tree, frame):
     if kind == "keyword":
         if tree[1] == "all":
             return frame_mask(frame)
+        if tree[1] == "background":
+            return ~frame_mask(frame)
         if tree[1] == "image":
             return torch.ones((frame.height, frame.width), dtype=torch.bool)
         return torch.zeros((frame.height, frame.width), dtype=torch.bool)
@@ -493,6 +594,116 @@ def render_preview(image, frame, fill=0.45):
         dark_text = (0.299 * color[0] + 0.587 * color[1] + 0.114 * color[2]) > 150
         draw.text((x + pad - left, y + pad - top), text, font=font, fill=(0, 0, 0) if dark_text else (255, 255, 255))
     return np.asarray(picture)
+
+
+def scale_frame(frame, scale):
+    """The frame of the picture made ``scale`` times smaller (for previews): boxes scaled, masks area-resampled.
+
+    An instance too small to keep a pixel keeps its centre pixel, so it still shows up with its label.
+    """
+    height, width = max(1, round(frame.height * scale)), max(1, round(frame.width * scale))
+    segments = []
+    for seg in frame.segments:
+        x1, y1, x2, y2 = seg.box
+        nx1, ny1 = min(width - 1, int(x1 * scale)), min(height - 1, int(y1 * scale))
+        nx2 = max(nx1 + 1, min(width, int(np.ceil(x2 * scale))))
+        ny2 = max(ny1 + 1, min(height, int(np.ceil(y2 * scale))))
+        small = cv2.resize(seg.mask.numpy().astype(np.uint8) * 255, (nx2 - nx1, ny2 - ny1),
+                           interpolation=cv2.INTER_AREA) >= 128
+        if not small.any():
+            small[small.shape[0] // 2, small.shape[1] // 2] = True
+        segments.append(make_segment(seg.label, seg.score, small, (nx1, ny1), seg.source))
+    return SegsFrame(height, width, tuple(segments))
+
+
+def _caption(picture, notes):
+    """``picture`` (uint8 RGB) with ``notes`` written on a white strip below it, one line each, long lines wrapped."""
+    width = picture.shape[1]
+    font = _label_font(max(13, round(width / 70)))
+    measure = ImageDraw.Draw(Image.new("RGB", (1, 1)))
+    lines = []
+    for note in notes:
+        words, line = str(note).split(), ""
+        for word in words:
+            candidate = f"{line} {word}".strip()
+            if line and measure.textlength(candidate, font=font) > width - 16:
+                lines.append(line)
+                line = word
+            else:
+                line = candidate
+        lines.append(line)
+    left, top, right, bottom = measure.textbbox((0, 0), "Ag", font=font)
+    step = bottom - top + 6
+    strip = Image.new("RGB", (width, step * len(lines) + 10), (255, 255, 255))
+    draw = ImageDraw.Draw(strip)
+    for index, line in enumerate(lines):
+        draw.text((8, 5 + index * step - top), line, font=font, fill=(20, 20, 20))
+    return np.concatenate([picture, np.asarray(strip)], axis=0)
+
+
+def preview_picture(image, frame, notes=(), max_side=1536, mask=None):
+    """uint8 RGB preview of one picture, at most ``max_side`` px, its instances drawn and ``notes`` written below.
+
+    ``image`` is one ComfyUI image [H, W, C] (float, 0..1). With ``mask`` (the node's [H, W] output) everything
+    outside it is darkened, so the preview shows what the mask holds ("background" lights up the background) while the
+    instances keep their outline and label. The picture is shrunk first (area averaging), so an 8K image with a
+    hundred instances needs a few MB more, not the full-size float preview Segs Preview makes.
+    """
+    rgb = image[..., :3] if image.shape[-1] >= 3 else image[..., :1].expand(-1, -1, 3)
+    scale = min(1.0, max_side / max(frame.height, frame.width))
+    size = (max(1, round(frame.height * scale)), max(1, round(frame.width * scale)))
+    if scale < 1.0:  # shrink before anything else, so no full-size copy of an 8K picture is ever made
+        rgb = F.interpolate(rgb.permute(2, 0, 1)[None].float(), size=size, mode="area")[0].permute(1, 2, 0)
+        frame = scale_frame(frame, scale)
+    pixels = (rgb.float().clamp(0.0, 1.0) * 255.0).round().to(torch.uint8).cpu().numpy()
+    if mask is not None:
+        held = mask.float()
+        if scale < 1.0:
+            held = F.interpolate(held[None, None], size=size, mode="area")[0, 0]
+        outside = held.cpu().numpy() < 0.5
+        pixels = pixels.copy()
+        pixels[outside] = (pixels[outside] * _DIM_OUTSIDE).astype(np.uint8)
+    picture = render_preview(pixels, frame, fill=0.2 if mask is not None else 0.45)
+    return _caption(picture, notes) if notes else picture
+
+
+_DIM_OUTSIDE = 0.35  # brightness kept outside the mask in previews
+
+
+def describe_request(tree, segs, threshold=None, misses=None, added=()):
+    """Lines telling what each label and keyword of a parsed request found in ``segs``, for reports and previews.
+
+    ``misses`` maps a concept to the best score its candidates reached under ``threshold``; ``added`` names concepts
+    the node searched for on its own (person, for background).
+    """
+    instances = [seg for frame in segs for seg in frame.segments]
+    lines, seen = [], set()
+    for written, english, status in expression_terms(tree):
+        key = (status == "keyword", normalize_label(english))
+        if key in seen:
+            continue
+        seen.add(key)
+        if status == "keyword":
+            if english == "background":
+                names = list(dict.fromkeys(seg.label for seg in instances))
+                outside = ", ".join(names) if names else "nothing (no instance was found)"
+                lines.append(f"background = everything outside {outside}")
+            continue
+        name = f"{written} -> {english}" if status == "translated" else written
+        found = [seg for seg in instances if label_matches(seg.label, english)]
+        if found:
+            lines.append(f"{name}: {len(found)} found (best {max(seg.score for seg in found):.2f})")
+        elif status == "unknown":
+            lines.append(f"{written}: not understood; write it in English (SAM 3 reads English only)")
+        elif misses and english in misses and threshold is not None:
+            lines.append(f"{name}: none at threshold {threshold:.2f}; the best candidate scored "
+                         f"{misses[english]:.2f}, lower the threshold to keep it")
+        else:
+            lines.append(f"{name}: none found; try another English word")
+    for name in added:
+        found = [seg for seg in instances if label_matches(seg.label, name)]
+        lines.append(f"{name} (searched for background): {len(found)} found")
+    return lines
 
 
 def preview_batch(image, segs):

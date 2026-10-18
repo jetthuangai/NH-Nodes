@@ -1,14 +1,27 @@
 """Vision segmentation nodes: garment parts and portrait regions.
 
-Both nodes run a SegFormer label map (see segformer_backend.py), union the
-class ids for the requested region, refine the mask, and return
-(mask, cutout_rgba, mask_image) at the input resolution.
+Both nodes build a SegFormer label map of the whole picture (see segformer_backend.py), union the class ids for
+the requested region, refine the mask, and return (mask, cutout_rgba, mask_image) at the input resolution. The
+parsers see 512 x 512 pictures, so they do not get the whole frame squeezed: Portrait Segment parses a crop around
+each face (found with YuNet, see face_detect.py), Garment Segment a crop of the model's shape around the clothes
+(see parse_crops.py).
 """
 
 import cv2
 import numpy as np
 import torch
 
+from ...core.face_detect import detect_faces
+from ...core.parse_crops import (
+    inner_mask,
+    nearest_owner,
+    parse_region,
+    people_labels,
+    person_box,
+    square_around,
+    square_frame,
+    visible,
+)
 from ...core.segformer_backend import load_segformer, offload, predict_labels
 
 try:
@@ -126,15 +139,180 @@ def _image_batch_to_numpy(image):
     return [np.clip(frame[:, :, :3], 0.0, 1.0) for frame in array]
 
 
-def _run_batch(image, model_name, device, build_mask, expand, blur, holes):
-    """Shared per-image loop: predict labels, build mask via callback, refine, pack, stack."""
+# ---------------------------------------------------------------------------
+# Label maps of the whole picture, parsed on crops
+# ---------------------------------------------------------------------------
+# Square crops around each face, in face-box sides: the wide one keeps long hair and the neck, the tight one (moved
+# up a little, for the forehead and hair line) is framed like the faces the parser learnt on, for eyes, brows and lips.
+FACE_WIDE = 3.6
+FACE_TIGHT = 2.2
+FACE_LIFT = 0.06
+GARMENT_MARGIN = 0.08  # around the clothes found on the first look, as a fraction of their longer side
+
+
+FACE_CONTEXT = 1 / 3  # grey added on each side for a second look when no face is found (a face cut by the frame)
+BIG_FACE = 0.9  # a face whose tight crop would span this share of the picture's long side is parsed whole-frame
+FACE_CORE = 1.3  # the tight crop decides only inside an ellipse of the face box grown this much, and only about
+# the face itself (see FACE_DETAIL): hair, neck and background come from the wide crop, which sees them whole instead
+# of cut by the tight crop's edges.
+# CelebAMask-HQ classes of the face parser: what a face is made of, and the features that make it a face
+FACE_PARTS = frozenset({1, 2, 3, 4, 5, 6, 7, 10, 11, 12})  # skin, nose, glasses, eyes, brows, mouth, lips
+FACE_FEATURES = frozenset({2, 4, 5, 6, 7, 10, 11, 12})  # nose, eyes, brows, mouth, lips
+FACE_DETAIL = FACE_PARTS | {8, 9}  # with the ears: what the tight crop may decide
+
+_detection_failed = False
+
+
+def find_faces(image, second_look=True):
+    """Face boxes of the uint8 RGB ``image``. A face cut by the frame is often found only once the picture gets a
+    grey margin around it, so that is tried when the first look finds none; boxes mostly outside the frame are left
+    out. If the detector cannot be loaded (offline first run, an old OpenCV, a damaged file) the node says so once
+    and parses whole frames, as before the detector existed."""
+    global _detection_failed
+    if _detection_failed:
+        return []
+    try:
+        faces = detect_faces(image)
+        if faces or not second_look:
+            return faces
+        height, width = image.shape[:2]
+        top, left = int(height * FACE_CONTEXT), int(width * FACE_CONTEXT)
+        padded = cv2.copyMakeBorder(np.ascontiguousarray(image), top, top, left, left, cv2.BORDER_CONSTANT,
+                                    value=(114, 114, 114))
+        found = []
+        for x1, y1, x2, y2, score in detect_faces(padded):
+            box = (max(0.0, x1 - left), max(0.0, y1 - top), min(float(width), x2 - left), min(float(height), y2 - top))
+            inside = max(0.0, box[2] - box[0]) * max(0.0, box[3] - box[1])
+            if inside >= 0.5 * (x2 - x1) * (y2 - y1):
+                found.append((*box, score))
+        return found
+    except Exception as exc:  # noqa: BLE001 - any failure of the optional detector falls back to whole frames
+        _detection_failed = True
+        print(f"[NH-Nodes] Portrait Segment: the face detector is not available ({exc}); whole frames are parsed "
+              "instead. Restart ComfyUI to try again.")
+        return []
+
+
+def is_face(labels, seen, face):
+    """True when ``labels`` (the parse of the part ``seen`` of a tight crop) show a face inside the detected box:
+    mostly face parts, with some nose, eye, brow or lip. A hand or a pattern the detector took for a face is turned
+    down, so its crops change nothing."""
+    sx1, sy1 = seen[:2]
+    fx1, fy1, fx2, fy2 = (int(round(value)) for value in face[:4])
+    inside = labels[max(0, fy1 - sy1):max(0, fy2 - sy1), max(0, fx1 - sx1):max(0, fx2 - sx1)]
+    if inside.size == 0:
+        return False
+    return (np.isin(inside, list(FACE_PARTS)).mean() >= 0.3
+            and np.isin(inside, list(FACE_FEATURES)).mean() >= 0.005)
+
+
+def portrait_labels(bundle, image):
+    """Face-parsing label map of the uint8 RGB ``image``.
+
+    The whole frame is parsed first, as a padded square (the parser learnt on square face pictures), and that answer
+    is kept wherever the crops below do not reach. Each face found, unless it already fills the frame, is parsed again
+    on a tight square crop (eyes, brows, lips) and, once that parse confirms it is a face, on a wide one (hair, neck).
+    The wide crop is pasted inside its region away from its cut edges, the tight one only around the face itself, and
+    each only where its face is the nearest one, so neighbours in a group photo do not overwrite each other and no
+    straight crop edge shows in long hair.
+    """
+    def predict(picture):
+        throw_exception_if_processing_interrupted()
+        return predict_labels(bundle, picture)
+
+    height, width = image.shape[:2]
+    canvas = parse_region(predict, image, square_frame((height, width)))[0]
+    long_side = max(height, width)
+    candidates = [face for face in find_faces(image)
+                  if FACE_TIGHT * max(face[2] - face[0], face[3] - face[1]) < BIG_FACE * long_side]
+    tight = []
+    for face in candidates:
+        region = square_around(face, FACE_TIGHT, FACE_LIFT)
+        labels, seen = parse_region(predict, image, region)
+        if labels.size and is_face(labels, seen, face):
+            tight.append((face, region, labels, seen))
+    if not tight:
+        return canvas
+    faces = [face for face, _, _, _ in tight]
+    wide_regions = [square_around(face, FACE_WIDE) for face in faces]
+    # with the faces known, face parts the whole-frame parse saw far from all of them are mistakes (a reflection,
+    # a pattern): only hair, neck and clothes are kept there
+    near_faces = np.zeros((height, width), dtype=bool)
+    for x1, y1, x2, y2 in (visible(region, (height, width)) for region in wide_regions):
+        near_faces[y1:y2, x1:x2] = True
+    canvas[~near_faces & np.isin(canvas, list(FACE_DETAIL))] = 0
+    tight_regions = [region for _, region, _, _ in tight]
+    for index, region in enumerate(wide_regions):
+        labels, seen = parse_region(predict, image, region)
+        _paste(canvas, labels, seen,
+               nearest_owner(seen, faces, wide_regions, index) & inner_mask(region, (height, width)))
+    detail = list(FACE_DETAIL)
+    for index, (face, region, labels, seen) in enumerate(tight):
+        x1, y1, x2, y2 = seen
+        about_face = np.isin(labels, detail) | np.isin(canvas[y1:y2, x1:x2], detail)
+        _paste(canvas, labels, seen, nearest_owner(seen, faces, tight_regions, index) & _core(face, seen) & about_face)
+    return canvas
+
+
+def _core(face, seen):
+    """Bool mask over ``seen`` (a region inside the picture): the ellipse of the face box grown FACE_CORE times."""
+    x1, y1, x2, y2 = face[:4]
+    cx, cy = (x1 + x2) / 2.0, (y1 + y2) / 2.0
+    half_w, half_h = max(1.0, FACE_CORE * (x2 - x1) / 2.0), max(1.0, FACE_CORE * (y2 - y1) / 2.0)
+    sx1, sy1, sx2, sy2 = seen
+    ys = (np.arange(sy1, sy2, dtype=np.float32)[:, None] + 0.5 - cy) / half_h
+    xs = (np.arange(sx1, sx2, dtype=np.float32)[None, :] + 0.5 - cx) / half_w
+    return xs * xs + ys * ys <= 1.0
+
+
+def _paste(canvas, labels, seen, keep):
+    if labels.size:
+        x1, y1, x2, y2 = seen
+        canvas[y1:y2, x1:x2][keep] = labels[keep]
+
+
+def garment_labels(bundle, image):
+    """Fashion-parsing label map of the uint8 RGB ``image``: a first look at the whole frame finds the clothes, then
+    crops of the model's shape around the people (found from the clothes and from their faces; a row of crops for a
+    group; not squeezed, padded where they leave the picture) are parsed again and merged by confidence (see
+    parse_crops.people_labels)."""
+    size = getattr(bundle.get("processor"), "size", None) or {"height": 1, "width": 1}
+
+    def predict(picture):
+        throw_exception_if_processing_interrupted()
+        return predict_labels(bundle, picture, confidence=True)
+
+    people = [person_box(face, image.shape[:2]) for face in find_faces(image, second_look=False)]
+    return people_labels(predict, image, size["width"] / size["height"], GARMENT_MARGIN, people)
+
+
+WORK_SIDE = 4096  # label maps are worked out on a copy at most this long, then enlarged to the picture
+
+
+def labels_at_work_size(labeler, bundle, frame):
+    """Label map of the float HxWx3 ``frame`` at its size, worked out by ``labeler(bundle, uint8 RGB)`` on a copy at
+    most WORK_SIDE pixels long. The parsers look at 512 to 1024 px at a time, so their labels hold no finer detail
+    than that on an 8K photo, while merging crops at full size would take seconds."""
+    height, width = frame.shape[:2]
+    pixels = cv2.convertScaleAbs(frame, alpha=255.0)  # rounds and saturates in one pass
+    scale = min(1.0, WORK_SIDE / max(height, width))
+    if scale >= 1.0:
+        return labeler(bundle, pixels)
+    small = cv2.resize(pixels, (max(1, round(width * scale)), max(1, round(height * scale))),
+                       interpolation=cv2.INTER_AREA)
+    labels = labeler(bundle, small)
+    return cv2.resize(labels.astype(np.int32), (width, height), interpolation=cv2.INTER_NEAREST).astype(np.int64)
+
+
+def _run_batch(image, model_name, device, build_mask, expand, blur, holes, labeler):
+    """Shared per-image loop: label map via ``labeler(bundle, uint8 RGB)``, mask via ``build_mask``, refine, pack."""
     bundle = load_segformer(model_name, device)
     masks, cutouts, mask_images = [], [], []
     frames = _image_batch_to_numpy(image)
     try:
         for frame in frames:
             throw_exception_if_processing_interrupted()
-            labels = predict_labels(bundle, (frame * 255.0).round().astype(np.uint8))
+            labels = labels_at_work_size(labeler, bundle, frame)
             mask = refine_mask(build_mask(labels), expand, blur, holes)
             mask_t, rgba_t, mask_img_t = pack_outputs(frame, mask)
             masks.append(mask_t)
@@ -195,7 +373,7 @@ class NH_GarmentSegment:
         return _run_batch(
             image, "segformer_fashion", device,
             lambda labels: self.build_mask(labels, part, attach_parts),
-            mask_expand, mask_blur, fill_holes,
+            mask_expand, mask_blur, fill_holes, garment_labels,
         )
 
 
@@ -228,7 +406,7 @@ class NH_PortraitSegment:
         return _run_batch(
             image, "face_parsing", device,
             lambda labels: self.build_mask(labels, selected),
-            mask_expand, mask_blur, fill_holes,
+            mask_expand, mask_blur, fill_holes, portrait_labels,
         )
 
 
