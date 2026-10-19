@@ -1,0 +1,5 @@
+# Left out of the package published to the Comfy Registry; they stay in the GitHub repository.
+# The test suite (fixtures, stubs and helper processes that the Registry's scanner reads as risky code)
+tests/
+# The scripts that build the docs' images, node cards and PDF guides
+docs/_tools/
