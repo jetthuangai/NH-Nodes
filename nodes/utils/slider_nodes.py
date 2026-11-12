@@ -1,14 +1,14 @@
 #
-# --- HƯỚNG DẪN TÙY CHỈNH ---
-# Để thay đổi tên của một thanh trượt, hãy chỉnh sửa 2 nơi:
-# 1. Trong `INPUT_TYPES`: Thay đổi giá trị của "label". Đây là tên sẽ hiển thị trên node.
-# 2. Trong `RETURN_NAMES`: Thay đổi tên của đầu ra (output) tương ứng.
+# --- CUSTOMISATION GUIDE ---
+# To rename a slider, edit 2 places:
+# 1. In `INPUT_TYPES`: change the value of "label". This is the name shown on the node.
+# 2. In `RETURN_NAMES`: change the name of the matching output.
 #
-# Ví dụ, để đổi "Float 1" thành "Strength":
+# For example, to rename "Float 1" to "Strength":
 # - "float_1": ("FLOAT", {"default": 0.0, "min": -1.0, "max": 1.0, "step": 0.01, "label": "Strength"}),
 # - RETURN_NAMES = ("Strength", "Float 2", ...)
 #
-# Sau khi chỉnh sửa, hãy lưu file và khởi động lại ComfyUI.
+# After editing, save the file and restart ComfyUI.
 #
 
 class NH_MultiSliderFloat:

@@ -1,6 +1,6 @@
 from ...core.mask_ops import mask_bbox
 
-# File này chứa logic cho node Mask Properties (phiên bản gốc).
+# This file holds the logic of the Mask Properties node (original version).
 
 class NH_MaskProperties:
     @classmethod
@@ -17,28 +17,28 @@ class NH_MaskProperties:
     CATEGORY = "NH-Nodes/Mask"
 
     def get_properties(self, mask):
-        # Chỉ xử lý mask đầu tiên trong batch; hộp bao quanh các pixel > 0.5
+        # Only the first mask of the batch is processed; the box encloses the pixels > 0.5
         bbox = mask_bbox(mask[0].cpu().numpy())
 
-        # Xử lý trường hợp mask rỗng (toàn màu đen)
+        # Handle an empty mask (all black)
         if bbox is None:
             return (0, 0, 0, 0, 0, 0, (0, 0, 0, 0))
 
         x1, y1, x2, y2 = bbox
 
-        # Tính toán chiều rộng và chiều cao
+        # Compute the width and height
         width = x2 - x1 + 1
         height = y2 - y1 + 1
 
-        # Trả về tất cả các giá trị theo thứ tự đã định nghĩa
+        # Return all values in the declared order
         return (width, height, x1, y1, x2, y2, bbox)
 
-# Ánh xạ để ComfyUI nhận diện class
+# Mapping that lets ComfyUI find the class
 NODE_CLASS_MAPPINGS = {
     "NH_MaskProperties": NH_MaskProperties
 }
 
-# Tên sẽ hiển thị trong menu của ComfyUI
+# Name shown in the ComfyUI menu
 NODE_DISPLAY_NAME_MAPPINGS = {
     "NH_MaskProperties": "Mask Properties (NH)"
 }

@@ -16,14 +16,14 @@ class NH_UniversalSliderBuilder:
             }
         }
 
-    # Node này sẽ tự động tạo ra các đầu ra
+    # This node creates its outputs automatically
     RETURN_TYPES = ()
     RETURN_NAMES = ()
     FUNCTION = "build_sliders"
     CATEGORY = "NH-Nodes/Utils"
-    OUTPUT_NODE = True # Đánh dấu đây là node có đầu ra động
-    # Node này không có input/output thật nên không dùng được. DEPRECATED ẩn nó khỏi search,
-    # còn workflow cũ đã lưu vẫn load được. Dùng Multi-Slider (FLOAT/INT) thay thế.
+    OUTPUT_NODE = True # Marks this as a node with dynamic outputs
+    # This node has no real inputs/outputs, so it cannot be used. DEPRECATED hides it from search,
+    # while saved old workflows still load. Use Multi-Slider (FLOAT/INT) instead.
     DEPRECATED = True
 
     def build_sliders(self, config, **kwargs):
@@ -31,11 +31,11 @@ class NH_UniversalSliderBuilder:
         cls.RETURN_TYPES = ()
         cls.RETURN_NAMES = ()
         
-        # Phân tích config để xác định các widgets và outputs
+        # Parse the config to determine the widgets and outputs
         lines = [line.strip() for line in config.split('\n') if line.strip() and not line.strip().startswith('#')]
         
         output_values = []
-        # Cần một dictionary riêng cho UI để tránh lỗi
+        # The UI needs its own dictionary to avoid errors
         ui_widgets = {}
 
         for i, line in enumerate(lines):
@@ -55,7 +55,7 @@ class NH_UniversalSliderBuilder:
                 cls.RETURN_TYPES += (type_str,)
                 cls.RETURN_NAMES += (name,)
                 
-                # Lấy giá trị thực tế từ kwargs nếu có, nếu không dùng giá trị mặc định
+                # Take the actual value from kwargs when present, otherwise use the default
                 cast_fn = float if type_str == "FLOAT" else int
                 output_values.append(kwargs.get(widget_name, cast_fn(default)))
                 
@@ -75,7 +75,7 @@ class NH_BooleanSwitch:
     def get_value(self, boolean_switch):
         return (boolean_switch,)
 
-# --- Đăng ký các node ---
+# --- Node registration ---
 NODE_CLASS_MAPPINGS = {
     "NH_UniversalSliderBuilder": NH_UniversalSliderBuilder,
     "NH_BooleanSwitch": NH_BooleanSwitch

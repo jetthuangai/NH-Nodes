@@ -1,15 +1,15 @@
 import torch
 import numpy as np
-import cv2 # Cần thư viện OpenCV
+import cv2 # Requires the OpenCV library
 
 from ...core.mask_ops import mask_bbox
 
 def _to_uint8(image):
-    # Clip trước khi ép uint8: giá trị lệch khỏi [0,1] (vd. do resample) sẽ bị wrap về gần 0 nếu không clip.
+    # Clip before casting to uint8: values outside [0,1] (e.g. from resampling) would wrap to near 0 without it.
     return (np.clip(image.cpu().numpy(), 0.0, 1.0) * 255).astype(np.uint8)
 
 def _as_mask_batch(mask):
-    # MASK 2-D [H,W] không có chiều batch: coi là [1,H,W].
+    # A 2-D MASK [H,W] has no batch dimension: treat it as [1,H,W].
     return mask.unsqueeze(0) if mask.dim() == 2 else mask
 
 class NH_SimpleFacePaste:
@@ -32,7 +32,7 @@ class NH_SimpleFacePaste:
     def paste_face(self, dest_image, dest_mask, source_image, source_mask, feathering):
         dest_mask = _as_mask_batch(dest_mask)
         source_mask = _as_mask_batch(source_mask)
-        # Output theo batch của dest_image; input khác có batch 1 (hoặc ngắn hơn) được lặp lại theo vòng.
+        # The output follows the batch of dest_image; other inputs with batch 1 (or a shorter one) repeat cyclically.
         output = dest_image.clone()
         for index in range(dest_image.shape[0]):
             pasted = self._paste_single(
@@ -40,13 +40,14 @@ class NH_SimpleFacePaste:
                 source_image[index % source_image.shape[0]], source_mask[index % source_mask.shape[0]],
                 feathering,
             )
-            if pasted is not None:  # mask rỗng: giữ nguyên ảnh đích của item này
+            if pasted is not None:  # empty mask: keep this item's destination image as is
                 output[index] = pasted
         return (output,)
 
     @staticmethod
     def _paste_single(dest_image, dest_mask, source_image, source_mask, feathering):
-        """Dán mặt của một ảnh nguồn [H,W,C] lên một ảnh đích [H,W,C]; trả None nếu một trong hai mask rỗng."""
+        """Paste the face of one source image [H,W,C] onto one destination image [H,W,C]; returns None when either
+        mask is empty."""
         src_img_np = _to_uint8(source_image)
         src_mask_np = source_mask.cpu().numpy()
 
@@ -85,13 +86,12 @@ class NH_SimpleFacePaste:
 
         return torch.from_numpy(output_img_np.astype(np.float32) / 255.0)
 
-# --- PHẦN BỊ THIẾU TRƯỚC ĐÂY ĐÃ ĐƯỢC THÊM VÀO ĐÂY ---
-# Ánh xạ để ComfyUI nhận diện class
+# Mapping that lets ComfyUI find the class
 NODE_CLASS_MAPPINGS = {
     "NH_SimpleFacePaste": NH_SimpleFacePaste
 }
 
-# Tên sẽ hiển thị trong menu của ComfyUI
+# Name shown in the ComfyUI menu
 NODE_DISPLAY_NAME_MAPPINGS = {
     "NH_SimpleFacePaste": "NH Simple Face Paste"
 }

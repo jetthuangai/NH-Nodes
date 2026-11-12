@@ -5,16 +5,17 @@ import cv2
 
 
 class NH_AgnosticImageGenerator:
-    """Xóa vùng mask trên ảnh và fill bằng gray, noise, hoặc blur.
+    """Erase the mask region of the image and fill it with gray, noise or blur.
 
     Output:
-    - agnostic_img: ảnh đã fill vùng mask (dùng làm input cho inpaint/VTON)
-    - masked_img: ảnh gốc với vùng mask bị xóa trắng (transparent)
-    - composite: ảnh gốc với viền mask overlay để preview
+    - agnostic_img: the image with the mask region filled (used as input for inpaint/VTON)
+    - masked_img: the original image with the mask region blanked to white (transparent)
+    - composite: the original image with the mask outline overlaid, for preview
 
-    Mask là alpha mềm: giá trị trung gian được blend một phần, feathering làm mềm thêm từ chính các giá trị đó.
-    Mask 2-D [H,W] coi như [1,H,W]; mask khác kích thước ảnh được resize về kích thước ảnh.
-    Fill "noise" tất định: ảnh thứ i trong batch dùng seed = i.
+    The mask is a soft alpha: intermediate values are blended partially, and feathering softens further starting
+    from those same values.
+    A 2-D mask [H,W] is treated as [1,H,W]; a mask whose size differs from the image is resized to the image size.
+    The "noise" fill is deterministic: the i-th image of the batch uses seed = i.
     """
 
     @classmethod
@@ -41,7 +42,7 @@ class NH_AgnosticImageGenerator:
         results_masked = []
         results_composite = []
 
-        # Chuẩn hoá mask về [B,H,W] đúng kích thước ảnh (batch 1 được dùng lại cho mọi ảnh ở vòng lặp dưới).
+        # Normalise the mask to [B,H,W] at the image size (a batch of 1 is reused for every image in the loop below).
         if mask.dim() == 2:
             mask = mask.unsqueeze(0)
         if mask.shape[-2:] != image.shape[1:3]:
@@ -55,12 +56,13 @@ class NH_AgnosticImageGenerator:
 
             h, w, c = img_np.shape
 
-            # Alpha giữ nguyên giá trị mềm của mask (không ngưỡng hoá), kẹp về [0,1]
+            # Alpha keeps the soft values of the mask (no thresholding), clamped to [0,1]
             alpha = np.clip(m_np, 0.0, 1.0).astype(np.float32)
-            # Viền preview cần hình dạng rõ nét: lấy ở mức 0.5 của mask gốc (như trước đây), không dùng alpha mềm
+            # The preview outline needs a crisp shape: taken at the 0.5 level of the original mask (as before),
+            # not from the soft alpha
             outline_mask = (m_np > 0.5).astype(np.float32)
 
-            # Feathering: làm mềm biên mask
+            # Feathering: soften the mask edge
             if feathering > 0:
                 kernel_size = feathering * 2 + 1
                 alpha = cv2.GaussianBlur(alpha, (kernel_size, kernel_size), 0)
@@ -73,25 +75,25 @@ class NH_AgnosticImageGenerator:
                 fill = np.full_like(img_np, gray_value)
 
             elif fill_mode == "noise":
-                # Seed cố định theo index trong batch: cùng input luôn ra cùng noise
+                # The seed is fixed by the index in the batch: the same input always gives the same noise
                 noise = np.random.default_rng(i).random((h, w, c), dtype=np.float32)
-                # Blend noise với gray trung tâm để bớt harsh
+                # Blend the noise with the centre gray to make it less harsh
                 fill = noise * noise_strength + gray_value * (1.0 - noise_strength)
 
             elif fill_mode == "blur":
-                # Blur radius phải lẻ
+                # The blur radius must be odd
                 kr = blur_radius if blur_radius % 2 == 1 else blur_radius + 1
                 fill = cv2.GaussianBlur(img_np, (kr, kr), 0)
 
-            # --- agnostic_img: blend fill vào vùng mask ---
+            # --- agnostic_img: blend the fill into the mask region ---
             agnostic = img_np * (1.0 - alpha_3ch) + fill * alpha_3ch
             agnostic = np.clip(agnostic, 0.0, 1.0)
 
-            # --- masked_img: vùng mask = trắng ---
+            # --- masked_img: mask region = white ---
             masked = img_np * (1.0 - alpha_3ch) + np.ones_like(img_np) * alpha_3ch
             masked = np.clip(masked, 0.0, 1.0)
 
-            # --- composite: overlay viền mask lên ảnh gốc ---
+            # --- composite: overlay the mask outline on the original image ---
             composite = self._create_composite(img_np, outline_mask, agnostic)
 
             results_agnostic.append(agnostic)
@@ -105,31 +107,31 @@ class NH_AgnosticImageGenerator:
 
     @staticmethod
     def _create_composite(img_np, outline_mask, agnostic):
-        """Tạo preview: nửa trái = ảnh gốc với viền mask, nửa phải = agnostic."""
+        """Build the preview: left half = original image with the mask outline, right half = agnostic."""
         h, w = img_np.shape[:2]
 
-        # Tìm contour của mask để vẽ viền
+        # Find the mask contours to draw the outline
         mask_uint8 = np.ascontiguousarray((outline_mask * 255).astype(np.uint8))
         contours, _ = cv2.findContours(mask_uint8, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
 
-        # Nửa trái: ảnh gốc + viền xanh
+        # Left half: original image + green outline
         left = np.ascontiguousarray((np.clip(img_np, 0.0, 1.0) * 255).astype(np.uint8))
         cv2.drawContours(left, contours, -1, (0, 255, 0), 2)
 
-        # Tô nhẹ vùng mask bằng màu xanh semi-transparent
+        # Lightly tint the mask region with semi-transparent green
         overlay = np.ascontiguousarray(left.copy())
         cv2.drawContours(overlay, contours, -1, (0, 255, 0), -1)
         left = cv2.addWeighted(left, 0.7, overlay, 0.3, 0)
 
-        # Nửa phải: agnostic
+        # Right half: agnostic
         right = np.ascontiguousarray((np.clip(agnostic, 0.0, 1.0) * 255).astype(np.uint8))
 
-        # Ghép 2 nửa
+        # Join the 2 halves
         mid = w // 2
         composite = np.ascontiguousarray(left.copy())
         composite[:, mid:] = right[:, mid:]
 
-        # Vẽ đường chia giữa
+        # Draw the dividing line in the middle
         cv2.line(composite, (mid, 0), (mid, h), (255, 255, 255), 1)
 
         return composite.astype(np.float32) / 255.0

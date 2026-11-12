@@ -13,7 +13,6 @@ class NH_MaskToBBox:
         }
 
     RETURN_TYPES = ("MASK",)
-    # THAY ĐỔI Ở ĐÂY: Thêm tên cho đầu ra
     RETURN_NAMES = ("box_mask",)
     FUNCTION = "create_bbox_mask"
     CATEGORY = "NH-Nodes/Mask"
@@ -39,12 +38,11 @@ class NH_MaskToBBox:
 
         return (final_output,)
 
-# Ánh xạ class không đổi
+# The class mapping key stays unchanged
 NODE_CLASS_MAPPINGS = {
     "NH_MaskToBBox": NH_MaskToBBox
 }
 
-# THAY ĐỔI Ở ĐÂY: Đổi tên hiển thị của node
 NODE_DISPLAY_NAME_MAPPINGS = {
     "NH_MaskToBBox": "NH Create Box Mask"
 }

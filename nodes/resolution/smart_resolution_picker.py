@@ -78,7 +78,7 @@ def _needs_warning(entry, extra_warnings):
     if entry is None:
         return False
     text = f"{entry.get('tier', '')} {entry.get('reliability', '')} {entry.get('warning', '')}".casefold()
-    return any(marker in text for marker in ("community", "extrapolation", "rủi ro", "risk"))
+    return any(marker in text for marker in ("community", "extrapolation", "risk"))
 
 
 def _build_info(model_spec, tier, ratio, width, height, entry=None, extra_warnings=None, warnings=None):

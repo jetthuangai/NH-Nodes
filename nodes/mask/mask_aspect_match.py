@@ -5,14 +5,14 @@ from ...core.mask_ops import mask_bbox
 
 
 def _fit_window(start, length, limit):
-    """Cửa sổ [start, start + length) trượt vào trong [0, limit); lớn hơn limit thì cắt ở mép cuối."""
+    """Slide the window [start, start + length) inside [0, limit); one longer than limit is cut at the far edge."""
     start = max(0, min(start, limit - length))
     return start, min(limit, start + length)
 
 
 def _adjust_mask(mask_np, bbox, target_size, mode):
-    """Chỉnh hộp (bbox) của một mask [H, W] về đúng tỷ lệ target_size = (rộng, cao).
-    Kích thước hộp mới tính bằng số nguyên nên không bị lệch 1px do số thực. Ngoài hộp luôn là 0."""
+    """Adjust the box (bbox) of one mask [H, W] to the aspect ratio of target_size = (width, height).
+    The new box size is computed in integers, so there is no 1px drift from floats. Outside the box is always 0."""
     height, width = mask_np.shape
     xmin, ymin, xmax, ymax = (int(v) for v in bbox)
     cur_w, cur_h = xmax - xmin + 1, ymax - ymin + 1
@@ -21,31 +21,31 @@ def _adjust_mask(mask_np, bbox, target_size, mode):
     output = np.zeros_like(mask_np)
 
     if mode in ("stretch", "pad"):
-        # Nới một chiều: target rộng hơn thì nới ngang, ngược lại nới dọc
+        # Grow one dimension: horizontally when the target is wider, vertically otherwise
         new_w, new_h = cur_w, cur_h
         if target_is_wider:
             new_w = max(1, cur_h * target_w // target_h)
         else:
             new_h = max(1, cur_w * target_h // target_w)
 
-        # Hộp mới nới đối xứng quanh hộp cũ. Chạm mép ảnh thì trượt vào trong để vẫn đủ kích thước.
+        # The new box grows symmetrically around the old one. At an image edge it slides inside to keep its full size.
         x0, x1 = _fit_window(xmin - (new_w - cur_w) // 2, new_w, width)
         y0, y1 = _fit_window(ymin - (new_h - cur_h) // 2, new_h, height)
 
         if mode == "stretch":
-            # Kéo dãn nội dung (nearest) cho vừa hộp mới. Hộp lớn hơn cả ảnh thì chỉ hiện phần giữa.
+            # Stretch the content (nearest) to fit the new box. A box larger than the image shows only its middle part.
             off_x = (new_w - (x1 - x0)) // 2
             off_y = (new_h - (y1 - y0)) // 2
             cols = (np.arange(x1 - x0) + off_x) * cur_w // new_w
             rows = (np.arange(y1 - y0) + off_y) * cur_h // new_h
             output[y0:y1, x0:x1] = mask_np[ymin:ymax + 1, xmin:xmax + 1][np.ix_(rows, cols)]
         else:
-            # Pad: phần đệm thuộc vùng mask (1.0), nội dung gốc giữ nguyên vị trí cũ
+            # Pad: the padding belongs to the mask (1.0), the original content keeps its position
             output[y0:y1, x0:x1] = 1.0
             output[ymin:ymax + 1, xmin:xmax + 1] = mask_np[ymin:ymax + 1, xmin:xmax + 1]
 
     elif mode == "crop":
-        # Cắt bớt một chiều quanh tâm; phần giữ lại không bị dịch chỗ
+        # Trim one dimension around the centre; the part that is kept does not move
         new_w, new_h = cur_w, cur_h
         if target_is_wider:
             new_h = max(1, cur_w * target_h // target_w)
@@ -66,9 +66,8 @@ class NH_MaskAspectRatioMatch:
     def INPUT_TYPES(cls):
         return {
             "required": {
-                "target_ratio_mask": ("MASK",), # Mask A (Cái áo)
-                "mask_to_adjust": ("MASK",),    # Mask B (Hộp vuông)
-                # THÊM LỰA CHỌN MỚI Ở ĐÂY
+                "target_ratio_mask": ("MASK",), # Mask A (the garment)
+                "mask_to_adjust": ("MASK",),    # Mask B (the square box)
                 "mode": (["stretch", "pad", "crop"],),
             }
         }
@@ -86,7 +85,7 @@ class NH_MaskAspectRatioMatch:
     )
 
     def match_aspect_ratio(self, target_ratio_mask, mask_to_adjust, mode):
-        # Chấp nhận mask [H, W] hoặc [B, H, W]; xử lý từng mask trong batch
+        # Accepts a mask [H, W] or [B, H, W]; every mask of the batch is processed
         targets = target_ratio_mask.reshape(-1, *target_ratio_mask.shape[-2:])
         masks = mask_to_adjust.reshape(-1, *mask_to_adjust.shape[-2:])
         if targets.shape[0] == 0 or masks.shape[0] == 0:
@@ -97,12 +96,12 @@ class NH_MaskAspectRatioMatch:
             mask_np = masks[index].cpu().numpy()
             bbox_b = mask_bbox(mask_np)
             if bbox_b is None:
-                adjusted.append(masks[index]) # Mask B rỗng: giữ nguyên
+                adjusted.append(masks[index]) # Empty mask B: keep it as is
                 continue
 
-            # Batch của mask A ngắn hơn thì lặp lại vòng tròn
+            # A shorter mask A batch repeats cyclically
             bbox_a = mask_bbox(targets[index % targets.shape[0]].cpu().numpy())
-            # Mask A rỗng thì coi như tỷ lệ 1:1
+            # An empty mask A counts as a 1:1 ratio
             target_size = (1, 1) if bbox_a is None else (bbox_a[2] - bbox_a[0] + 1, bbox_a[3] - bbox_a[1] + 1)
             output_np = _adjust_mask(mask_np, bbox_b, target_size, mode)
             adjusted.append(torch.from_numpy(output_np).to(masks.device))
@@ -110,12 +109,12 @@ class NH_MaskAspectRatioMatch:
         return (torch.stack(adjusted),)
 
 
-# Ánh xạ để ComfyUI nhận diện class
+# Mapping that lets ComfyUI find the class
 NODE_CLASS_MAPPINGS = {
     "NH_MaskAspectRatioMatch": NH_MaskAspectRatioMatch
 }
 
-# Tên sẽ hiển thị trong menu của ComfyUI
+# Name shown in the ComfyUI menu
 NODE_DISPLAY_NAME_MAPPINGS = {
     "NH_MaskAspectRatioMatch": "NH Mask Aspect Ratio Match"
 }
