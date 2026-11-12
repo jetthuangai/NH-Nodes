@@ -174,7 +174,12 @@ def test_save_refuses_a_folder_that_is_not_allowed_and_creates_nothing(machine):
     assert list(machine.rglob("*.png")) == []
 
 
-@pytest.mark.parametrize("folder_path", ["../private", "..\\private", "a/../../private"])
+@pytest.mark.parametrize("folder_path", [
+    "../private",
+    "a/../../private",
+    # A backslash separates folders on Windows only; elsewhere this is one odd folder name inside output.
+    pytest.param("..\\private", marks=pytest.mark.skipif(os.name != "nt", reason="Windows separator")),
+])
 def test_save_refuses_a_relative_path_that_leaves_the_output_folder(machine, folder_path):
     with pytest.raises(FolderNotAllowed):
         _save(folder_path)
