@@ -163,7 +163,7 @@ class NH_VTonUltimateProcessor:
 
     def process(self, human_image, category, mask_feathering, cover_shoes, refine_hands, refine_hair, device,
                 offset_top=0, offset_bottom=0, offset_left=0, offset_right=0, keep_model_loaded=False):
-        # Import trước load_model: thiếu scikit-image thì báo lỗi ngay, không phải tải model xong mới lỗi.
+        # Import before load_model: a missing scikit-image fails right away, not after the models have been loaded.
         from ...core.utils_mask import get_mask_location
 
         if human_image.shape[0] == 0:
@@ -190,7 +190,8 @@ class NH_VTonUltimateProcessor:
                        refine_hair, device, offset_top, offset_bottom, offset_left, offset_right):
         # The models are only referenced from this frame and _process_image's, so release_vton_models() can free them.
         vton_model = self.load_model(device)
-        # Mỗi ảnh trong batch chạy độc lập với cùng setting, rồi nối các output theo chiều batch.
+        # Each image of the batch runs independently with the same settings; the outputs are then joined along the
+        # batch dimension.
         results = [
             self._process_image(
                 vton_model, get_mask_location, human_image[index], index, category, mask_feathering, cover_shoes,
@@ -202,13 +203,15 @@ class NH_VTonUltimateProcessor:
 
     def _process_image(self, vton_model, get_mask_location, human_image, index, category, mask_feathering, cover_shoes,
                        refine_hands, refine_hair, offset_top, offset_bottom, offset_left, offset_right):
-        """Xử lý đúng một ảnh [H,W,C]; `index` là vị trí trong batch (chỉ dùng cho thông báo lỗi)."""
-        # DWPose và parsing cần RGB 3 kênh: ảnh xám làm hỏng bước đảo BGR, RGBA đưa 4 kênh vào DWPose (alpha bị bỏ).
+        """Process exactly one image [H,W,C]; `index` is its position in the batch (used only for error messages)."""
+        # DWPose and parsing need 3-channel RGB: a grayscale image breaks the BGR flip, and RGBA would feed 4 channels
+        # to DWPose (the alpha is dropped).
         human_img_pil = tensor_to_pil(human_image).convert("RGB")
         human_img_resized = resize_image(human_img_pil)
 
         pose_img_np, _, _, candidate = vton_model['dwprocessor'](np.array(human_img_resized)[:,:,::-1])
-        # DWPose không trả mảng rỗng khi không thấy người: nó vẫn chạy pose trên cả ảnh và đánh dấu mọi keypoint là -1.
+        # DWPose does not return an empty array when it sees no person: it still runs pose on the whole image and marks
+        # every keypoint as -1.
         if len(candidate) == 0 or not np.any(candidate[0] != -1):
             raise ValueError(
                 f"VTON Ultimate Processor: DWPose found no person in the image at batch index {index}. "
@@ -237,7 +240,7 @@ class NH_VTonUltimateProcessor:
         if mask_np.ndim == 3:
             mask_np = mask_np[:,:,0]
 
-        # --- CÁC LOGIC TINH CHỈNH ---
+        # --- REFINEMENT LOGIC ---
         
         if category in ["Lower-body", "Lower-body (Shorts/Skirt)"]:
             body_cols = np.any((parsing_map_full_np > 0), axis=0)
@@ -289,7 +292,7 @@ class NH_VTonUltimateProcessor:
             feathered_pil = feathered_pil.filter(ImageFilter.GaussianBlur(radius=mask_feathering))
             mask_np = np.array(feathered_pil).astype(np.float32) / 255.0
         
-        # --- Tạo các output cuối cùng ---
+        # --- Build the final outputs ---
         person_silhouette_np = (parsing_map_full_np > 0).astype(np.float32)
         agnostic_mask_np = np.clip(person_silhouette_np - mask_np, 0, 1)
         agnostic_mask_pil = Image.fromarray((agnostic_mask_np * 255).astype(np.uint8))

@@ -26,8 +26,8 @@ class NH_LargePreviewCacheManager:
 
     @classmethod
     def IS_CHANGED(cls, **kwargs):
-        # Info/cleanup đọc và xoá file trên đĩa, input không đổi vẫn phải chạy lại mỗi lần queue;
-        # NaN không bằng chính nó nên ComfyUI không bao giờ dùng lại output cache.
+        # Info/cleanup read and delete files on disk, so the node must run again on every queue even with unchanged
+        # inputs; NaN never equals itself, so ComfyUI never reuses the cached output.
         return float("nan")
 
     def run(self, action="info", max_age_hours=24.0, max_total_mb=2048.0, cache_id=""):

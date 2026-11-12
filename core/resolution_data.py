@@ -43,7 +43,7 @@ MODEL_SPECS = {
         "min_res": (512, 512),
         "max_res": (2560, 2560),
         "latent_channels": 16,
-        "note": "Qwen tự match aspect input image",
+        "note": "Qwen-Image matches the aspect ratio of the input image",
     },
     "z_image": {
         "name": "Z-Image",

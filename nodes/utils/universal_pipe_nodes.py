@@ -1,7 +1,7 @@
-# Kiểu dữ liệu tùy chỉnh cho đường ống đa năng
+# Custom data type for the universal pipe
 NH_UNIVERSAL_PIPE = ("NH_UNIVERSAL_PIPE",)
 
-# Số ô input của Pack (input_0 .. input_9) cũng là độ dài của package
+# The number of Pack input slots (input_0 .. input_9) is also the length of the package
 _PIPE_SLOTS = 10
 
 class NH_PackUniversal:
@@ -9,7 +9,7 @@ class NH_PackUniversal:
     def INPUT_TYPES(cls):
         return {
             "required": {},
-            # Cung cấp sẵn 10 đầu vào tùy chọn
+            # Provides 10 optional inputs
             "optional": {
                 "input_0": ("*",), "input_1": ("*",), "input_2": ("*",), "input_3": ("*",), "input_4": ("*",),
                 "input_5": ("*",), "input_6": ("*",), "input_7": ("*",), "input_8": ("*",), "input_9": ("*",),
@@ -22,8 +22,8 @@ class NH_PackUniversal:
     CATEGORY = "NH-Nodes/Utils/Pipe"
 
     def pack(self, **kwargs):
-        # Đóng gói theo số ô: package[i] là input_i, ô chưa nối là None.
-        # (list(kwargs.values()) chỉ giữ ô đã nối nên index bị lệch khi bỏ trống input_0.)
+        # Pack by slot number: package[i] is input_i, an unconnected slot is None.
+        # (list(kwargs.values()) keeps only connected slots, so the indices shift when input_0 is left empty.)
         pipe = [kwargs.get(f"input_{i}") for i in range(_PIPE_SLOTS)]
         return (pipe,)
 
@@ -40,7 +40,7 @@ class NH_UnpackUniversal:
             },
         }
 
-    # Đầu ra là kiểu dữ liệu bất kỳ
+    # The output can be any data type
     RETURN_TYPES = ("*",)
     RETURN_NAMES = ("item",)
     FUNCTION = "unpack"
@@ -51,14 +51,14 @@ class NH_UnpackUniversal:
         if pipe_data is None:
             return (None,)
 
-        # index = số ô input của Pack; ngoài phạm vi (kể cả âm) thì trả None
+        # index = the Pack input slot number; out of range (negative included) returns None
         if 0 <= index < len(pipe_data):
             return (pipe_data[index],)
         else:
-            # Trả về None nếu index nằm ngoài phạm vi
+            # Return None when the index is out of range
             return (None,)
 
-# --- Đăng ký các node ---
+# --- Node registration ---
 NODE_CLASS_MAPPINGS = {
     "NH_PackUniversal": NH_PackUniversal,
     "NH_UnpackUniversal": NH_UnpackUniversal,

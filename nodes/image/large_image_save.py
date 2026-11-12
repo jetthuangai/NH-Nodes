@@ -9,8 +9,8 @@ from PIL.PngImagePlugin import PngInfo
 
 from ...core.utils import tensor_to_pil
 
-# Cạnh dài nhất (px) mà từng định dạng ghi được; PNG/TIFF không bị giới hạn trong thực tế.
-# JPEG: spec cho tới 65535 nhưng libjpeg (Pillow) từ chối > 65500 (JPEG_MAX_DIMENSION).
+# Longest side (px) each format can write; PNG/TIFF have no limit in practice.
+# JPEG: the spec allows up to 65535 but libjpeg (Pillow) rejects > 65500 (JPEG_MAX_DIMENSION).
 _MAX_SIDE_BY_EXTENSION = {"webp": 16383, "jpg": 65500}
 
 
@@ -91,9 +91,10 @@ class NH_SaveLargeImage:
 
     def save(self, image, filename_prefix="NH_Large", file_format="png", quality=95, embed_metadata=True, prompt=None, extra_pnginfo=None):
         extension = _extension_for_save_format(file_format)
-        # Kiểm tra giới hạn trước khi ghi bất kỳ file nào (mọi ảnh trong batch cùng kích thước), kể cả tạo thư mục.
+        # Check the limit before writing any file, creating the folder included (every image of the batch has the
+        # same size).
         _check_size_limit(extension, int(image.shape[2]), int(image.shape[1]))
-        # --disable-metadata của ComfyUI thắng ô embed_metadata: không nhúng prompt/workflow.
+        # ComfyUI's --disable-metadata overrides the embed_metadata toggle: no prompt/workflow is embedded.
         embed_metadata = bool(embed_metadata) and not args.disable_metadata
         first = image[0]
         full_output_folder, filename, counter, _subfolder, _filename_prefix = folder_paths.get_save_image_path(
