@@ -13,6 +13,7 @@ import folder_paths
 import node_helpers
 from comfy_execution.graph_utils import ExecutionBlocker
 
+from ...core.allowed_folders import can_read, require_readable
 from ...core.image_folders import IMAGE_EXTENSIONS, collect_image_files, natural_key, resolve_load_dir
 from ...core.image_ops import pil_to_image_tensor, resize_pil
 
@@ -179,11 +180,32 @@ def _entry_is_dir(entry, follow_symlinks=True):
 
 
 def _absolute_root(root_path):
-    """The matching root as an absolute path; a relative one is taken relative to ComfyUI's input folder."""
+    """The matching root as an absolute path; a relative one is taken relative to ComfyUI's input folder.
+
+    FolderNotAllowed for a root outside the folders NH-Nodes may read, before the disk is touched.
+    """
     root_path = (root_path or "").strip()
-    if root_path and not os.path.isabs(root_path):
+    if not root_path:
+        return root_path
+    if not os.path.isabs(root_path):
         root_path = os.path.join(folder_paths.get_input_directory(), root_path)
-    return root_path
+    return require_readable(root_path, "matching_root_path")
+
+
+def _source_folder(source_path):
+    """The folder a source path names, worked out from the text alone: the source is only read for its folder names.
+
+    A path that ends in an image file name stands for the folder of that file. An empty path is ComfyUI's input folder,
+    a relative one lies below it.
+    """
+    source_path = (source_path or "").strip()
+    if not source_path:
+        return folder_paths.get_input_directory()
+    if not os.path.isabs(source_path):
+        source_path = os.path.join(folder_paths.get_input_directory(), source_path)
+    if Path(source_path).suffix.lower() in IMAGE_EXTENSIONS:
+        source_path = os.path.dirname(source_path)
+    return source_path
 
 
 def _check_search_root(root_path, recursive):
@@ -205,9 +227,13 @@ def _list_folder(folder_path):
     except OSError:
         return []
     models_dir = os.path.normcase(os.path.abspath(folder_paths.models_dir))
+    # A sub-folder that is a link or junction out of the folders NH-Nodes may read is left out, like the models folder.
     return [
         entry for entry in entries
-        if not (_entry_is_dir(entry) and os.path.normcase(os.path.normpath(entry.path)) == models_dir)
+        if not (
+            _entry_is_dir(entry)
+            and (os.path.normcase(os.path.normpath(entry.path)) == models_dir or not can_read(entry.path))
+        )
     ]
 
 
@@ -250,7 +276,10 @@ def _context_twins(root_path, context_names, wanted=None):
         if position == 0 or own_name not in context:
             continue
         rest = parts[position + 1:]
-        for sibling_path in _child_folders(str(Path(*parts[:position]))):
+        parent = str(Path(*parts[:position]))
+        if not can_read(parent):
+            continue  # a parent NH-Nodes may not read is never listed, so its other context folders are no twins
+        for sibling_path in _child_folders(parent):
             sibling_name = _normalize_match_value(os.path.basename(sibling_path))
             if sibling_name == own_name or sibling_name not in context:
                 continue
@@ -407,7 +436,7 @@ def _matching_selection(
 
     source_paths = [line.strip() for line in str(source_folder_path or "").splitlines() if line.strip()]
     first_source_path = source_paths[0] if source_paths else ""
-    resolved_source_folder = resolve_load_dir(first_source_path)
+    resolved_source_folder = _source_folder(first_source_path)
     selected_match_text = (match_text or "").strip()
     source_names = [line.strip() for line in str(source_file_names or "").splitlines() if line.strip()]
     context_names = _parse_context_folder_names(context_folder_names)
@@ -499,6 +528,7 @@ def _load_image_batch(paths):
     images = []
     target_size = None
     for path in paths:
+        require_readable(path, "The image file")  # a file that is a link out of the allowed folders is not opened
         img = node_helpers.pillow(Image.open, path)
         img = node_helpers.pillow(ImageOps.exif_transpose, img).convert("RGB")
         if target_size is None:

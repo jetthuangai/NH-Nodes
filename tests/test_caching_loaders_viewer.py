@@ -245,6 +245,8 @@ def test_search_stays_inside_the_matching_root_and_its_context_siblings(tmp_path
 
 def test_a_drive_root_is_never_walked(studio, monkeypatch):
     drive = os.path.abspath(os.sep)
+    # Even when the owner of the machine declared a whole drive as an image folder.
+    monkeypatch.setattr(importlib.import_module("NH-Nodes.core.allowed_folders"), "_declared", [drive])
     fs = _Fs(monkeypatch)
     with pytest.raises(ValueError, match="drive"):
         _load(source_folder_path=str(studio.source), matching_root_path=drive, match_text="Anh")

@@ -1,4 +1,4 @@
-"""Save Image Path (NH): numbered image files in any folder, with an optional preview."""
+"""Save Image Path (NH): numbered image files in a folder NH-Nodes may write to, with an optional preview."""
 
 import os
 import re
@@ -6,6 +6,7 @@ import uuid
 
 import folder_paths
 
+from ...core.allowed_folders import require_writable
 from ...core.utils import tensor_to_pil
 
 _WINDOWS = os.name == "nt"
@@ -15,11 +16,13 @@ def _save_dir_from_text(folder_path):
     folder_path = (folder_path or "").strip()
     if not folder_path:
         return folder_paths.get_output_directory()
+    if not os.path.isabs(folder_path):
+        folder_path = os.path.join(folder_paths.get_output_directory(), folder_path)
+    # Checked before the disk is touched: ComfyUI's output folder and the folders the machine's owner listed.
+    folder_path = require_writable(folder_path, "folder_path")
     if os.path.isfile(folder_path):
         return os.path.dirname(folder_path)
-    if os.path.isabs(folder_path):
-        return folder_path
-    return os.path.join(folder_paths.get_output_directory(), folder_path)
+    return folder_path
 
 
 def _contained_path(base_dir, relative, what):
@@ -130,6 +133,8 @@ class NH_SaveImagePath:
         # A prefix may name subfolders ("renders/img"); they live below save_dir and are where files are counted.
         prefix = (filename_prefix or "NH").strip() or "NH"
         prefix_folder, prefix_name, target_dir = _split_filename_prefix(save_dir, prefix)
+        # Again for the final folder: new_folder_name or the prefix may pass through a link that leads elsewhere.
+        require_writable(target_dir, "The target folder")
         os.makedirs(target_dir, exist_ok=True)
 
         numbered_pattern = re.compile(rf"^{re.escape(prefix_name)}(\d+)\.(?:png|jpe?g|webp|avif)$", re.IGNORECASE)

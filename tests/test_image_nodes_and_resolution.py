@@ -283,7 +283,7 @@ def test_new_subfolder_inside_the_target_stays_allowed(tmp_path):
     assert (tmp_path / "out" / "batch" / "day1" / "img0001.png").is_file()
 
 
-def test_absolute_folder_path_is_still_allowed(tmp_path):
+def test_absolute_folder_path_in_a_declared_folder_is_allowed(tmp_path):
     target = tmp_path / "somewhere" / "else"
     _, path, _ = _save(tmp_path, "img", folder_path=str(target))
     assert path == str(target) and (target / "img0001.png").is_file()

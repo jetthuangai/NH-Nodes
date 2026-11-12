@@ -14,7 +14,9 @@ from ...core.image_ops import RESAMPLING, parse_color, pil_to_image_tensor
 _FONT_EXTENSIONS = {".ttf", ".otf", ".ttc"}
 
 
+@functools.lru_cache(maxsize=1)
 def _font_choices():
+    """"default" and the fonts of the Windows font folder. Read when the node list is first asked for, not at import."""
     fonts = ["default"]
     seen = set(fonts)
     font_dir = Path(os.environ.get("WINDIR", "C:\\Windows")) / "Fonts"
@@ -24,9 +26,6 @@ def _font_choices():
                 fonts.append(path.name)
                 seen.add(path.name)
     return fonts
-
-
-_FONT_CHOICES = _font_choices()
 
 
 @functools.lru_cache(maxsize=64)
@@ -44,7 +43,8 @@ def _default_font():
 
 
 def _load_font(font_name, font_size):
-    if font_name and font_name != "default":
+    # Only a name from the list: a wired text could otherwise be any path, a network path included.
+    if font_name and font_name != "default" and font_name in _font_choices():
         font_path = Path(os.environ.get("WINDIR", "C:\\Windows")) / "Fonts" / font_name
         if font_path.exists():
             font = _cached_truetype(str(font_path), font_size)
@@ -96,7 +96,7 @@ class NH_ImageLabel:
                 "fill_enabled": ("BOOLEAN", {"default": True}),
                 "frame_color_hex": ("STRING", {"default": "#111111", "multiline": False}),
                 "text_color_hex": ("STRING", {"default": "#FFFFFF", "multiline": False}),
-                "font_name": (_FONT_CHOICES,),
+                "font_name": (_font_choices(),),
                 "font_size": ("INT", {"default": 32, "min": 6, "max": 512, "step": 1}),
                 "fit_text": ("BOOLEAN", {"default": True}),
                 "overlay_on_image": ("BOOLEAN", {"default": False}),

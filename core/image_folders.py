@@ -10,6 +10,8 @@ from pathlib import Path
 
 import folder_paths
 
+from .allowed_folders import can_read, require_readable
+
 IMAGE_EXTENSIONS = {".png", ".jpg", ".jpeg", ".webp", ".avif", ".bmp", ".tif", ".tiff"}
 
 
@@ -22,13 +24,15 @@ def resolve_load_dir(folder_path, image="", upload_probe=""):
     """The folder a loader reads.
 
     ``folder_path`` when given (relative to ComfyUI's input folder unless absolute; a file stands for its folder),
-    else the folder of the uploaded ``image`` / ``upload_probe``, else the input folder.
+    else the folder of the uploaded ``image`` / ``upload_probe``, else the input folder. FolderNotAllowed for a
+    ``folder_path`` outside the folders NH-Nodes may read, before the disk is touched.
     """
     folder_path = (folder_path or "").strip()
     if folder_path:
         resolved = folder_path
         if not os.path.isabs(resolved):
             resolved = os.path.join(folder_paths.get_input_directory(), resolved)
+        resolved = require_readable(resolved, "folder_path")
         if os.path.isfile(resolved):
             resolved = os.path.dirname(resolved)
         return resolved
@@ -59,9 +63,14 @@ def collect_image_files(folder_path, recursive=False):
         seen = set(files)
         models_dir = os.path.normcase(os.path.abspath(folder_paths.models_dir))
         for current_root, dir_names, file_names in os.walk(folder_path):
-            # Natural order, and never into the ComfyUI models folder (a walk from one of its parents would crawl it).
+            # Natural order, never into the ComfyUI models folder (a walk from one of its parents would crawl it), and
+            # never through a link or junction that leads out of the folders NH-Nodes may read.
             dir_names[:] = sorted(
-                (name for name in dir_names if os.path.normcase(os.path.abspath(os.path.join(current_root, name))) != models_dir),
+                (
+                    name for name in dir_names
+                    if os.path.normcase(os.path.abspath(os.path.join(current_root, name))) != models_dir
+                    and can_read(os.path.join(current_root, name))
+                ),
                 key=natural_key,
             )
             for file_name in sorted(file_names, key=natural_key):
