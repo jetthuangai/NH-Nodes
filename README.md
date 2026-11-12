@@ -92,6 +92,17 @@ Restart ComfyUI afterwards. Requirements: a recent ComfyUI (tested with 0.41) an
       vton_mask: ComfyUI-Vton-Mask/  # VTON pose + parsing ONNX models
       sam3: sam3/                    # SAM 3 checkpoint (you download sam3.pt yourself)
   ```
+- **Image folders outside ComfyUI.** Load Images Folder, Load images matching and Save Image Path work inside
+  ComfyUI's `input`, `output` and `temp` folders (saving: `output` only). To use a photo drive or a project folder,
+  list it in the same file and restart ComfyUI
+  ([details](docs/en/image-io.md#folders-outside-comfyui)):
+
+  ```yaml
+  my_images:
+      nh_image_folders: |
+          D:/Photos/
+          E:/Exports/
+  ```
 - **Requirements for SAM 3** (SAM3 Segment only): an NVIDIA GPU with CUDA, Meta's `sam3` package and the `sam3.pt`
   checkpoint. NH-Nodes installs and downloads none of them: you install the package yourself and request the weights
   from Meta. The steps, and what to do if another SAM 3 pack is already installed, are in

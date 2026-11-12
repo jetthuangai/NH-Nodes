@@ -11,7 +11,7 @@ Các node này đưa ảnh vào và ra khỏi workflow. Bạn có thể tải m�
 | [Load Image Info (NH)](#load-image-info-nh) | Tải một ảnh và lấy tên tệp, đường dẫn của nó dưới dạng văn bản |
 | [Load Images Folder (NH)](#load-images-folder-nh) | Tải ảnh từ thư mục theo vị trí, và chuyển sang ảnh kế tiếp sau mỗi lần chạy |
 | [Load images matching](#load-images-matching) | Tìm thư mục khớp với tên một đối tượng và tải ảnh của nó |
-| [Save Image Path (NH)](#save-image-path-nh) | Lưu vào thư mục bất kỳ với tiền tố, cách đánh số, định dạng và DPI do bạn chọn |
+| [Save Image Path (NH)](#save-image-path-nh) | Lưu vào thư mục bạn chọn với tiền tố, cách đánh số, định dạng và DPI riêng |
 | [NH Save Large Image](#nh-save-large-image) | Lưu ảnh rất lớn mà không có bản xem trước nặng trên canvas |
 
 ## Đường dẫn và loại tệp
@@ -23,6 +23,28 @@ Các node này đưa ảnh vào và ra khỏi workflow. Bạn có thể tải m�
 | NH Save Large Image | luôn là thư mục `output` của ComfyUI |
 
 Các loader thư mục đọc tệp `.png`, `.jpg`, `.jpeg`, `.webp`, `.avif`, `.bmp`, `.tif` và `.tiff`. Chúng sắp xếp tên theo thứ tự tự nhiên, nên `img2` đứng trước `img10`, và trả về ảnh RGB.
+
+### Thư mục bên ngoài ComfyUI
+
+Workflow có thể đến từ bất kỳ ai, và ComfyUI có thể được truy cập qua mạng. Vì vậy thư mục bạn gõ vào node chỉ dùng được ở những nơi sau:
+
+| | Thư mục được phép |
+|---|---|
+| Đọc (Load Images Folder, Load images matching, số ảnh hiện trên node) | thư mục `input`, `output` và `temp` của ComfyUI, cùng các thư mục bạn khai báo |
+| Ghi (Save Image Path) | thư mục `output` của ComfyUI, cùng các thư mục bạn khai báo |
+
+Muốn dùng thư mục ở nơi khác (ổ ảnh, thư mục dự án), hãy khai báo một lần dưới khóa `nh_image_folders` trong `extra_model_paths.yaml`, tệp khai báo đường dẫn model bổ sung của ComfyUI (nằm trong thư mục ComfyUI; ComfyUI Desktop giữ bản riêng cùng phần thiết lập của nó), rồi khởi động lại ComfyUI:
+
+```yaml
+my_images:
+    nh_image_folders: |
+        D:/Photos/
+        E:/Exports/
+```
+
+Mọi thư mục nằm dưới một thư mục đã khai báo cũng được phép, cả đọc lẫn ghi. Đường dẫn ở nơi khác làm lần chạy dừng với thông báo lỗi nêu tên đầu vào và hiện các dòng khai báo này; không có gì được đọc hay tạo ra. Thành phần `..` cũng bị từ chối như vậy. Liên kết (symlink hoặc junction) dẫn ra ngoài các thư mục được phép cũng thế: nếu nó là thư mục bạn gõ (hoặc một phần của `new_folder_name` hay `filename_prefix`) thì lần chạy dừng lại, nếu nó là thư mục con thì bị bỏ qua khi đọc hoặc tìm trong các thư mục con, và tệp ảnh là liên kết như vậy sẽ không được mở. Nếu một thư mục con của `output` hoặc của thư mục đã khai báo là liên kết sang ổ khác, hãy khai báo cả nơi nó dẫn tới. Chỉ tệp trên ổ đĩa mới mở rộng được danh sách: workflow thì không.
+
+`source_folder_path` của Load images matching là ngoại lệ: node chỉ đọc các tên trong đường dẫn và không bao giờ mở thư mục đó, nên nó có thể là đường dẫn bất kỳ.
 
 ---
 
@@ -76,7 +98,7 @@ Tải một hoặc nhiều ảnh từ một thư mục theo vị trí, và có t
 
 | Đầu vào | Kiểu | Mặc định | Mô tả |
 |---|---|---|---|
-| `folder_path` | `STRING` | trống | Thư mục cần đọc. Có thể là đường dẫn tuyệt đối, hoặc tương đối so với thư mục `input`. Để trống nghĩa là thư mục `input`. Nếu đường dẫn trỏ tới một tệp, node dùng thư mục chứa tệp đó. |
+| `folder_path` | `STRING` | trống | Thư mục cần đọc. Đường dẫn tương đối so với thư mục `input`, hoặc đường dẫn tuyệt đối nằm trong một [thư mục được phép](#thư-mục-bên-ngoài-comfyui). Để trống nghĩa là thư mục `input`. Nếu đường dẫn trỏ tới một tệp, node dùng thư mục chứa tệp đó. |
 | `index` | `INT` | `0` | Vị trí của ảnh đầu tiên cần tải, từ `0` đến `999999`. Giá trị này quay vòng: với 10 ảnh, `12` tải ảnh số `2`. |
 | `step` | `INT` | `1` | Số ảnh tải mỗi lần chạy (`1` đến `9999`), lấy nối tiếp nhau từ `index`. Đây cũng là khoảng `index` di chuyển giữa các lần chạy ở chế độ `increment` và `decrement`. |
 | `seed_mode` | `COMBO` | `fixed` | Điều gì xảy ra với `index` mỗi lần bạn queue: `fixed` (giữ nguyên), `increment` (cộng thêm `step`), `decrement` (trừ đi `step`; các ảnh cũng được đọc lùi), `random` (một vị trí ngẫu nhiên mới). |
@@ -95,7 +117,7 @@ Tải một hoặc nhiều ảnh từ một thư mục theo vị trí, và có t
 - Nếu thư mục không có ảnh nào ở cấp của nó, các thư mục con vẫn được tìm kể cả khi `recursive` tắt. Việc tìm trong thư mục con bỏ qua thư mục `models` của ComfyUI.
 - Trình duyệt di chuyển `index` khi bạn queue workflow từ giao diện ComfyUI. Trình duyệt đếm ảnh theo đúng thiết lập `recursive` của node, nên `increment`, `decrement` và `random` quay vòng và chọn trên đúng những ảnh mà node tải. Nếu bạn gửi workflow qua API, hãy tự đặt `index`.
 - Node chạy lại khi một trong các tệp được chọn thay đổi trên ổ đĩa (tên, dung lượng hoặc ngày giờ). Nếu `folder_path` được nối từ một node khác, node không thể kiểm tra các tệp từ trước: khi đó nó chạy lại khi đường dẫn được nối hoặc một thiết lập khác thay đổi, nhưng không chạy lại khi một tệp trong cùng thư mục thay đổi.
-- Thư mục không tồn tại, hoặc không có ảnh nào, sẽ làm lần chạy dừng với một thông báo lỗi.
+- Thư mục không tồn tại, hoặc không có ảnh nào, sẽ làm lần chạy dừng với một thông báo lỗi. Thư mục nằm ngoài các [thư mục được phép](#thư-mục-bên-ngoài-comfyui) cũng vậy.
 
 **Ví dụ — upscale cả thư mục**
 
@@ -129,8 +151,8 @@ matching_root_path
 
 | Đầu vào | Kiểu | Mặc định | Mô tả |
 |---|---|---|---|
-| `source_folder_path` | `STRING` | trống | Thư mục nguồn của đối tượng. Chỉ **tên** các thư mục trong đường dẫn được dùng, nên thư mục không cần tồn tại. Tên cuối cùng là văn bản cần khớp, trừ khi bạn điền `match_text`. Một thư mục ngữ cảnh trong đường dẫn (xem `context_folder_names`) cho node biết nên ưu tiên nhánh nào. |
-| `matching_root_path` | `STRING` | trống | Thư mục gốc của cây thư mục cần tìm. Đường dẫn tuyệt đối, hoặc tương đối so với thư mục `input`. Bắt buộc. |
+| `source_folder_path` | `STRING` | trống | Thư mục nguồn của đối tượng. Chỉ **tên** các thư mục trong đường dẫn được dùng, nên thư mục không cần tồn tại và có thể ở bất kỳ đâu. Đường dẫn kết thúc bằng tên một tệp ảnh (như `…/subject_01/portrait.jpg`) được hiểu là thư mục chứa tệp đó. Tên cuối cùng là văn bản cần khớp, trừ khi bạn điền `match_text`. Một thư mục ngữ cảnh trong đường dẫn (xem `context_folder_names`) cho node biết nên ưu tiên nhánh nào. |
+| `matching_root_path` | `STRING` | trống | Thư mục gốc của cây thư mục cần tìm. Đường dẫn tương đối so với thư mục `input`, hoặc đường dẫn tuyệt đối nằm trong một [thư mục được phép](#thư-mục-bên-ngoài-comfyui). Bắt buộc. |
 | `match_text` | `STRING` | trống | Tên thư mục cần tìm. Để trống nghĩa là dùng tên của thư mục nguồn. |
 | `match_mode` | `COMBO` | `contains` | `contains`: tên thư mục chứa văn bản. `exact`: tên thư mục bằng đúng văn bản. Cả hai đều bỏ qua chữ hoa/thường và dấu, và coi `_` và `-` như dấu cách. |
 | `recursive` | `BOOLEAN` | `true` | `true`: tìm trong mọi thư mục dưới thư mục gốc. `false`: chỉ xem thư mục gốc và các thư mục con trực tiếp của nó. |
@@ -154,7 +176,7 @@ matching_root_path
 - **Văn bản cần khớp:** `match_text`; nếu trống thì lấy tên thư mục chứa từng dòng của `source_file_names`; nếu cũng trống thì lấy tên thư mục nguồn. Hãy điền ít nhất một trong ba: `source_folder_path`, `source_file_names`, `match_text`. Nếu bỏ trống cả ba, node tìm theo tên thư mục `input` của ComfyUI, tên này hiếm khi khớp.
 - **Ngữ cảnh:** nếu đường dẫn nguồn chứa một trong các `context_folder_names`, kết quả cùng ngữ cảnh được xếp lên đầu. Nguồn ở `…/Nu/subject_01` sẽ chọn `Nu/subject_01` trước `Nam/subject_01`. Nếu thư mục gốc của bạn nằm trong một thư mục ngữ cảnh (`…/Nam`) còn nguồn thuộc ngữ cảnh khác (`Nu`), node cũng tìm đúng vị trí đó dưới thư mục ngữ cảnh còn lại.
 - **Khi ngang nhau:** thư mục có đường dẫn giống đường dẫn nguồn nhất thắng, rồi đến thứ tự tên tự nhiên.
-- **Giới hạn:** việc tìm kiếm nằm trong thư mục gốc. Node không quét các thư mục cha, ngoại trừ các thư mục ngữ cảnh anh em đã nêu ở trên, và không bao giờ vào thư mục `models` của ComfyUI. Khi `recursive` bật, node từ chối thư mục gốc là một ổ đĩa hoặc một chia sẻ mạng (như `D:\` hay `\\server\share`): không thể tìm đệ quy ở đó. Thư mục `models` cũng bị từ chối làm thư mục gốc, dù `recursive` đặt thế nào.
+- **Giới hạn:** việc tìm kiếm nằm trong thư mục gốc. Node không quét các thư mục cha, ngoại trừ các thư mục ngữ cảnh anh em đã nêu ở trên, và không bao giờ vào thư mục `models` của ComfyUI. Khi `recursive` bật, node từ chối thư mục gốc là một ổ đĩa hoặc một chia sẻ mạng (như `D:\` hay `\\server\share`): không thể tìm đệ quy ở đó. Thư mục `models` cũng bị từ chối làm thư mục gốc, dù `recursive` đặt thế nào. Thư mục gốc nằm ngoài các [thư mục được phép](#thư-mục-bên-ngoài-comfyui) bị từ chối, và thư mục ngữ cảnh anh em chỉ được tìm khi thư mục chứa nó được phép.
 - **Tệp:** ảnh trong thư mục khớp được sắp xếp theo thứ tự tự nhiên. `index` và `step` chọn ảnh nào được tải.
 - **Bộ nhớ đệm:** kết quả được dùng lại cho đến khi thư mục khớp hoặc một trong các tệp được chọn thay đổi (tên, dung lượng hoặc ngày giờ). Lần tìm không thấy gì không bao giờ được ghi nhớ, nên thư mục bạn thêm sau đó sẽ được tìm thấy ở lần chạy kế tiếp. Nếu một thiết lập được nối từ node khác, node không biết trước thư mục nào. Khi đó nó theo dõi cả cây thư mục dưới thư mục gốc, và với cây rất lớn thì chạy lại ở mọi lần queue.
 
@@ -188,12 +210,12 @@ Trên Load Images Folder, đặt `path_output` là `folder_path` để `path` l�
 
 Lưu một batch ảnh vào thư mục bạn chọn, với tiền tố tên tệp riêng và đánh số tự động.
 
-**Dùng khi** kết quả cần nằm trong thư mục dự án bên ngoài thư mục `output` mặc định, hoặc bạn cần định dạng hay giá trị DPI mà Save Image có sẵn không có.
+**Dùng khi** kết quả cần nằm trong một thư mục con của `output` hoặc trong thư mục dự án bạn đã khai báo dưới `nh_image_folders`, hoặc bạn cần định dạng hay giá trị DPI mà Save Image có sẵn không có.
 
 | Đầu vào | Kiểu | Mặc định | Mô tả |
 |---|---|---|---|
 | `images` | `IMAGE` | — | Các ảnh cần lưu. Mỗi ảnh trong batch thành một tệp. |
-| `folder_path` | `STRING` | trống | Nơi lưu. Để trống nghĩa là thư mục `output`. Đường dẫn tương đối được đặt bên trong `output`. Đường dẫn tuyệt đối được dùng nguyên như vậy, kể cả bên ngoài ComfyUI. Thư mục chưa có sẽ được tạo. Đường dẫn trỏ tới một tệp có sẵn sẽ dùng thư mục chứa tệp đó. |
+| `folder_path` | `STRING` | trống | Nơi lưu. Để trống nghĩa là thư mục `output`. Đường dẫn tương đối được đặt bên trong `output`. Đường dẫn tuyệt đối phải nằm trong `output` hoặc trong một thư mục khai báo dưới `nh_image_folders` (xem [Thư mục bên ngoài ComfyUI](#thư-mục-bên-ngoài-comfyui)). Thư mục chưa có sẽ được tạo. Đường dẫn trỏ tới một tệp có sẵn sẽ dùng thư mục chứa tệp đó. |
 | `create_new_folder` | `BOOLEAN` | `false` | Lưu vào một thư mục con của `folder_path`. Ô `new_folder_name` chỉ hiện khi tùy chọn này bật. |
 | `new_folder_name` | `STRING` | trống | Thư mục con, ví dụ `day1` hoặc `batch/day1`. Phải nằm bên trong `folder_path`. |
 | `filename_prefix` | `STRING` | `NH` | Phần đầu của mọi tên tệp. Giá trị trống sẽ thành `NH`. Dấu `/` đưa tệp vào thư mục con, như `renders/img`. |
@@ -217,6 +239,8 @@ Lưu một batch ảnh vào thư mục bạn chọn, với tiền tố tên tệ
 | `D:\Projects\ClientA` | bật, `day1` | `portrait` | `D:\Projects\ClientA\day1\portrait0001.png` |
 | `D:\Projects\ClientA` | tắt | `final/portrait` | `D:\Projects\ClientA\final\portrait0001.png` |
 
+Hai dòng cuối cần `D:/Projects/` (hoặc `D:/Projects/ClientA/`) dưới `nh_image_folders`.
+
 **Cách đánh số**
 
 Node không bao giờ ghi đè tệp. Nó xem các tệp đã dùng tiền tố đó trong thư mục đích (bất kỳ định dạng nào trong `png`, `jpg`, `webp`, `avif`) và lấy số trống kế tiếp.
@@ -228,7 +252,8 @@ Node không bao giờ ghi đè tệp. Nó xem các tệp đã dùng tiền tố 
 
 **Quy tắc đặt tên**
 
-- `filename_prefix` và `new_folder_name` phải nằm bên trong thư mục đích. Thành phần `..` hoặc đường dẫn tuyệt đối làm lần chạy dừng với lỗi trước khi ghi bất cứ thứ gì. `folder_path` tuyệt đối thì được phép.
+- `filename_prefix` và `new_folder_name` phải nằm bên trong thư mục đích. Thành phần `..` hoặc đường dẫn tuyệt đối làm lần chạy dừng với lỗi trước khi ghi bất cứ thứ gì.
+- `folder_path` phải nằm trong thư mục `output` hoặc trong một thư mục khai báo dưới `nh_image_folders`. Mọi đường dẫn khác, kể cả đường dẫn tương đối có `..` đi ra khỏi `output`, làm lần chạy dừng trước khi thư mục nào được tạo.
 - Trên Windows, `filename_prefix` không được chứa `:`. Ký tự này sẽ chọn ổ đĩa thay vì đặt tên tệp.
 
 **Cách hoạt động**
