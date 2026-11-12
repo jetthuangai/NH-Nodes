@@ -3,9 +3,8 @@
 # 2nd Edited by https://github.com/Hzzone/pytorch-openpose
 # 3rd Edited by ControlNet
 # 4th Edited by ControlNet (added face and correct hands)
-
-import os
-os.environ["KMP_DUPLICATE_LIB_OK"]="TRUE"
+# NH-Nodes: the upstream file set KMP_DUPLICATE_LIB_OK here; a custom node must not change the environment of the
+# whole ComfyUI process, so that line is gone.
 
 import torch
 import numpy as np

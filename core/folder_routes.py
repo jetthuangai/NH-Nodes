@@ -12,6 +12,7 @@ import os
 
 from aiohttp import web
 
+from .allowed_folders import FolderNotAllowed
 from .image_folders import collect_image_files, resolve_load_dir
 
 COUNT_PATH = "/nh-nodes/load-images-folder/count"
@@ -51,6 +52,9 @@ async def nh_load_images_folder_count(request):
         count = await asyncio.to_thread(_count_images, folder_path, recursive)
     except FileNotFoundError:
         return _error(404, "folder not found")
+    except FolderNotAllowed:
+        # Outside ComfyUI's own folders and the folders listed under nh_image_folders: refused before the disk is read.
+        return _error(403, "folder is not allowed")
     except PermissionError:
         return _error(403, "folder is not readable")
     except Exception as exc:
