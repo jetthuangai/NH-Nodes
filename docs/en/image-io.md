@@ -11,7 +11,7 @@ These nodes move images in and out of a workflow. Load one image together with i
 | [Load Image Info (NH)](#load-image-info-nh) | Load one image and get its file name and path as text |
 | [Load Images Folder (NH)](#load-images-folder-nh) | Load images from a folder by position, and move to the next one on every run |
 | [Load images matching](#load-images-matching) | Find the folder that matches a subject name and load its images |
-| [Save Image Path (NH)](#save-image-path-nh) | Save to any folder with your own prefix, numbering, format and DPI |
+| [Save Image Path (NH)](#save-image-path-nh) | Save to a folder you choose with your own prefix, numbering, format and DPI |
 | [NH Save Large Image](#nh-save-large-image) | Save very large images without a heavy preview on the canvas |
 
 ## Paths and file types
@@ -23,6 +23,28 @@ These nodes move images in and out of a workflow. Load one image together with i
 | NH Save Large Image | always the ComfyUI `output` folder |
 
 The folder loaders read `.png`, `.jpg`, `.jpeg`, `.webp`, `.avif`, `.bmp`, `.tif` and `.tiff` files. They sort names in natural order, so `img2` comes before `img10`, and they return RGB images.
+
+### Folders outside ComfyUI
+
+A workflow can come from anyone, and ComfyUI can be reachable from the network. So the folder you type into a node only works in these places:
+
+| | Allowed folders |
+|---|---|
+| Reading (Load Images Folder, Load images matching, the image count on the node) | ComfyUI's `input`, `output` and `temp` folders, and the folders you list |
+| Writing (Save Image Path) | ComfyUI's `output` folder, and the folders you list |
+
+To use a folder anywhere else (a photo drive, a project folder), list it once under the key `nh_image_folders` in `extra_model_paths.yaml`, ComfyUI's file for extra model paths (in the ComfyUI folder; ComfyUI Desktop keeps its own copy with its settings), and restart ComfyUI:
+
+```yaml
+my_images:
+    nh_image_folders: |
+        D:/Photos/
+        E:/Exports/
+```
+
+Every folder below a listed folder is allowed too, for reading and for writing. A path anywhere else stops the run with an error that names the input and shows these lines; nothing is read or created. `..` parts are refused in the same way. So is a link or junction that leads out of the allowed folders: as the folder you type (or part of `new_folder_name` or `filename_prefix`) it stops the run, as a sub-folder it is skipped when sub-folders are read or searched, and an image file that is such a link is not opened. If a sub-folder of `output` or of a listed folder is a link to another disk, list the place it leads to as well. Only the file on disk can widen the list: a workflow cannot.
+
+`source_folder_path` of Load images matching is the exception: the node only reads the names in it and never opens that folder, so it can be any path.
 
 ---
 
@@ -76,7 +98,7 @@ Loads one or more images from a folder by position, and can move to the next ima
 
 | Input | Type | Default | Description |
 |---|---|---|---|
-| `folder_path` | STRING | empty | The folder to read. An absolute path, or a path relative to the `input` folder. Empty means the `input` folder. A path to a file uses the folder of that file. |
+| `folder_path` | STRING | empty | The folder to read. A path relative to the `input` folder, or an absolute path inside an [allowed folder](#folders-outside-comfyui). Empty means the `input` folder. A path to a file uses the folder of that file. |
 | `index` | INT | `0` | Position of the first image to load, from `0` to `999999`. It wraps around: with 10 images, `12` loads image `2`. |
 | `step` | INT | `1` | How many images to load per run (`1` to `9999`), one after the other from `index`. It is also the distance `index` moves between runs in `increment` and `decrement` modes. |
 | `seed_mode` | COMBO | `fixed` | What happens to `index` each time you queue: `fixed` (stays), `increment` (adds `step`), `decrement` (subtracts `step`; the images are also read backwards), `random` (a new random position). |
@@ -95,7 +117,7 @@ Loads one or more images from a folder by position, and can move to the next ima
 - If the folder holds no images of its own, its sub-folders are searched even when `recursive` is off. A search of sub-folders skips the ComfyUI `models` folder.
 - The browser moves `index` when you queue the workflow from the ComfyUI interface. It counts the images with the node's own `recursive` setting, so `increment`, `decrement` and `random` wrap and pick over the same images that the node loads. If you send the workflow through the API, set `index` yourself.
 - The node runs again when one of the selected files changes on disk (name, size or date). If `folder_path` is wired from another node, the node cannot check the files in advance: it then runs again when the wired path or another setting changes, but not when a file inside the same folder changes.
-- A folder that does not exist, or has no images, stops the run with an error.
+- A folder that does not exist, or has no images, stops the run with an error. So does a folder outside the [allowed folders](#folders-outside-comfyui).
 
 **Example — upscale a whole folder**
 
@@ -129,8 +151,8 @@ matching_root_path
 
 | Input | Type | Default | Description |
 |---|---|---|---|
-| `source_folder_path` | STRING | empty | The source folder of the subject. Only the folder **names** in the path are used, so the folder does not have to exist. The last name is the match text, unless you fill in `match_text`. A context folder in the path (see `context_folder_names`) tells the node which branch to prefer. |
-| `matching_root_path` | STRING | empty | The root of the folder tree to search. An absolute path, or a path relative to the `input` folder. Required. |
+| `source_folder_path` | STRING | empty | The source folder of the subject. Only the folder **names** in the path are used, so the folder does not have to exist and can be anywhere. A path that ends in an image file name (such as `…/subject_01/portrait.jpg`) stands for the folder of that file. The last name is the match text, unless you fill in `match_text`. A context folder in the path (see `context_folder_names`) tells the node which branch to prefer. |
+| `matching_root_path` | STRING | empty | The root of the folder tree to search. A path relative to the `input` folder, or an absolute path inside an [allowed folder](#folders-outside-comfyui). Required. |
 | `match_text` | STRING | empty | The folder name to look for. Empty means: use the name of the source folder. |
 | `match_mode` | COMBO | `contains` | `contains`: the folder name contains the text. `exact`: the folder name equals the text. Both ignore case and accents, and treat `_` and `-` as spaces. |
 | `recursive` | BOOLEAN | `true` | `true`: search every folder below the root. `false`: check only the root and its direct sub-folders. |
@@ -154,7 +176,7 @@ matching_root_path
 - **Match text:** `match_text`, or else the name of the folder that holds each `source_file_names` line, or else the name of the source folder. Fill in at least one of `source_folder_path`, `source_file_names` and `match_text`. With none of them, the node looks for the name of ComfyUI's `input` folder, which rarely matches.
 - **Context:** if the source path contains one of the `context_folder_names`, matches under the same context rank first. A source in `…/Nu/subject_01` picks `Nu/subject_01` before `Nam/subject_01`. If your root sits inside one context folder (`…/Nam`) and the source belongs to another (`Nu`), the same place under the other context folder is searched too.
 - **Ties:** among equal matches, the folder whose path is most like the source path wins, then natural name order.
-- **Limits:** the search stays inside the root. It does not scan parent folders, apart from the sibling context folders described above, and it never enters the ComfyUI `models` folder. With `recursive` on, a root that is a drive or a network share (such as `D:\` or `\\server\share`) is refused: it cannot be searched recursively. The `models` folder is refused as a root whatever `recursive` says.
+- **Limits:** the search stays inside the root. It does not scan parent folders, apart from the sibling context folders described above, and it never enters the ComfyUI `models` folder. With `recursive` on, a root that is a drive or a network share (such as `D:\` or `\\server\share`) is refused: it cannot be searched recursively. The `models` folder is refused as a root whatever `recursive` says. A root outside the [allowed folders](#folders-outside-comfyui) is refused, and a sibling context folder is only searched when the folder that holds it is allowed.
 - **Files:** the images of the matched folder are sorted in natural order. `index` and `step` choose which ones to load.
 - **Caching:** the result is reused until the matched folder or one of the selected files changes (name, size or date). A search that finds nothing is never remembered, so a folder you add later is found on the next run. If a setting is wired from another node, the node cannot know the folder in advance. It then watches the whole tree below the root, and in a very large tree it runs on every queue.
 
@@ -188,12 +210,12 @@ On Load Images Folder, set `path_output` to `folder_path`, so `path` is the fold
 
 Saves an image batch to a folder you choose, with your own file name prefix and automatic numbering.
 
-**Use it when** the results belong in a project folder outside the default `output` folder, or you need a format or a DPI value that the built-in Save Image does not offer.
+**Use it when** the results belong in a sub-folder of `output` or in a project folder you listed under `nh_image_folders`, or you need a format or a DPI value that the built-in Save Image does not offer.
 
 | Input | Type | Default | Description |
 |---|---|---|---|
 | `images` | IMAGE | — | The images to save. Every image of the batch becomes a file. |
-| `folder_path` | STRING | empty | Where to save. Empty means the `output` folder. A relative path is placed inside `output`. An absolute path is used as it is, even outside ComfyUI. Missing folders are created. A path to an existing file uses the folder of that file. |
+| `folder_path` | STRING | empty | Where to save. Empty means the `output` folder. A relative path is placed inside `output`. An absolute path must lie inside `output` or a folder listed under `nh_image_folders` (see [Folders outside ComfyUI](#folders-outside-comfyui)). Missing folders are created. A path to an existing file uses the folder of that file. |
 | `create_new_folder` | BOOLEAN | `false` | Save into a sub-folder of `folder_path`. The `new_folder_name` field only shows while this is on. |
 | `new_folder_name` | STRING | empty | The sub-folder, such as `day1` or `batch/day1`. It must stay inside `folder_path`. |
 | `filename_prefix` | STRING | `NH` | The start of every file name. An empty value becomes `NH`. A `/` puts the files in a sub-folder, as in `renders/img`. |
@@ -217,6 +239,8 @@ Saves an image batch to a folder you choose, with your own file name prefix and 
 | `D:\Projects\ClientA` | on, `day1` | `portrait` | `D:\Projects\ClientA\day1\portrait0001.png` |
 | `D:\Projects\ClientA` | off | `final/portrait` | `D:\Projects\ClientA\final\portrait0001.png` |
 
+The last two rows need `D:/Projects/` (or `D:/Projects/ClientA/`) under `nh_image_folders`.
+
 **How numbering works**
 
 The node never overwrites a file. It looks at the files that already use the prefix in the target folder (any of `png`, `jpg`, `webp`, `avif`) and takes the next free number.
@@ -228,7 +252,8 @@ The node never overwrites a file. It looks at the files that already use the pre
 
 **Rules for names**
 
-- `filename_prefix` and `new_folder_name` must stay inside the target folder. A `..` part or an absolute path stops the run with an error before anything is written. An absolute `folder_path` is allowed.
+- `filename_prefix` and `new_folder_name` must stay inside the target folder. A `..` part or an absolute path stops the run with an error before anything is written.
+- `folder_path` must lie inside the `output` folder or a folder listed under `nh_image_folders`. Anything else, a relative path with `..` that leaves `output` included, stops the run before a folder is created.
 - On Windows, `filename_prefix` cannot contain `:`. It would select a drive instead of naming a file.
 
 **How it works**

@@ -3,6 +3,32 @@
 All notable changes to NH-Nodes. Versions follow the Comfy Registry releases.
 "Behaviour change" marks fixes that can change the output of an existing workflow.
 
+## 1.10.0 — Image folders are limited to ComfyUI's folders and the ones you list (2026-11-12)
+
+No node is added (76 in total) and no input or output changes. The first entry is a behaviour change that stops workflows which read or save outside ComfyUI until you list their folders once, so read it before you update.
+
+### Changed
+- (behaviour change) `Save Image Path (NH)`, `Load Images Folder (NH)` and `Load images matching` only work inside ComfyUI's own folders and the folders you list on disk. Reading is allowed in ComfyUI's `input`, `output` and `temp` folders, writing in its `output` folder. To use any other folder (a photo drive, a project folder), list it under the new key `nh_image_folders` in `extra_model_paths.yaml` and restart ComfyUI; every folder below a listed one is allowed, for reading and for writing:
+
+  ```yaml
+  my_images:
+      nh_image_folders: |
+          D:/Photos/
+          E:/Exports/
+  ```
+
+  A path anywhere else stops the run with an error that names the input and shows these lines. Nothing is read, listed or created first, and a network path (`\\server\share`) outside the list is not even contacted. A relative path with `..` that leaves `input` or `output` is refused in the same way. So is a link or junction that leads out of the allowed folders: as the folder you type, or as part of `new_folder_name` or `filename_prefix`, it stops the run; as a sub-folder it is skipped when sub-folders are read or searched; an image file that is such a link is not opened. If a sub-folder of `output` or of a listed folder is a link to another disk, list the place it leads to as well. Before 1.10.0 an absolute path was used as it was, anywhere the ComfyUI process could reach, so a workflow from someone else could read or write there. Only the file on disk can widen the list: a workflow cannot. `NH Save Large Image` and `Load Image Info (NH)` are unchanged: they leave the choice of folder to ComfyUI's own save and input-file handling.
+- (behaviour change) The image count that `Load Images Folder (NH)` asks the server for (`GET /nh-nodes/load-images-folder/count`) follows the same rule and answers `403` for a folder outside the list, without touching it. On the node, `increment` and `decrement` then move the index without wrapping it, as they do for a folder that does not exist; the run itself stops with the error above.
+- (behaviour change) `Load images matching`: `source_folder_path` is read as text only and the node no longer looks at the disk for it. A source that ends in an image file name (`…/subject_01/portrait.jpg`) stands for the folder of that file; a source file with another extension is no longer replaced by its folder. With a root inside a context folder (`…/Nam`), the sibling context folder (`…/Nu`) is only searched when the folder that holds both is allowed.
+- `Image Label (NH)`: `font_name` only accepts a name from its list. A text wired into it used to be opened as a path below the Windows font folder, so `..` or a network path reached other places; any other value now falls back to the default font, as a font that is not installed always did.
+- `Image Label (NH)` reads the list of installed fonts when ComfyUI first asks for the node list, no longer while the pack is imported. The list and the result are the same.
+- `VTON Ultimate Processor (NH)`: the bundled DWPose code no longer sets the environment variable `KMP_DUPLICATE_LIB_OK` for the whole ComfyUI process.
+- The note that `NH Smart Resolution Picker` shows for Qwen-Image is in English ("Qwen-Image matches the aspect ratio of the input image"), and the comments in the code are in English throughout.
+
+### Notes
+- Folders listed under `nh_image_folders` do not show up in ComfyUI's model lists: NH-Nodes takes them out of the model folder names when it loads.
+- Updating from 1.9.0 or older: if a workflow saves to or loads from a folder outside ComfyUI, add that folder (or a folder above it) to `nh_image_folders` first. The guide has a section on it: [Folders outside ComfyUI](en/image-io.md#folders-outside-comfyui).
+
 ## 1.9.0 — Vision: body parts by name, Garment Segment on FASHN, parts in segs (2026-10-18)
 
 One node is added, `Body Segment (NH)` (76 nodes in total). `Garment Segment (NH)`, `Portrait Segment (NH)`, `Segs Compose (NH)` and `Segs Select (NH)` change. Entries marked "behaviour change" can change what a saved workflow produces, so read them before you update. Workflows saved with 1.8.x still load and run: every new input is optional and every new output comes last. The licence notes at the end matter: `Garment Segment (NH)` is now documented as non-commercial, and `Body Segment (NH)` comes with use restrictions.
